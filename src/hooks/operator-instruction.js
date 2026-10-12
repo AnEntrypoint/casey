@@ -12,7 +12,7 @@ export function instructionPrompt(instruction, operatorLabel) {
   return `[Team member instruction from ${operatorLabel}, typed at the console. It is NOT something the contact said. Write the message to send to the contact now, in the language they have been using, in plain words and short. Use only facts already on this record or stated in the instruction. Output only the message text. Do not call any tool.]\n\nInstruction: ${instruction}`
 }
 
-export async function draftFromInstruction({ store, log, llmStatus = null, callLLM = null, caseRow, instruction, operator }) {
+export async function draftFromInstruction({ store, log, llmStatus = null, callLLM = null, caseRow, instruction, operator, draftData = {} }) {
   const fail = async (why) => {
     await store.appendEvent(caseRow.id, observation(`INSTRUCTION-NOT-DRAFTED: ${why}; nothing was drafted or sent`))
     return { ok: false, error: why }
@@ -41,7 +41,7 @@ export async function draftFromInstruction({ store, log, llmStatus = null, callL
   const drafted = await correctOutboundRef({ store, fresh: caseRow, text, result, inboundText: instruction, contact })
   await store.appendEvent(caseRow.id, {
     kind: 'draft', actor: 'agent', channel: caseRow.channel,
-    text: drafted, data: { to: caseRow.external_id, fallback: false, draft: true, instruction: true, instructed_by: operator.id },
+    text: drafted, data: { to: caseRow.external_id, fallback: false, draft: true, instruction: true, instructed_by: operator.id, ...draftData },
   })
   await flagNeedsHuman({ store, log, caseRow, notifyHandoff: null, channel: caseRow.channel, from: null, extraTags: ['draft-pending'], flagLabel: 'instruct draft', notifyLabel: 'instruct draft' })
   return { ok: true, text: drafted }

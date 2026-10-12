@@ -1,6 +1,7 @@
 
 
 import { tagList } from '../timestamp.js'
+import { vocabText } from '../config-loader.js'
 
 export const OPTED_OUT_TAG = 'opted-out'
 
@@ -79,11 +80,15 @@ export function canAgentAct(caseRow, action = 'reply') {
   return 'send'
 }
 
+const STAGE_NOTE_DEFAULTS = {
+  in_progress: ['ui.stage_note_in_progress', 'Someone is looking at what you sent us now.'],
+  waiting: ['ui.stage_note_waiting', 'We are still busy with what you sent us. There is nothing you need to do for now.'],
+  resolved: ['ui.stage_note_resolved', 'What you sent us has been dealt with. If something is still wrong, just reply here.'],
+}
+
 export function stageNote(status) {
-  return ({
-    in_progress: 'Someone is looking at what you sent us now.',
-    waiting:     'We are still busy with what you sent us. There is nothing you need to do for now.',
-    resolved:    'What you sent us has been dealt with. If something is still wrong, just reply here.',
-  })[status] || ''
+  if (!Object.hasOwn(STAGE_NOTE_DEFAULTS, status)) return ''
+  const [key, fallback] = STAGE_NOTE_DEFAULTS[status]
+  return vocabText(key, fallback)
 }
 

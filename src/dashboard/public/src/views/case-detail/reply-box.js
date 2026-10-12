@@ -127,7 +127,8 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
                     try {
                         const j = await postCaseRemind(c.id);
                         state._replySending = false;
-                        if (j.delivered) toast(word('ui.reply_box_remind_done'), 'ok');
+                        if (j.drafted) toast(word('ui.reply_box_remind_drafted'), 'ok');
+                        else if (j.delivered) toast(word('ui.reply_box_remind_done'), 'ok');
                         else toast(j.sent
                             ? word('ui.reply_box_remind_refused')
                             : word('ui.reply_box_remind_nosend'), 'warn');

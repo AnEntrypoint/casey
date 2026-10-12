@@ -6,8 +6,21 @@ import { assigneeKeyFor, isAssignedTo, isOwnConversation } from '../case-assignm
 import { UNCLAIMED_ASSIGNEE } from '../case-store.js'
 import { withoutIssuedCodes } from '../role-invites.js'
 import { proactiveRefusal } from '../proactive-sends.js'
+import { vocabText } from '../config-loader.js'
 
 export const STAFF_TEXT_MAX_LEN = 4000
+
+const OUTBOUND_REFUSAL_DEFAULTS = {
+  empty: ['ui.outbound_refused_empty', 'nothing was sent: the message is empty'],
+  too_long: ['ui.outbound_refused_too_long', 'nothing was sent: the message is too long (max {max})'],
+  registration_code: ['ui.outbound_refused_registration_code', 'nothing was sent: the message contains a registration code'],
+  own_chat: ['ui.outbound_refused_own_chat', 'nothing was sent: that is this same chat with the assistant, not a reporter to message'],
+}
+
+function refusedSend(reason, vars = {}) {
+  const [key, fallback] = OUTBOUND_REFUSAL_DEFAULTS[reason]
+  return { ok: false, reason, error: vocabText(key, fallback, vars) }
+}
 
 export function staffLabel(contact) {
   const name = String(contact?.display_name || '').trim()
@@ -39,11 +52,11 @@ export async function outboundRefusal(store, caseRow, { canSend = null, sendRepl
 
 export async function sendStaffMessage({ store, sendReply, canSend = null, caseRow, text, staff, extra = {}, claim = true, answers = true, dropTags = [], now = Date.now() }) {
   const body = String(text || '').trim()
-  if (!body) return { ok: false, error: 'nothing was sent: the message is empty' }
-  if (body.length > STAFF_TEXT_MAX_LEN) return { ok: false, error: `nothing was sent: the message is too long (max ${STAFF_TEXT_MAX_LEN})` }
+  if (!body) return refusedSend('empty')
+  if (body.length > STAFF_TEXT_MAX_LEN) return refusedSend('too_long', { max: STAFF_TEXT_MAX_LEN })
 
-  if (await withoutIssuedCodes(store, body).catch(() => null) != null) return { ok: false, error: 'nothing was sent: the message contains a registration code' }
-  if (isOwnConversation(caseRow, staff)) return { ok: false, error: 'nothing was sent: that is this same chat with the assistant, not a reporter to message' }
+  if (await withoutIssuedCodes(store, body).catch(() => null) != null) return refusedSend('registration_code')
+  if (isOwnConversation(caseRow, staff)) return refusedSend('own_chat')
   const gate = await outboundRefusal(store, caseRow, { canSend, sendReply, now, kind: extra?.staff_nudge ? 'staff_nudge' : 'message' })
   if (gate.error) return { ok: false, error: gate.error }
   const by = staffLabel(staff)
@@ -52,8 +65,8 @@ export async function sendStaffMessage({ store, sendReply, canSend = null, caseR
   catch (e) {
     await store.appendEvent(caseRow.id, {
       kind: 'note', actor: 'operator', channel: caseRow.channel,
-      text: `NOT SENT to the contact (the channel refused it). ${by} wrote: ${body}`,
-      data: { undelivered: true, reason: 'send_failed', by, text: body, ...extra },
+      text: vocabText('ui.staff_note_channel_refused', 'Not sent: the channel refused it. {by} wrote: {body}', { by, body }),
+      data: { undelivered: true, reason: 'send_failed', by, text: body, error: e.message || 'unknown error', ...extra },
     })
     return { ok: false, error: `nothing was sent: the channel refused the message (${e.message || 'unknown error'})` }
   }

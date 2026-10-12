@@ -144,6 +144,7 @@ export async function claimInvite(store, code, contact, now = Date.now()) {
 
 const FAILS = new Map()
 const WINDOW_MS = 3600e3
+export const ATTEMPT_WINDOW_MS = WINDOW_MS
 const MAX_FAILS = 5
 
 const GLOBAL_KEY = '*'

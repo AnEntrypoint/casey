@@ -6,6 +6,9 @@ import { tagList } from '../timestamp.js'
 import { caseDeliveryTarget } from './handler.js'
 import { tsMs } from '../timestamp.js'
 import { proactiveRefusal } from '../proactive-sends.js'
+import { vocabText, vocabWord } from '../config-loader.js'
+
+const stageLabel = (stage) => vocabWord('stages.' + stage, stage)
 
 const SESSION_WINDOW_MS = 24 * 3600e3
 
@@ -35,7 +38,7 @@ export function makeTransitionNotifier(store, sendReply, { log = console } = {})
     if (proactiveRefusal({ kind: 'stage-note' })) {
       await store.appendEvent(caseRow.id, {
         kind: 'observation', actor: 'system',
-        text: 'Stage note not sent -- this deployment does not start conversations (CASEY_PROACTIVE_SENDS=off).',
+        text: vocabText('ui.staff_note_stage_proactive_off', 'Stage note for {stage} not sent: proactive sends are off.', { stage: stageLabel(to) }),
         data: { proactive: 'stage-note', stage: to, suppressed: 'proactive_off' },
       }).catch(() => {})
       return
@@ -47,10 +50,14 @@ export function makeTransitionNotifier(store, sendReply, { log = console } = {})
       if (lastOut && (lastOut.text || '').trim() === text) return
     } catch (e) { log.warn?.('[casey] transition-note dedup check failed', { caseId: caseRow.id, error: e.message }) }
     if (!withinSessionWindow(caseRow, recent)) {
-
+      const lastIn = recent.find(e => e.kind === 'inbound')
+      const lastInAt = lastIn ? tsMs(lastIn.created_at) : null
+      const windowNote = lastInAt
+        ? vocabText('ui.staff_note_stage_window_closed', 'Stage note for {stage} not sent: last message from the contact was {hours} h ago, outside the reply window.', { stage: stageLabel(to), hours: Math.round((Date.now() - lastInAt) / 3600e3) })
+        : vocabText('ui.staff_note_stage_window_none', 'Stage note for {stage} not sent: the contact has not written to us, so the reply window is closed.', { stage: stageLabel(to) })
       await store.appendEvent(caseRow.id, {
         kind: 'observation', actor: 'system',
-        text: `Stage note not sent -- this contact last wrote more than ${Math.round(SESSION_WINDOW_MS / 3600e3)}h ago, outside WhatsApp's free reply window. Reach them another way if it cannot wait.`,
+        text: windowNote,
         data: { proactive: 'stage-note', stage: to, suppressed: 'session_window' },
       }).catch(() => {})
       return
