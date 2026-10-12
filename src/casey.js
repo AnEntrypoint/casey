@@ -206,7 +206,7 @@ export class Casey {
       extraPluginsDir: CASEY_EXTRA_PLUGINS_DIR,
     })
 
-    const notifyOnTransition = makeTransitionNotifier(this.store, this.sendReply.bind(this), { log: this.log })
+    const notifyOnTransition = makeTransitionNotifier(this.store, { log: this.log })
     this.store.onTransition = async (ev) => {
       if (ev?.caseRow?.id && !isOpenCase({ status: ev.to })) disposeAgent(`case:${ev.caseRow.id}`)
       return notifyOnTransition(ev)

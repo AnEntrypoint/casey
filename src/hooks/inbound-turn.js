@@ -30,6 +30,7 @@ import { noteReturn } from '../return-clarify.js'
 import { ensurePin } from '../pin-estimate.js'
 import { pinAskOwed, pinAskValue } from '../pin-confidence.js'
 import { buildPromptContext } from './prompt-context.js'
+import { pendingNoticesFor, pendingNoticeNote, markNoticesDelivered } from './pending-notices.js'
 
 const BURST_SETTLE_MS = Math.max(0, Number(process.env.CASEY_BURST_SETTLE_MS ?? 2500) || 0)
 
@@ -166,8 +167,10 @@ async function driveAgentTurn(deps, {
     askedPin = !pc.missingMandatory.length && !pc.missingCritical.length
       && !(consentManaged() && await consentState(store, contact.id, { caseId: fresh.id }) !== 'agreed')
   }
+  const owed = await pendingNoticesFor(store, fresh).catch(() => [])
+  const turnPrompt = owed.length ? prompt + pendingNoticeNote(owed) : prompt
   const turn = await runAgentTurn({
-    store, log, callLLM, msg, fresh, events, contact, inboundText, typedText, prompt,
+    store, log, callLLM, msg, fresh, events, contact, inboundText, typedText, prompt: turnPrompt,
     channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend, ingressRecorded,
   })
   const { result, errored, jargonReasons, falseConfirmReasons, adviceReasons, degradedReason } = turn
@@ -232,6 +235,7 @@ async function driveAgentTurn(deps, {
   }
 
   if (isFallback) {
+    if (owed.length) await holdOwedNotices(store, fresh, owed, msgId)
 
     if (isBackgroundRedrive) {
       stopTyping()
@@ -277,6 +281,10 @@ async function driveAgentTurn(deps, {
   const staffTier = atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)
   const offered = staffTier ? (offeredChoices(result) || turn.preChoices || inboundChoices) : null
   const { reply, delivered } = await sendAgentReply({ store, log, adapter, fresh, channel, replyTo, platform, text, isFallback, degraded, offered, groupIds, startedOnId })
+  if (owed.length) {
+    if (delivered && text && !isFallback) await markNoticesDelivered(store, owed, { msgId }).catch(e => log.warn?.('[casey] notice delivery record failed', { caseId: fresh.id, error: e.message }))
+    else await holdOwedNotices(store, fresh, owed, msgId)
+  }
 
   if (delivered && notice) {
     try { await recordNoticeShown(store, fresh.id, notice) }
@@ -290,4 +298,8 @@ async function driveAgentTurn(deps, {
 
   stopTyping()
   return reply
+}
+
+async function holdOwedNotices(store, fresh, owed, msgId) {
+  await store.appendEvent(fresh.id, observation(`NOTICE-HELD: ${owed.length} queued notice(s) kept for the next reply; no reply carried them in this turn`, { notice_held: owed.map(i => i.id), in_reply_to: msgId })).catch(() => {})
 }

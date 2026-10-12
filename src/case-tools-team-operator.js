@@ -1,3 +1,4 @@
+import { vocabText } from './config-loader.js'
 
 
 import { defTool, str } from './case-tools-shared.js'
@@ -162,23 +163,6 @@ export function buildTeamOperatorTools(store) {
         })
         return sent.ok ? { ok: true, delivered: true, ref: c.ref, by } : { ok: false, delivered: false, ref: c.ref, error: sent.error }
       }),
-    defTool('team_remind', 'cases',
-      'Nudge a reporter who has gone quiet on a record: sends the standard reminder (or your own `text`) once through the assistant\'s number. Refused, and says why, if the record is finished, they asked us to stop, they were already reminded and have not answered, or they last wrote over 24 hours ago.',
-      { type: 'object', properties: { case: str('Record reference or id'), text: str('Optional own wording') }, required: ['case'] },
-      async ({ case: ref, text }, ctx) => {
-        const c = await findCase(store(), ref)
-        if (!c) return NO_SUCH
-
-        const { prepareReminder, OPERATOR_REMINDER_FLAG } = await import('./hooks/operator-reminder.js')
-        const plan = await prepareReminder({ store: store(), caseRow: c, overrideText: text && String(text).trim() ? String(text) : null })
-        if (!plan.ok) return { ok: false, delivered: false, ref: c.ref, error: plan.error }
-        const sent = await sendStaffMessage({
-          store: store(), sendReply: ctx?.sendReply, canSend: ctx?.canSend, caseRow: c, text: plan.text, staff: staffOf(ctx),
-          claim: false, answers: false,
-          extra: { [OPERATOR_REMINDER_FLAG]: true, operator_authored: plan.operator_authored, quiet_for_ms: plan.quietForMs, breaches: plan.breaches },
-        })
-        return sent.ok ? { ok: true, delivered: true, ref: c.ref, text: plan.text } : { ok: false, delivered: false, ref: c.ref, error: sent.error }
-      }),
     defTool('team_invite', 'cases',
       'Create a one-time WhatsApp code that puts whoever sends it (as their only message, to this number) into a role. The role you can grant: field worker. Only an admin, from the dashboard, can grant animal health technician (sign-off) or operator. The code is shown once: read it to the operator to pass on.',
       {
@@ -278,7 +262,7 @@ export function buildTeamOperatorTools(store) {
       async ({ name, text }, ctx) => {
         const r = await resolveTeamContact(store(), name); if (r.error) return r
         const own = await store().findOpenCase({ channel: r.contact.channel, external_id: r.contact.external_id }).catch(() => null)
-        if (!own) return { ok: false, delivered: false, error: 'nothing was sent: they have no conversation with the assistant that is open, so message them from your own phone.' }
+        if (!own) return { ok: false, delivered: false, error: vocabText('ui.team_message_no_conversation', 'nothing was sent: they have no conversation with the assistant that is open, so message them from your own phone.') }
         const sent = await sendStaffMessage({ store: store(), sendReply: ctx?.sendReply, canSend: ctx?.canSend, caseRow: own, text, staff: staffOf(ctx), claim: false, answers: false, extra: { staff_nudge: true } })
         return sent.ok ? { ok: true, delivered: true, to: staffLabel(r.contact) } : { ok: false, delivered: false, error: sent.error }
       }),

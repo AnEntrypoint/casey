@@ -1,3 +1,4 @@
+import { vocabText } from './config-loader.js'
 
 
 export const PROACTIVE_MODES = ['off', 'window']
@@ -13,7 +14,7 @@ export function proactiveMode(env = process.env) {
 
 export function proactiveRefusal({ kind = 'message', env = process.env } = {}) {
   if (proactiveMode(env) === 'window') return null
-  const base = 'nothing was sent: this deployment does not start conversations (CASEY_PROACTIVE_SENDS=off) -- people write to the assistant and it answers, it never writes first.'
-  if (kind === 'staff_nudge') return `${base} To nudge a team member, use the WhatsApp click-to-chat link in the nudges panel ("Who needs a nudge") and send it from your own phone.`
-  return `${base} To reach this person, use the click-to-chat link on the record and send it from your own phone, or wait for them to write.`
+  const base = vocabText('ui.proactive_refused_base', 'nothing was sent: this deployment does not start conversations (CASEY_PROACTIVE_SENDS=off) -- people write to the assistant and it answers, it never writes first.')
+  if (kind === 'staff_nudge') return `${base} ${vocabText('ui.proactive_refused_nudge', 'To nudge a team member, use the WhatsApp click-to-chat link in the nudges panel ("Who needs a nudge") and send it from your own phone.')}`
+  return `${base} ${vocabText('ui.proactive_refused_person', 'To reach this person, use the click-to-chat link on the record and send it from your own phone, or wait for them to write.')}`
 }

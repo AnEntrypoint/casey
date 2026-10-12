@@ -21,7 +21,6 @@ import { isFieldAccount, caseAccess, isAssignedTo, inSignOffQueue, detailForAcce
 import { APPEND_FIELDS } from '../../store/report-shape.js'
 import { waLink } from '../wa-link.js'
 import { reporterFirstName, reporterSummary } from '../../phone-persons.js'
-import { prepareReminder, OPERATOR_REMINDER_FLAG } from '../../hooks/operator-reminder.js'
 import { vocabText } from '../../config-loader.js'
 import { evData } from '../../safe.js'
 
@@ -495,7 +494,7 @@ export function postBulk({ store, authed, actingOperator, sendReply }) {
     if (!ids || !ids.length) return res.status(400).json({ error: 'ids must be a non-empty array' })
     if (ids.length > 500) return res.status(413).json({ error: 'too many ids (max 500 per bulk request)' })
     const action = String(req.body?.action || '')
-    const ACTIONS = new Set(['claim', 'transition', 'tag', 'untag', 'note', 'draft_approve', 'draft_discard', 'remind'])
+    const ACTIONS = new Set(['claim', 'transition', 'tag', 'untag', 'note', 'draft_approve', 'draft_discard'])
     if (!ACTIONS.has(action)) return res.status(400).json({ error: `unknown action '${action}'`, allowed: [...ACTIONS] })
     const op = actingOperator(req)
     const to = action === 'transition' ? String(req.body?.to || '') : null
@@ -544,25 +543,12 @@ export function postBulk({ store, authed, actingOperator, sendReply }) {
             try { await sendReply(c, text); delivered = true }
             catch (e) { await store.appendEvent(id, { kind: 'observation', actor: 'system', text: `Failed to send approved draft on channel: ${e.message || 'unknown error'}` }) }
           }
-          await store.appendEvent(id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, from_draft: true, by: op.id, bulk: true, ...draftReminderFlag(draft) } })
+          await store.appendEvent(id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, from_draft: true, by: op.id, bulk: true } })
           if (delivered) {
             await store.updateCase(id, { tags: dropTag(c.tags, 'draft-pending', 'needs-human') }, op)
           } else {
             results.push({ id, ok: false, error: 'send failed' }); continue
           }
-        } else if (action === 'remind') {
-          const plan = await prepareReminder({ store, caseRow: c })
-          if (!plan.ok) { results.push({ id, ok: false, error: plan.error }); continue }
-          let delivered = false
-          if (sendReply) {
-            try { await sendReply(c, plan.text); delivered = true }
-            catch (e) { await store.appendEvent(id, { kind: 'observation', actor: 'system', text: `Failed to send operator reminder on channel: ${e.message || 'unknown error'}` }) }
-          }
-          await appendReplyEvent(store, c, plan.text, op, {
-            delivered, reason: sendReply ? 'send_failed' : 'no_channel',
-            extra: { [OPERATOR_REMINDER_FLAG]: true, operator_authored: false, quiet_for_ms: plan.quietForMs, breaches: plan.breaches, bulk: true },
-          })
-          if (!delivered) { results.push({ id, ok: false, error: 'send failed' }); continue }
         } else if (action === 'draft_discard') {
           const draft = await pendingDraft(store, c)
           if (!draft) { results.push({ id, ok: false, error: 'no pending draft' }); continue }
@@ -784,7 +770,7 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
     if (!text) return res.status(400).json({ error: 'empty reply' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
-    if (tagList(c).includes('opted-out')) return res.status(409).json({ error: 'This person asked us to stop messaging them, so nothing was sent.' })
+    if (tagList(c).includes('opted-out')) return res.status(409).json({ error: vocabText('ui.reply_refused_opted_out', 'This person asked us to stop messaging them, so nothing was sent.') })
     const op = actingOperator(req)
     let delivered = false
     if (sendReply) {
@@ -830,62 +816,13 @@ export function postInstruct({ store, authed, str, actingOperator, sendReply, ll
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
     if (expected && expected !== c.ref) return res.status(409).json({ error: 'This record changed while you were typing. Reload it and try again.' })
-    if (tagList(c).includes('opted-out')) return res.status(409).json({ error: 'This person asked us to stop messaging them, so nothing was sent.' })
-    if (!sendReply || c.channel === 'system') return res.status(409).json({ error: 'nothing was sent: this conversation is not attached to a messaging channel right now' })
+    if (tagList(c).includes('opted-out')) return res.status(409).json({ error: vocabText('ui.reply_refused_opted_out', 'This person asked us to stop messaging them, so nothing was sent.') })
+    if (!sendReply || c.channel === 'system') return res.status(409).json({ error: vocabText('ui.outbound_refused_no_channel', 'nothing was sent: this conversation is not attached to a messaging channel right now') })
     const op = actingOperator(req)
     await store.appendEvent(c.id, { kind: 'note', actor: 'operator', channel: c.channel, text: `Instruction for the reply: ${instruction}`, data: { instruction: true, by: op.id } })
     const outcome = await draftFromInstruction({ store, log: console, llmStatus, callLLM, caseRow: c, instruction, operator: op })
     if (!outcome.ok) return res.status(503).json({ error: `The assistant could not write a draft (${outcome.error}). Nothing was sent. Try again, or type the reply yourself.` })
     res.json({ ok: true, drafted: true, recorded: 'draft' })
-  }
-}
-
-function draftReminderFlag(draft) {
-  return evData(draft)[OPERATOR_REMINDER_FLAG] ? { [OPERATOR_REMINDER_FLAG]: true } : {}
-}
-
-export function postRemind({ store, authed, str, actingOperator, sendReply, llmStatus, callLLM }) {
-  return async (req, res) => {
-    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
-    let override = null
-    if (req.body && typeof req.body.text === 'string' && req.body.text.trim()) {
-      const edited = str(res, req.body, 'text', { required: false }); if (edited === undefined) return
-      override = edited
-    }
-    if (!override) {
-      if (!sendReply || c.channel === 'system') return res.status(409).json({ error: vocabText('ui.remind_no_channel', 'nothing was sent: this conversation is not attached to a messaging channel right now') })
-      if (await pendingDraft(store, c)) return res.status(409).json({ error: vocabText('ui.remind_draft_waiting', 'A draft is already waiting for this person. Approve or discard it first, then ask again.') })
-      const plan = await prepareReminder({ store, caseRow: c, draft: true })
-      if (!plan.ok) return res.status(plan.status).json({ error: plan.error, ...(plan.reminded_at ? { reminded_at: plan.reminded_at } : {}) })
-      const op = actingOperator(req)
-      const outcome = await draftFromInstruction({
-        store, log: console, llmStatus, callLLM, caseRow: c, instruction: plan.instruction, operator: op,
-        draftData: { [OPERATOR_REMINDER_FLAG]: true, operator_authored: false, quiet_for_ms: plan.quietForMs, breaches: plan.breaches },
-      })
-      if (!outcome.ok) return res.status(503).json({ error: vocabText('ui.remind_draft_failed', 'The assistant could not write the reminder ({reason}). Nothing was sent. Try again, or type the message yourself.', { reason: outcome.error }) })
-      return res.json({ ok: true, drafted: true, sent: false, delivered: false, recorded: 'draft' })
-    }
-    const plan = await prepareReminder({ store, caseRow: c, overrideText: override })
-    if (!plan.ok) return res.status(plan.status).json({ error: plan.error, ...(plan.reminded_at ? { reminded_at: plan.reminded_at } : {}) })
-    const op = actingOperator(req)
-    let delivered = false
-    if (sendReply) {
-      try { await sendReply(c, plan.text); delivered = true }
-      catch (e) { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send operator reminder on channel: ${e.message || 'unknown error'}` }) }
-    }
-    await appendReplyEvent(store, c, plan.text, op, {
-      delivered, reason: sendReply ? 'send_failed' : 'no_channel',
-      extra: {
-        [OPERATOR_REMINDER_FLAG]: true,
-        operator_authored: plan.operator_authored,
-        quiet_for_ms: plan.quietForMs,
-        breaches: plan.breaches,
-      },
-    })
-    store.learnOperatorActivity(op.id, c).catch(() => {})
-    res.json({ ok: delivered, sent: !!sendReply, delivered, text: plan.text, recorded: delivered ? 'outbound' : 'note' })
   }
 }
 
@@ -908,7 +845,7 @@ export function postDraftApprove({ store, authed, str, actingOperator, sendReply
       catch (e) { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send approved draft on channel: ${e.message || 'unknown error'}` }) }
     }
     const op = actingOperator(req)
-    await appendReplyEvent(store, c, text, op, { delivered, reason: sendReply ? 'send_failed' : 'no_channel', extra: { from_draft: true, ...draftReminderFlag(draft) } })
+    await appendReplyEvent(store, c, text, op, { delivered, reason: sendReply ? 'send_failed' : 'no_channel', extra: { from_draft: true } })
     if (delivered) {
       await store.updateCase(c.id, { tags: dropTag(c.tags, 'draft-pending', 'needs-human') }, op)
     }
@@ -1041,7 +978,6 @@ const ROUTES = [
   ['post', '/api/cases/:id/merge', postMerge],
   ['post', '/api/cases/:id/split', postSplit],
   ['post', '/api/cases/:id/reply', postReply],
-  ['post', '/api/cases/:id/remind', postRemind],
   ['post', '/api/cases/:id/instruct', postInstruct],
   ['post', '/api/cases/:id/draft/approve', postDraftApprove],
   ['post', '/api/cases/:id/draft/discard', postDraftDiscard],

@@ -10,7 +10,7 @@ import { entityLabel, entityLabelPlural } from '../../vocabulary.js';
 import { word } from '../../words.js';
 const h = webjsx.createElement;
 
-const VERB_KEY = { claim: 'ui.bulk_bar_verb_claim', transition: 'ui.bulk_bar_verb_transition', tag: 'ui.bulk_bar_verb_tag', untag: 'ui.bulk_bar_verb_untag', note: 'ui.bulk_bar_verb_note', draft_approve: 'ui.bulk_bar_verb_draft_approve', draft_discard: 'ui.bulk_bar_verb_draft_discard', remind: 'ui.bulk_bar_verb_remind' };
+const VERB_KEY = { claim: 'ui.bulk_bar_verb_claim', transition: 'ui.bulk_bar_verb_transition', tag: 'ui.bulk_bar_verb_tag', untag: 'ui.bulk_bar_verb_untag', note: 'ui.bulk_bar_verb_note', draft_approve: 'ui.bulk_bar_verb_draft_approve', draft_discard: 'ui.bulk_bar_verb_draft_discard' };
 
 async function runBulk(action, extra, onDone) {
   const ids = [...state.bulkSelected];
@@ -64,21 +64,6 @@ export function BulkBar({ stages, onDone, onPromptTag, onPromptNote }) {
       children: word('ui.bulk_bar_send_drafts'),
     }),
     Btn({ key: 'draft-discard', size: 'sm', variant: 'ghost', title: word('ui.bulk_bar_discard_title', { entity: entityLabel() }), onClick: () => runBulk('draft_discard', null, onDone), children: word('ui.bulk_bar_discard') }),
-    Btn({
-      key: 'remind', size: 'sm', variant: 'ghost',
-      title: word('ui.bulk_bar_remind_title', { entity: entityLabel() }),
-      onClick: async () => {
-        const n = state.bulkSelected.size;
-        if (!n) return;
-        if (await confirmDialog({
-          title: word('ui.bulk_bar_remind_question', { n, people: word(n === 1 ? 'ui.bulk_bar_person' : 'ui.bulk_bar_people') }),
-          message: word('ui.bulk_bar_remind_message', { entity: entityLabel() }),
-          confirmLabel: word('ui.bulk_bar_remind_confirm'),
-        }) === null) return;
-        runBulk('remind', null, onDone);
-      },
-      children: word('ui.bulk_bar_remind'),
-    }),
     Btn({ key: 'clear', size: 'sm', variant: 'ghost', title: word('ui.bulk_bar_clear_title'), onClick: () => clearBulkSelect(), children: word('ui.bulk_bar_clear') })
   );
 }

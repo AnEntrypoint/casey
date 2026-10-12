@@ -102,7 +102,7 @@ export async function runVocabChecks(c) {
       return JSON.stringify({ waiting: fm.stageLabel('waiting'), working: fm.stageLabel('in_progress'), gl: Object.keys(gl.glossary()).length, hand: gl.glossaryLookup('handoff'), queue: mm.queueName(), urg: mm.URGENCY_BAND_LABEL[3], other: w.word('legend.other_diseases'), unknown: w.word('ui.no_such_key') });
     })()`))
     check(dom.waiting === 'On hold' && dom.working === 'Working on it', 'stage names on screen come from the vocabulary (edited: On hold; unedited: Working on it)', JSON.stringify([dom.waiting, dom.working]))
-    check(dom.gl === 22 && /Herd Health/.test(dom.hand) && !/\{brand\}|\{entity\}/.test(dom.hand), 'the glossary is read from the vocabulary with the product name and record word filled in', dom.hand.slice(0, 70))
+    check(dom.gl === 21 && /Herd Health/.test(dom.hand) && !/\{brand\}|\{entity\}/.test(dom.hand), 'the glossary is read from the vocabulary with the product name and record word filled in', dom.hand.slice(0, 70))
     check(dom.queue === 'Needs a person' && dom.urg === 'needs a person now' && dom.other === 'Other diseases', 'legend words come from the vocabulary', JSON.stringify([dom.queue, dom.urg, dom.other]))
     check(dom.unknown === 'no such key', 'an unknown key shows as its own last part, visibly, not blank', dom.unknown)
     await evalJs(`(async () => { const st = await import('/src/state.js'); st.state.connLost = true; st.schedule(); return 1 })()`); await sleep(700)

@@ -2,11 +2,9 @@
 
 import { buildAlertPayload } from '../report-analytics.js'
 import { stageNote, OPTED_OUT_TAG } from './heuristics.js'
-import { tagList } from '../timestamp.js'
-import { caseDeliveryTarget } from './handler.js'
-import { tsMs } from '../timestamp.js'
-import { proactiveRefusal } from '../proactive-sends.js'
+import { tagList, tsMs } from '../timestamp.js'
 import { vocabText, vocabWord } from '../config-loader.js'
+import { queueNotice, pendingNoticesFor } from './pending-notices.js'
 
 const stageLabel = (stage) => vocabWord('stages.' + stage, stage)
 
@@ -26,51 +24,24 @@ export function withinSessionWindow(caseRow, recentEvents, now = Date.now()) {
   return now - at < SESSION_WINDOW_MS
 }
 
-export function makeTransitionNotifier(store, sendReply, { log = console } = {}) {
-  if (!sendReply) return null
+export function makeTransitionNotifier(store, { log = console } = {}) {
   return async function onTransition({ caseRow, to, user }) {
-
     if (user?.role === 'agent') return
     if (tagList(caseRow).includes(OPTED_OUT_TAG)) return
     const text = stageNote(to)
     if (!text) return
 
-    if (proactiveRefusal({ kind: 'stage-note' })) {
+    const owed = await pendingNoticesFor(store, caseRow).catch(() => [])
+    if (owed.some(p => p.case_id === caseRow.id && p.stage === to)) return
+    try {
+      await queueNotice(store, caseRow, { notice: 'stage', stage: to, text })
       await store.appendEvent(caseRow.id, {
         kind: 'observation', actor: 'system',
-        text: vocabText('ui.staff_note_stage_proactive_off', 'Stage note for {stage} not sent: proactive sends are off.', { stage: stageLabel(to) }),
-        data: { proactive: 'stage-note', stage: to, suppressed: 'proactive_off' },
-      }).catch(() => {})
-      return
-    }
-    let recent = []
-    try {
-      recent = await store.listEventsPage(caseRow.id, { limit: 25, offset: 0 })
-      const lastOut = recent.find(e => e.kind === 'outbound')
-      if (lastOut && (lastOut.text || '').trim() === text) return
-    } catch (e) { log.warn?.('[casey] transition-note dedup check failed', { caseId: caseRow.id, error: e.message }) }
-    if (!withinSessionWindow(caseRow, recent)) {
-      const lastIn = recent.find(e => e.kind === 'inbound')
-      const lastInAt = lastIn ? tsMs(lastIn.created_at) : null
-      const windowNote = lastInAt
-        ? vocabText('ui.staff_note_stage_window_closed', 'Stage note for {stage} not sent: last message from the contact was {hours} h ago, outside the reply window.', { stage: stageLabel(to), hours: Math.round((Date.now() - lastInAt) / 3600e3) })
-        : vocabText('ui.staff_note_stage_window_none', 'Stage note for {stage} not sent: the contact has not written to us, so the reply window is closed.', { stage: stageLabel(to) })
-      await store.appendEvent(caseRow.id, {
-        kind: 'observation', actor: 'system',
-        text: windowNote,
-        data: { proactive: 'stage-note', stage: to, suppressed: 'session_window' },
-      }).catch(() => {})
-      return
-    }
-    try {
-      await sendReply(caseRow, text)
-      await store.appendEvent(caseRow.id, {
-        kind: 'outbound', actor: 'system', channel: caseRow.channel,
-        text, data: { to: caseDeliveryTarget(caseRow), proactive: 'stage-note', stage: to },
+        text: vocabText('ui.staff_note_stage_queued', 'Stage note for {stage} queued: it goes out in the next reply to the contact, and nothing is sent on its own.', { stage: stageLabel(to) }),
+        data: { proactive: 'stage-note', stage: to, queued: true },
       })
     } catch (e) {
-      log.error?.('[casey] transition note send failed', { caseId: caseRow.id, error: e.message })
-      await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `proactive note send failed: ${e.message}` })
+      log.error?.('[casey] stage note queue failed', { caseId: caseRow.id, error: e.message })
     }
   }
 }

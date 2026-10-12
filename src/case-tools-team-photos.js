@@ -1,3 +1,4 @@
+import { vocabText } from './config-loader.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { defTool, str } from './case-tools-shared.js'
@@ -38,7 +39,7 @@ export function buildTeamPhotoTools(store) {
         if (!deskAuthorityOn(ctx, c)) return NOT_ASSIGNED
         if (typeof ctx?.sendImage !== 'function' || !ctx.canSendImage?.(ctx.channel)) return { error: 'Photos cannot be sent over this channel from here. Say so plainly.' }
         const mine = ctx.activeCaseId ? await store().getCase(ctx.activeCaseId) : null
-        if (!mine) return { error: 'Could not tell which chat to send the photos to, so nothing was sent.' }
+        if (!mine) return { error: vocabText('ui.photos_send_no_chat', 'Could not tell which chat to send the photos to, so nothing was sent.') }
         if (tagList(mine).includes(OPTED_OUT_TAG)) return { error: 'Nothing was sent: this person asked us not to message them again.' }
         const { withinSessionWindow, sessionWindowHours } = await import('./hooks/notifiers.js')
         const recent = await store().listEventsPage(mine.id, { limit: 25, offset: 0 })

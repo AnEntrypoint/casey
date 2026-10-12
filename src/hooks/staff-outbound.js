@@ -15,6 +15,11 @@ const OUTBOUND_REFUSAL_DEFAULTS = {
   too_long: ['ui.outbound_refused_too_long', 'nothing was sent: the message is too long (max {max})'],
   registration_code: ['ui.outbound_refused_registration_code', 'nothing was sent: the message contains a registration code'],
   own_chat: ['ui.outbound_refused_own_chat', 'nothing was sent: that is this same chat with the assistant, not a reporter to message'],
+  no_channel: ['ui.outbound_refused_no_channel', 'nothing was sent: this conversation is not attached to a messaging channel right now'],
+  opted_out: ['ui.outbound_refused_opted_out', 'nothing was sent: this person asked us not to message them again'],
+  history: ['ui.outbound_refused_history', 'nothing was sent: could not read this conversation\'s history ({error})'],
+  window: ['ui.outbound_refused_window', 'nothing was sent: this person last wrote more than {hours}h ago, outside WhatsApp\'s free reply window, so the message would be rejected rather than delivered. Reach them another way if it cannot wait.'],
+  channel_refused: ['ui.outbound_refused_channel', 'nothing was sent: the channel refused the message ({error})'],
 }
 
 function refusedSend(reason, vars = {}) {
@@ -34,18 +39,18 @@ export async function outboundRefusal(store, caseRow, { canSend = null, sendRepl
   const noStart = proactiveRefusal({ kind })
   if (noStart) return { error: noStart }
   if (!sendReply || (canSend && !canSend(caseRow.channel))) {
-    return { error: 'nothing was sent: this conversation is not attached to a messaging channel right now' }
+    return refusedSend('no_channel')
   }
   if (tagList(caseRow).includes(OPTED_OUT_TAG)) {
-    return { error: 'nothing was sent: this person asked us not to message them again' }
+    return refusedSend('opted_out')
   }
 
   const { withinSessionWindow, sessionWindowHours } = await import('./notifiers.js')
   let recent = []
   try { recent = await store.listEventsPage(caseRow.id, { limit: 25, offset: 0 }) }
-  catch (e) { return { error: `nothing was sent: could not read this conversation's history (${e.message})` } }
+  catch (e) { return refusedSend('history', { error: e.message }) }
   if (!withinSessionWindow(caseRow, recent, now)) {
-    return { error: `nothing was sent: this person last wrote more than ${sessionWindowHours()}h ago, outside WhatsApp's free reply window, so the message would be rejected rather than delivered. Reach them another way if it cannot wait.` }
+    return refusedSend('window', { hours: sessionWindowHours() })
   }
   return { recent }
 }
@@ -68,7 +73,7 @@ export async function sendStaffMessage({ store, sendReply, canSend = null, caseR
       text: vocabText('ui.staff_note_channel_refused', 'Not sent: the channel refused it. {by} wrote: {body}', { by, body }),
       data: { undelivered: true, reason: 'send_failed', by, text: body, error: e.message || 'unknown error', ...extra },
     })
-    return { ok: false, error: `nothing was sent: the channel refused the message (${e.message || 'unknown error'})` }
+    return { ok: false, error: refusedSend('channel_refused', { error: e.message || 'unknown error' }).error }
   }
   let claimed = false
   let tookOver = false
@@ -110,10 +115,10 @@ export function appendReplyEvent(store, c, text, op, { delivered, reason, extra 
   if (delivered) {
     return store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, by: op.id, ...extra } })
   }
-  const why = UNDELIVERED_REPLY_REASONS[reason] || 'the send did not happen'
+  const why = vocabText(`ui.undelivered_reason_${reason}`, UNDELIVERED_REPLY_REASONS[reason] || 'the send did not happen')
   return store.appendEvent(c.id, {
     kind: 'note', actor: 'operator', channel: c.channel,
-    text: `NOT SENT to the contact (${why}). Operator wrote: ${text}`,
+    text: vocabText('ui.reply_not_sent_note', 'NOT SENT to the contact ({why}). Operator wrote: {text}', { why, text }),
     data: { undelivered: true, reason, by: op.id, text, ...extra },
   })
 }
