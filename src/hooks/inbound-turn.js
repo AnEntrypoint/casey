@@ -44,7 +44,7 @@ async function intakeOne(receiver, deps, ctx, msg) {
   const registered = await tryRegisterByCode({ store, log, adapter, msg, channel, external_id, replyTo, platform })
   if (registered) return { done: registered }
 
-  const opened = await openCaseForInbound({ store, log, msg, channel, external_id, replyTo, platform })
+  const opened = await openCaseForInbound({ store, log, msg, channel, external_id, replyTo, platform, callLLM: deps.callLLM })
   if (opened.done) return { done: opened.done }
   const side = (await applyInboundSideEffects({ store, log, caseRow: opened.caseRow, created: opened.created, msg, channel, inboundText: opened.inboundText, media: opened.media })) || {}
   return { ...opened, ...side }
