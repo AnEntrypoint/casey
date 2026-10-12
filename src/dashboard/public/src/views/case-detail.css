@@ -89,12 +89,6 @@
 .casey-draft-actions{display:flex;gap:var(--space-2);margin-top:var(--space-2)}
 .casey-reply-box{display:flex;flex-direction:column;gap:var(--space-2)}
 .casey-reply-label{font-size:var(--fs-nano);color:var(--fg-3)}
-.casey-canned-wrap{display:flex;flex-direction:column;gap:var(--space-2)}
-.casey-canned-lab{font-size:var(--fs-nano);color:var(--fg-3);margin:0}
-.casey-canned{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:stretch}
-
-.casey-detail-pane .casey-canned-btn{margin:0;background:var(--bg-2);color:var(--fg);border:1px solid var(--border);border-radius:var(--r-1);padding:var(--space-1-75) var(--space-2);font-size:var(--fs-sm);min-height:44px;text-align:left;flex:0 1 auto;cursor:pointer}
-.casey-canned-btn:hover{border-color:var(--accent)}
 .casey-reply-send-row{display:flex;justify-content:flex-end}
 
 .casey-timeline-wrap{display:flex;flex-direction:column;gap:var(--space-2)}
