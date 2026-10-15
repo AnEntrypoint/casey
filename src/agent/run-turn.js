@@ -166,7 +166,41 @@ function summarizeSince(agent, firstSeq) {
   return { result, messages, error: sawTurnEnd ? errorReason : 'turn did not complete', iterations: messages.filter(m => m.role === 'assistant').length }
 }
 
-export async function runTurn({
+function logChatTurn(req, startedAt, outcome, thrown = null) {
+  const toolCtx = req?.toolCtx || null
+  const inboundText = String(toolCtx?.inboundText ?? '')
+  const reply = typeof outcome?.result === 'string' ? outcome.result : ''
+  const error = thrown ? (thrown.message || String(thrown)) : (outcome?.error ?? null)
+  console.log(JSON.stringify({
+    t: new Date().toISOString(), level: 'info', component: 'turn', msg: 'chat_turn',
+    session_key: req?.sessionKey ?? null,
+    platform: toolCtx?.channel ?? null,
+    contact_tier: toolCtx?.tier ?? null,
+    started_at: new Date(startedAt).toISOString(),
+    duration_ms: Date.now() - startedAt,
+    inbound_chars: inboundText.length,
+    inbound_text: inboundText,
+    outcome: thrown ? 'thrown' : (error === 'timeout' ? 'timeout' : (error ? 'error' : 'reply')),
+    error,
+    iterations: outcome?.iterations ?? 0,
+    reply_chars: reply.length,
+  }))
+}
+
+export async function runTurn(req = {}) {
+  const startedAt = Date.now()
+  let outcome
+  try {
+    outcome = await runTurnAttempt(req)
+  } catch (e) {
+    logChatTurn(req, startedAt, null, e)
+    throw e
+  }
+  logChatTurn(req, startedAt, outcome)
+  return outcome
+}
+
+async function runTurnAttempt({
   prompt,
   systemPrompt = null,
   messages = [],
