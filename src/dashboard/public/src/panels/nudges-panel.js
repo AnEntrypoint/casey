@@ -64,7 +64,7 @@ function personBlock(p) {
             h('div', { key: 'meta', class: 'ds-contact-actions' },
                 p.phone ? h('span', {}, p.phone) : h('span', { class: 'casey-hint' }, word('ui.nudges_panel_no_number')),
                 wa ? h('a', { key: 'wa', class: 'btn btn-primary btn-sm', href: wa, target: '_blank', rel: 'noopener noreferrer', 'aria-label': word('ui.nudges_panel_wa_aria', { name: p.name }) }, word('ui.nudges_panel_message_wa')) : null),
-            metrics ? metricsRow(metrics.people.find((m) => m.name === p.name)) : null,
+            metrics ? metricsRow((metrics.people || []).find((m) => m.name === p.name)) : null,
             ...p.cases.map(caseRow),
         ].filter(Boolean),
     }));

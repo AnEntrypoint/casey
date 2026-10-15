@@ -319,7 +319,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .case-list-view .ds-filter-pills > .ds-filter-pill { flex: 1 1 auto; }
 }
 
-.ds-handoff-banner { display: flex; align-items: center; gap: var(--space-3); cursor: pointer; }
+.ds-handoff-banner { display: flex; align-items: center; gap: var(--space-3); }
 .ds-handoff-banner .ds-alert-warn { flex: 1; min-width: 0; }
 
 .ds-247420 .ds-handoff-banner .ds-alert-warn,
@@ -329,6 +329,11 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 }
 .ds-handoff-banner .ds-alert-warn .ds-alert-icon { color: var(--warn); }
 .ds-handoff-banner-hide { flex-shrink: 0; }
+.ds-handoff-open {
+  display: block; flex: 1 1 auto; width: 100%; min-width: 0; margin: 0; padding: 0;
+  border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.ds-handoff-open:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: 2px; }
 
 .ds-conn-banner { position: sticky; top: 0; z-index: var(--z-toast); }
 

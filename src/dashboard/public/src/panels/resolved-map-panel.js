@@ -164,7 +164,7 @@ function Legend(ranked) {
 
 export function ResolvedMapPanel() {
   ensureReports();
-  if (!rd.loaded) return Panel({ title: word('ui.resolved_map_panel_title'), children: Skeleton({ count: 4, height: '1.6em' }) });
+  if (!rd.loaded || (rd.loading && !rd.points)) return Panel({ title: word('ui.resolved_map_panel_title'), children: Skeleton({ count: 4, height: '1.6em' }) });
   if (rd.error && !rd.points) return Panel({ title: word('ui.resolved_map_panel_title'), children: [ReportFilters(), Alert({ kind: 'warn', children: rd.error }), Btn({ children: word('ui.resolved_map_panel_try_again'), onClick: reloadReports })] });
   const all = rd.points.points;
   const weeks = weeksOf(all);
@@ -220,7 +220,7 @@ export function ResolvedMapPanel() {
     title: word('ui.resolved_map_panel_title'),
     children: h('div', { class: 'rep-stack' },
       ReportFilters(),
-      rd.loading ? h('p', { class: 'casey-hint', 'aria-live': 'polite' }, word('ui.resolved_map_panel_updating')) : null,
+      rd.loading || (rm.mode !== 'dots' && rm.heatBusy) ? h('p', { class: 'casey-hint', 'aria-live': 'polite' }, word('ui.resolved_map_panel_updating')) : null,
       FilterPills({ label: word('ui.resolved_map_panel_what_shows'), options: MODES, selected: rm.mode, onSelect: (v) => { rm.mode = v; rm.heat = null; schedule(); } }),
       rm.mode !== 'all' && speciesKinds.length > 1 ? FilterPills({ label: word('ui.resolved_map_panel_animal'), options: [{ id: '', label: word('ui.resolved_map_panel_every_animal') }, ...speciesKinds.map((k) => ({ id: k, label: k }))], selected: rm.species, onSelect: (v) => { rm.species = v; rm.heat = null; schedule(); } }) : null,
       rm.mode !== 'all' && statusKinds.length > 1 ? FilterPills({ label: word('ui.resolved_map_panel_diagnosis'), options: [{ id: '', label: word('ui.resolved_map_panel_confirmed_and_suspected') }, ...statusKinds.map((k) => ({ id: k, label: k === 'suspected' ? word('ui.resolved_map_panel_suspected_only') : word('ui.resolved_map_panel_confirmed_only') }))], selected: rm.status, onSelect: (v) => { rm.status = v; rm.heat = null; schedule(); } }) : null,

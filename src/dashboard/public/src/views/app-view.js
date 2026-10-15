@@ -141,14 +141,14 @@ export function App() {
         children: [h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, Icon('help')), h('span', { key: 'l', class: 'ds-action-label' }, word('ui.app_view_help'))] })),
     AccountMenu(),
     h('span', { key: 'more', class: 'ds-appbar-more' },
-      Btn({ variant: 'ghost', 'aria-expanded': state._appbarMore ? 'true' : 'false', title: word('ui.app_view_more_title'),
+      Btn({ variant: 'ghost', 'aria-expanded': state._appbarMore ? 'true' : 'false', 'aria-controls': 'casey-appbar', title: word('ui.app_view_more_title'),
         'aria-label': state._appbarMore ? word('ui.app_view_fewer_buttons') : word('ui.app_view_more_buttons'), onClick: () => { state._appbarMore = !state._appbarMore; schedule(); },
         children: [h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, Icon('chevron-down')), h('span', { key: 'l', class: 'ds-action-label' }, state._appbarMore ? word('ui.app_view_fewer') : word('ui.app_view_more'))] })),
   ].filter(Boolean);
   const crumb = Crumb({
     trail: [brand],
     leaf: state.activePanel ? panelPageTitle(state.activePanel) : leaf,
-    right: [h('div', { key: 'appbar', class: 'ds-appbar' + (state._appbarMore ? ' is-more-open' : '') }, ...crumbRight)],
+    right: [h('div', { key: 'appbar', id: 'casey-appbar', class: 'ds-appbar' + (state._appbarMore ? ' is-more-open' : '') }, ...crumbRight)],
   });
   const status = StatusBar();
 

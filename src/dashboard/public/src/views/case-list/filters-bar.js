@@ -78,7 +78,7 @@ function knownValueFilters() {
     return Select({
       key: 'fv-' + f.key,
       value: (state.filt.fv && state.filt.fv[f.key]) || '',
-      title: word('ui.filters_bar_filter_by', { label: f.label }), ariaLabel: word('ui.filters_bar_filter_by', { label: f.label }),
+      title: word('ui.filters_bar_filter_by', { label: f.label }), 'aria-label': word('ui.filters_bar_filter_by', { label: f.label }),
       options: [{ value: '', label: anyLabel }, ...values.map((v) => ({ value: v, label: truncateLabel(v) }))],
       onChange: (v) => setFilt({ fv: { ...(state.filt.fv || {}), [f.key]: v } }),
     });
@@ -90,12 +90,12 @@ export function MoreFilters({ onOpenSavedViews, onSaveView }) {
     ...knownValueFilters(),
     Select({
       key: 'channel', value: state.filt.channel, placeholder: word('ui.filters_bar_all_channels'),
-      title: word('ui.filters_bar_by_channel'), ariaLabel: word('ui.filters_bar_by_channel'),
+      title: word('ui.filters_bar_by_channel'), 'aria-label': word('ui.filters_bar_by_channel'),
       options: channelOptions(), onChange: (v) => setFilt({ channel: v }),
     }),
     Select({
       key: 'source', value: state.filt.source, placeholder: word('ui.filters_bar_all_sources'),
-      title: word('ui.filters_bar_by_source'), ariaLabel: word('ui.filters_bar_by_source'),
+      title: word('ui.filters_bar_by_source'), 'aria-label': word('ui.filters_bar_by_source'),
       options: sourceOptions(), onChange: (v) => setFilt({ source: v }),
     }),
     Dropdown({

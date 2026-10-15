@@ -59,7 +59,7 @@ function InboxRow(e) {
   },
     h('div', { key: 'why', class: 'tcase-why' },
       h('span', { key: 's' }, e.subject || word('ui.inbox_panel_no_subject')),
-      waiting ? Badge({ key: 'w', tone: 'warn', children: word('ui.inbox_panel_waiting', { wait: waiting }) }) : null,
+      waiting ? Badge({ key: 'w', tone: 'orange', children: word('ui.inbox_panel_waiting', { wait: waiting }) }) : null,
       owner ? Chip({ key: 'o', tone: mine ? 'accent' : '', size: 'sm', children: mine ? word('ui.inbox_panel_you') : owner }) : null
     ),
     h('div', { key: 'r', class: 'tcase-reason' }, e.reason || word('ui.inbox_panel_worth_look')),
@@ -76,7 +76,7 @@ export function InboxPanel() {
   const shown = ranked.slice(0, cap);
 
   if (!shown.length) {
-    return h('div', { class: 'triage', 'aria-label': queueName() },
+    return h('div', { class: 'triage', role: 'region', 'aria-label': queueName() },
       Heading({ level: 2, children: queueName() }),
       h('div', { class: 'calm' }, state.mineOnly
         ? word('ui.inbox_panel_calm_mine')
@@ -84,7 +84,7 @@ export function InboxPanel() {
     );
   }
 
-  return h('div', { class: 'triage', 'aria-label': queueName() },
+  return h('div', { class: 'triage', role: 'region', 'aria-label': queueName() },
     h('div', { key: 'head', class: 'triage-head' },
       Heading({ level: 2, children: queueName() }),
       Badge({ tone: 'blue', children: String(ranked.length) })

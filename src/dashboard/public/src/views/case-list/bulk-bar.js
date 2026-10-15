@@ -12,13 +12,15 @@ const h = webjsx.createElement;
 
 const VERB_KEY = { claim: 'ui.bulk_bar_verb_claim', transition: 'ui.bulk_bar_verb_transition', tag: 'ui.bulk_bar_verb_tag', untag: 'ui.bulk_bar_verb_untag', note: 'ui.bulk_bar_verb_note', draft_approve: 'ui.bulk_bar_verb_draft_approve', draft_discard: 'ui.bulk_bar_verb_draft_discard' };
 
+let bulkBusy = false;
 async function runBulk(action, extra, onDone) {
   const ids = [...state.bulkSelected];
-  if (!ids.length) return;
+  if (!ids.length || bulkBusy) return;
   if (action === 'claim' && !(state.currentUser && state.currentUser.username)) {
     toast(word('ui.bulk_bar_pick_who'), 'warn');
     return;
   }
+  bulkBusy = true;
   try {
     const j = await postBulk(ids, action, extra);
     const verb = VERB_KEY[action] ? word(VERB_KEY[action]) : action;
@@ -31,6 +33,8 @@ async function runBulk(action, extra, onDone) {
     onDone && onDone();
   } catch (e) {
     toast(await failMsg(e, word('ui.bulk_bar_fail_nothing')), 'err');
+  } finally {
+    bulkBusy = false;
   }
 }
 

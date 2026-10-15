@@ -3,6 +3,12 @@ import { word } from '../words.js';
 
 const L = () => window.L;
 
+// Leaflet writes string tooltip content with innerHTML, and the values
+// interpolated into these tooltips are free text from case reports.
+function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 function tileUrl() {
     try {
         const el = document.querySelector('meta[name="casey-tile-url"]');
@@ -55,12 +61,12 @@ export function drawDots(drv, dots, styleFor) {
         L().circleMarker([p.lat, p.lon], {
             radius: 6, weight: s.mark.fill ? 1 : 3, color: s.colour, fillColor: s.colour,
             fillOpacity: s.mark.fill ? 0.75 : 0, dashArray: s.mark.dash,
-        }).bindTooltip(word('ui.resolved_map_leaflet_dot', {
+        }).bindTooltip(esc(word('ui.resolved_map_leaflet_dot', {
             disease: p.disease,
             species: p.species,
             advice: p.advice && p.advice[0] !== 'Not stated' ? word('ui.resolved_map_leaflet_advice', { advice: p.advice.join(', ') }) : '',
             week: p.resolved_at,
-        })).addTo(drv.layer);
+        }))).addTo(drv.layer);
     }
 }
 
@@ -71,7 +77,7 @@ export function drawHeat(drv, cells, cellDeg, colour) {
     for (const c of cells) {
         L().rectangle([[c.lat - half, c.lon - half], [c.lat + half, c.lon + half]], {
             weight: 0, color: colour, fillColor: colour, fillOpacity: 0.15 + 0.7 * (c.count / max),
-        }).bindTooltip(word('ui.resolved_map_leaflet_in_area', { count: c.count })).addTo(drv.layer);
+        }).bindTooltip(esc(word('ui.resolved_map_leaflet_in_area', { count: c.count }))).addTo(drv.layer);
     }
 }
 
@@ -81,12 +87,12 @@ export function drawBubbles(drv, areas, colour) {
     for (const a of areas) {
         L().circleMarker([a.lat, a.lon], {
             radius: 8 + 28 * Math.sqrt(a.count / max), weight: 2, color: colour, fillColor: colour, fillOpacity: 0.35,
-        }).bindTooltip(word('ui.resolved_map_leaflet_bubble', {
+        }).bindTooltip(esc(word('ui.resolved_map_leaflet_bubble', {
             region: a.region,
             count: a.count,
             cases: word(a.count === 1 ? 'ui.resolved_map_leaflet_case' : 'ui.resolved_map_leaflet_cases'),
             mostly: a.top_disease ? word('ui.resolved_map_leaflet_mostly', { disease: a.top_disease }) : '',
-        })).addTo(drv.layer);
+        }))).addTo(drv.layer);
     }
 }
 

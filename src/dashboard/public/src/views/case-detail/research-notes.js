@@ -11,6 +11,7 @@ let _notes = null;
 let _loading = false;
 let _error = null;
 let _expanded = new Set();
+let _requestedFor = null;
 
 function toggleExpanded(name) {
     if (_expanded.has(name)) _expanded.delete(name); else _expanded.add(name);
@@ -18,14 +19,18 @@ function toggleExpanded(name) {
 }
 
 export async function loadResearchNotes(caseId) {
+    _requestedFor = caseId;
     _loading = true; _error = null; schedule();
+    let data = null, failure = null;
     try {
-        const data = await fetchRunNotes(caseId);
-        _notes = data ? data.notes : null;
-        _notesFor = caseId;
+        data = await fetchRunNotes(caseId);
     } catch (e) {
-        _error = (e && e.message) || 'Could not load research notes.';
+        failure = (e && e.message) || true;
     }
+    if (_requestedFor !== caseId) return;
+    _notes = failure ? null : (data ? data.notes : null);
+    _error = failure;
+    _notesFor = caseId;
     _loading = false; schedule();
 }
 
@@ -44,6 +49,7 @@ function NoteRow({ note, key } = {}) {
     return h('div', { key, class: 'casey-research-note' },
         h('button', {
             type: 'button', class: 'casey-research-note-toggle',
+            'aria-expanded': isOpen ? 'true' : 'false',
             onclick: () => toggleExpanded(note.name),
         }, h('span', { class: 'casey-research-note-caret' }, Icon(isOpen ? 'chevron-down' : 'chevron-right', { size: 13 })), notePreview(note.text)),
         isOpen ? h('pre', { class: 'casey-research-note-body' }, note.text) : null

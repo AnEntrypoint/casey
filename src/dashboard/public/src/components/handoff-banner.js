@@ -88,17 +88,17 @@ export function HandoffBanner() {
   if (!q.length) return null;
   const c = q[q.length - 1];
   const extra = q.length > 1 ? word('ui.handoff_banner_and_more', { count: q.length - 1 }) : '';
-  return h('div', {
-    class: 'ds-handoff-banner', id: 'handoff', tabindex: '0', role: 'button',
-    'aria-label': word('ui.handoff_banner_open_aria', { entity: entityLabel(), ref: c.ref || '' }),
-    onclick: () => openCaseRoute(c.id),
-    onkeydown: (ev) => { if (ev.target === ev.currentTarget && (ev.key === ' ' || ev.key === 'Enter')) { ev.preventDefault(); openCaseRoute(c.id); } },
-  },
+  return h('div', { class: 'ds-handoff-banner', id: 'handoff' },
     Alert({
       kind: 'warn',
       title: word('ui.handoff_banner_title'),
       children: [
-        h('span', { key: 'm', dangerouslySetInnerHTML: { __html: word('ui.handoff_banner_body', { ref: esc(c.ref), subject: esc(c.subject || channelLabel(c.channel)), extra: esc(extra) }) } }),
+        h('button', {
+          key: 'open', type: 'button', class: 'ds-handoff-open',
+          title: word('ui.handoff_banner_open_aria', { entity: entityLabel(), ref: c.ref || '' }),
+          onclick: () => openCaseRoute(c.id),
+        },
+          h('span', { dangerouslySetInnerHTML: { __html: word('ui.handoff_banner_body', { ref: esc(c.ref), subject: esc(c.subject || channelLabel(c.channel)), extra: esc(extra) }) } })),
       ],
     }),
     Btn({ size: 'sm', variant: 'ghost', class: 'ds-handoff-banner-hide', 'aria-label': word('ui.handoff_banner_hide_aria'), onClick: (e) => { e.stopPropagation(); clearHandoffQueue(); }, children: word('ui.handoff_banner_hide') })

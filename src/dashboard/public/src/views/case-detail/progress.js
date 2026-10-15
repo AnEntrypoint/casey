@@ -18,7 +18,7 @@ export function CaseProgress({ status, key } = {}) {
     return h('div', { key, class: 'casey-progress', role: 'group', 'aria-label': word('ui.progress_group', { entity: entityLabel() }) },
         ...PIPELINE.map((s, i) => {
             const state = i < idx ? 'done' : (i === idx ? 'active' : 'pending');
-            return h('div', { key: s, class: 'casey-progress-step casey-progress-step--' + state },
+            return h('div', { key: s, class: 'casey-progress-step casey-progress-step--' + state, 'aria-current': i === idx ? 'step' : null },
                 h('span', { class: 'casey-progress-dot casey-progress-dot--' + state }, Dot({ tone: state === 'active' || state === 'done' ? 'on' : 'off' })),
                 h('span', { class: 'casey-progress-label' }, stageLabel(s)),
                 i < PIPELINE.length - 1 ? h('span', { class: 'casey-progress-line', 'aria-hidden': 'true' }) : null

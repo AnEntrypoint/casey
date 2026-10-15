@@ -2,7 +2,7 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
 import { DetailRow } from '/design/src/components/content/row.js';
-import { Alert } from '/design/src/components/content/feedback.js';
+import { Alert, FilterPills } from '/design/src/components/content/feedback.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { SearchInput } from 'ds/components/content.js';
 import { state, setActiveId, schedule } from '../state.js';
@@ -40,15 +40,21 @@ function setQuery(v) {
 
 function matchesQuery(c, place) {
     if (!query) return true;
-    const hay = [c.ref, c.subject, c.reason, c.assignee, place].filter(Boolean).join(' ').toLowerCase();
+    const hay = [c.ref, c.subject, c.reason, assigneeName(c.assignee), place].filter(Boolean).join(' ').toLowerCase();
     return hay.includes(query.toLowerCase());
 }
 
 function filterBar() {
-    const opt = (val, label) => Btn({
-        size: 'sm', variant: filter === val ? 'primary' : 'ghost', children: label, onClick: () => setFilter(val),
+    return FilterPills({
+        label: word('ui.secretary_panel_what'),
+        selected: filter,
+        options: [
+            { id: 'all', label: word('ui.secretary_panel_all') },
+            { id: 'me', label: word('ui.secretary_panel_mine') },
+            { id: 'unassigned', label: word('ui.secretary_panel_unassigned') },
+        ],
+        onSelect: setFilter,
     });
-    return h('div', { class: 'ds-btn-row' }, opt('all', word('ui.secretary_panel_all')), ' ', opt('me', word('ui.secretary_panel_mine')), ' ', opt('unassigned', word('ui.secretary_panel_unassigned')));
 }
 
 const headers = () => [
@@ -103,7 +109,7 @@ function searchBar(resultCount) {
         value: query,
         placeholder: word('ui.secretary_panel_search_placeholder'),
         label: word('ui.secretary_panel_search_label'),
-        resultCount: word(resultCount === 1 ? 'ui.secretary_panel_result_one' : 'ui.secretary_panel_result_many', { count: resultCount }),
+        resultCount: resultCount == null ? null : word(resultCount === 1 ? 'ui.secretary_panel_result_one' : 'ui.secretary_panel_result_many', { count: resultCount }),
         onInput: setQuery,
     }));
 }
@@ -111,7 +117,7 @@ function searchBar(resultCount) {
 export function SecretaryPanel() {
     loader.ensureLoaded();
     loadRoster(schedule);
-    let total = 0;
+    let total = null;
     const body = loader.slot(() => {
         const j = state._secretary;
         const allPlaces = (j && j.places) || [];
