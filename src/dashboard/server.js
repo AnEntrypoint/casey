@@ -35,6 +35,7 @@ import { registerOperations } from './routes/operations.js'
 import { registerTranslate } from './routes/translate.js'
 import { registerTiles, CLIENT_TILE_URL } from './routes/tiles.js'
 import { publicSiteDir, landingHandler } from './routes/public-site.js'
+import { guiActionLogger } from './gui-action-log.js'
 const esc = escapeHtml
 import {
   COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
@@ -298,6 +299,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   const SHELL_BUILD_ID = shellBuildId(PUBLIC_DIR, [...SHELL_ASSET_URLS, ...SHELL_MODULE_URLS], !!PUBLIC_SITE_ROOT)
   const SHELL_ENTRY = PUBLIC_SITE_ROOT ? '/app' : '/'
   registerWhatsappWebhook(app, { express, resolveWhatsappAdapter })
+  app.use(guiActionLogger())
   app.use(compressResponses)
   app.use(express.json())
   app.use(express.urlencoded({ extended: false }))
