@@ -12,6 +12,14 @@ export function routeTemplate(req) {
     .slice(0, 200)
 }
 
+export function operatorFields(req) {
+  const admin = req.caseyViewAs?.by
+  const adminName = typeof admin === 'string' ? admin : (admin?.username ?? null)
+  const viewed = req.caseyAccount?.username ?? null
+  if (adminName) return { operator: adminName, viewed_as: viewed }
+  return { operator: viewed }
+}
+
 export function guiActionLogger() {
   return (req, res, next) => {
     if (!LOGGED_METHODS.has(req.method)) return next()
@@ -23,7 +31,7 @@ export function guiActionLogger() {
           method: req.method,
           route: routeTemplate(req),
           status: res.statusCode,
-          operator: req.caseyAccount?.username ?? null,
+          ...operatorFields(req),
           duration_ms: Date.now() - startedAt,
         }))
       } catch {}
