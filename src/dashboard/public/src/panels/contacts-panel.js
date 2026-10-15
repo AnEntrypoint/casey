@@ -22,7 +22,7 @@ const h = webjsx.createElement;
 
 const busyIds = new Set();
 
-const view = { segment: null, q: '', addOpen: false };
+const view = { segment: null, q: '', addOpen: false, loading: false };
 
 async function query() {
     const q = view.q.trim();
@@ -43,8 +43,10 @@ function refetch(delay) {
     clearTimeout(timer);
     timer = setTimeout(async () => {
         const mine = ++seq;
-        try { const j = await query(); if (mine === seq) { state._contacts = j; schedule(); } }
+        view.loading = true; schedule();
+        try { const j = await query(); if (mine === seq) { state._contacts = j; } }
         catch (e) { if (mine === seq) { toast(await failMsg(e, word('ui.contacts_panel_not_updated')), 'err'); } }
+        if (mine === seq) { view.loading = false; schedule(); }
     }, delay || 0);
 }
 
@@ -134,6 +136,7 @@ export function ContactsPanel() {
                     onSelect: (key) => { view.segment = key; refetch(0); },
                 }),
                 TextField({ key: 'people-q', name: 'people-q', 'aria-label': word('ui.contacts_panel_search'), placeholder: word('ui.contacts_panel_search'), value: view.q, onInput: (v) => { view.q = v; refetch(300); } })),
+            view.loading ? h('p', { key: 'busy', class: 'casey-hint', role: 'status' }, word('ui.contacts_panel_loading')) : null,
             shown.length ? Table({
                 headers: [word('ui.contacts_panel_h_who'), word('ui.contacts_panel_h_channel'), word('ui.contacts_panel_h_role'), word('ui.contacts_panel_h_last_checkin'), word('ui.contacts_panel_h_actions')],
                 rows: shown.map((c) => {

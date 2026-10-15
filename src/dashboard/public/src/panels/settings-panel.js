@@ -20,10 +20,11 @@ const THRESH_META = {
     unsentDraftMs: ['ui.settings_panel_draft_label', 'ui.settings_panel_draft_hint'],
 };
 
-function hoursOf(ms) { return Math.round((ms / 3600000) * 10) / 10; }
+function hoursOf(ms) { return Math.round((ms / 3600000) * 10000000) / 10000000; }
 
 let saving = false;
 let draft = {};
+let loaded = {};
 
 const loader = createPanelLoader({
     what: () => word('ui.settings_panel_what'),
@@ -32,8 +33,12 @@ const loader = createPanelLoader({
     apply: (j) => {
         state._thresholds = j;
         draft = {};
+        loaded = {};
         for (const k of Object.keys(THRESH_META)) {
-            if (j.thresholds && j.thresholds[k] != null) draft[k] = String(hoursOf(j.thresholds[k]));
+            if (j.thresholds && j.thresholds[k] != null) {
+                draft[k] = String(hoursOf(j.thresholds[k]));
+                loaded[k] = draft[k];
+            }
         }
     },
 });
@@ -41,12 +46,17 @@ const loader = createPanelLoader({
 async function save() {
     const patch = {};
     for (const [k, v] of Object.entries(draft)) {
+        if (v === loaded[k]) continue;
         const n = parseFloat(v);
-        if (!Number.isFinite(n)) {
+        if (!Number.isFinite(n) || n < 0) {
             toast(word('ui.settings_panel_invalid_hours'), 'err');
             return;
         }
         patch[k] = Math.round(n * 3600000);
+    }
+    if (!Object.keys(patch).length) {
+        toast(word('ui.fields_editor_nothing_to_save'), 'ok');
+        return;
     }
     saving = true; schedule();
     try {

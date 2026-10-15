@@ -32,15 +32,22 @@ const fieldDefs = () => (cfg().report_sections || []).flatMap((s) => s.keys.map(
 async function load(id) {
   resetOptionField();
   fc.id = id; fc.loading = true; fc.error = ''; fc.lost = false; fc.data = null; fc.confirmedFor = null; fc.draft = {}; fc.note = '';
-  try { fc.data = await fetchFieldCase(id); }
-  catch (e) { fc.error = (e && e.status === 404) ? word('ui.field_case_not_open', { entity: entityLabel() }) : word('ui.field_case_open_failed', { entity: entityLabel() }); }
-  fc.loading = false; schedule();
+  let data = null, error = '';
+  try { data = await fetchFieldCase(id); }
+  catch (e) { error = (e && e.status === 404) ? word('ui.field_case_not_open', { entity: entityLabel() }) : word('ui.field_case_open_failed', { entity: entityLabel() }); }
+  if (fc.id !== id) return;
+  fc.data = data; fc.error = error; fc.loading = false; schedule();
 }
 async function reload() {
-  if (!fc.id) return;
-  const keep = { draft: fc.draft, note: fc.note, confirmedFor: fc.confirmedFor };
-  try { fc.data = await fetchFieldCase(fc.id); fc.lost = false; } catch (e) { if (e && e.status === 404) fc.lost = true; }
-  Object.assign(fc, keep); schedule();
+  const id = fc.id;
+  if (!id) return;
+  try { const fresh = await fetchFieldCase(id); if (fc.id !== id) return; fc.data = fresh; fc.lost = false; }
+  catch (e) {
+    if (fc.id !== id) return;
+    if (e && e.status === 404) fc.lost = true;
+    else toast(word('ui.field_case_open_failed', { entity: entityLabel() }), 'warn');
+  }
+  schedule();
 }
 
 async function failed(e, fallback) {
@@ -133,8 +140,9 @@ async function sendBack(c, r) {
   const missing = mandatory().filter((f) => !has(r, f.key)).map((f) => f.label);
   const text = await confirmDialog({
     title: word('ui.field_case_send_back_title', { ref: c.ref }),
-    message: word('ui.field_case_send_back_message', { identity: identity(c), missing: missing.length ? word('ui.field_case_send_back_missing', { list: missing.join(', ') }) : '' }),
+    message: word('ui.field_case_send_back_message', { identity: identity(c), missing: missing.length ? word('ui.field_case_send_back_missing', { list: missing.join(word('ui.field_app_sep_comma')) }) : '' }),
     inputLabel: word('ui.field_case_send_back_input'), confirmLabel: word('ui.field_case_send_back_confirm', { ref: c.ref }),
+    requireInput: !missing.length,
   });
   if (text === null || text === undefined) return;
   try { await postSendBack(c.id, c.ref, text, missing); toast(word('ui.field_case_sent_back', { identity: identity(c) }), 'ok'); await reload(); }
@@ -189,7 +197,7 @@ function SignOffCard(c, data, r, write) {
       tech ? h('div', { class: 'casey-timeline-actions' },
         Btn({ variant: 'primary', disabled: !canSign, children: word('ui.field_case_sign_button', { ref: c.ref }), onClick: () => signOff(c, data), title: canSign ? word('ui.field_case_finish_title', { entity: entityLabel() }) : word('ui.field_case_not_ready', { reason: missing.length ? word('ui.field_case_reason_missing') : word('ui.field_case_reason_stage') }) }),
         Btn({ variant: 'ghost', children: word('ui.field_case_send_back_ranger'), onClick: () => sendBack(c, r) })) : null,
-      tech && !canSign && missing.length ? h('p', { class: 'casey-hint' }, word('ui.field_case_unavailable_until', { fields: missing.map((f) => f.label).join(', ') })) : null,
+      tech && !canSign && missing.length ? h('p', { class: 'casey-hint' }, word('ui.field_case_unavailable_until', { fields: missing.map((f) => f.label).join(word('ui.field_app_sep_comma')) })) : null,
       tech && !canSign && !missing.length ? h('p', { class: 'casey-hint' }, word('ui.field_case_unavailable_stage', { entity: entityLabel() })) : null,
     ].filter(Boolean),
   });

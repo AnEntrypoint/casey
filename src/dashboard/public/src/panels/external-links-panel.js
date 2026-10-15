@@ -2,6 +2,7 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Alert } from '/design/src/components/content/feedback.js';
 import { Btn, Chip } from '/design/src/components/shell/atoms.js';
+import { schedule } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchExternalLinks, postExternalLinkConfirm, postExternalLinkReject } from '../api.js';
 import { toast } from '../toasts.js';
@@ -21,23 +22,25 @@ const loader = createPanelLoader({
 });
 
 async function confirmLink(id) {
-    busyId = id;
+    if (busyId != null) return;
+    busyId = id; schedule();
     try {
         await postExternalLinkConfirm(id);
         toast(word('ui.external_links_panel_confirmed'), 'ok');
         loader.reload();
     } catch (e) { toast(word('ui.external_links_panel_not_confirmed'), 'warn'); }
-    busyId = null;
+    busyId = null; schedule();
 }
 
 async function rejectLink(id) {
-    busyId = id;
+    if (busyId != null) return;
+    busyId = id; schedule();
     try {
         await postExternalLinkReject(id);
         toast(word('ui.external_links_panel_rejected'), 'ok');
         loader.reload();
     } catch (e) { toast(word('ui.external_links_panel_not_rejected'), 'warn'); }
-    busyId = null;
+    busyId = null; schedule();
 }
 
 function confidenceTone(c) {

@@ -22,7 +22,7 @@ const STATUS = {
     active: { key: 'ui.invite_codes_status_active', tone: 'green' },
     used: { key: 'ui.invite_codes_status_used', tone: '' },
     expired: { key: 'ui.invite_codes_status_expired', tone: '' },
-    revoked: { key: 'ui.invite_codes_status_revoked', tone: 'red' },
+    revoked: { key: 'ui.invite_codes_status_revoked', tone: 'flame' },
 };
 
 const form = { tier: null, label: '', ttl: '72', uses: '1', count: '1', busy: false, error: null };

@@ -1,12 +1,19 @@
-import { setActiveId } from '../state.js';
+import { setActiveId, schedule } from '../state.js';
 import { LOCATION_SOURCE_LABEL } from '../map-model.js';
 import { rel, NO_TIME_TEXT } from '../format.js';
 import { countOf } from '../vocabulary.js';
 import { fetchMapWorkers, fetchMapLastReports, fetchOperatorIdentities } from '../api.js';
+import { toast } from '../toasts.js';
 import { word } from '../words.js';
 
 function cssVar(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || name;
+}
+
+function overlayFailed(mapState, flag) {
+    mapState[flag] = false;
+    schedule();
+    toast(word('ui.map_leaflet_load_failed'), 'warn');
 }
 
 function esc(s) {
@@ -36,7 +43,7 @@ export async function renderMapCoverage(mapState) {
     if (!mapState.showCoverage) return;
     try {
         const j = await fetchOperatorIdentities();
-        if (!j) return;
+        if (!j) { overlayFailed(mapState, 'showCoverage'); return; }
         const layer = window.L.layerGroup();
         for (const idOp of (j.identities || [])) {
             if (!idOp.areas || !idOp.areas.length) continue;
@@ -50,7 +57,7 @@ export async function renderMapCoverage(mapState) {
         }
         layer.addTo(map);
         mapState.coverageLayer = layer;
-    } catch (e) {  }
+    } catch (e) { overlayFailed(mapState, 'showCoverage'); }
 }
 
 export async function renderMapWorkers(mapState) {
@@ -59,7 +66,7 @@ export async function renderMapWorkers(mapState) {
     if (!mapState.showWorkers) return;
     try {
         const j = await fetchMapWorkers();
-        if (!j) return;
+        if (!j) { overlayFailed(mapState, 'showWorkers'); return; }
         mapState.workers = j.workers || [];
         const layer = window.L.layerGroup();
         for (const w of (j.workers || [])) {
@@ -80,7 +87,7 @@ export async function renderMapWorkers(mapState) {
         }
         layer.addTo(map);
         mapState.workersLayer = layer;
-    } catch (e) {  }
+    } catch (e) { overlayFailed(mapState, 'showWorkers'); }
 }
 
 export async function renderMapLastReports(mapState) {
@@ -89,7 +96,7 @@ export async function renderMapLastReports(mapState) {
     if (!mapState.showLastReports) return;
     try {
         const j = await fetchMapLastReports();
-        if (!j) return;
+        if (!j) { overlayFailed(mapState, 'showLastReports'); return; }
         mapState.lastReports = j.reports || [];
         const layer = window.L.layerGroup();
         for (const rpt of (j.reports || [])) {
@@ -102,5 +109,5 @@ export async function renderMapLastReports(mapState) {
         }
         layer.addTo(map);
         mapState.lastReportsLayer = layer;
-    } catch (e) {  }
+    } catch (e) { overlayFailed(mapState, 'showLastReports'); }
 }

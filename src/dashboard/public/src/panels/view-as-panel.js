@@ -31,7 +31,8 @@ export function ViewAsPanel() {
     loader.ensureLoaded();
     return loader.slot(() => {
         const live = accounts.filter(a => !a.disabled && a.role !== 'admin');
-        const roles = ORDER.filter(r => live.some(a => a.role === r));
+        const roles = ORDER.filter(r => live.some(a => a.role === r))
+            .concat([...new Set(live.map(a => a.role))].filter(r => !ORDER.includes(r)));
         return h('div', { class: 'field-home' },
             h('p', { class: 'casey-hint' }, word('ui.view_as_panel_lede')),
             roles.length ? roles.map(role => h('div', { key: role, class: 'ds-view-as-group' },

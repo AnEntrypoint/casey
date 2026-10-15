@@ -12,6 +12,8 @@ const h = webjsx.createElement;
 
 const CASEY_NOTIFIED_STAGES = ['in_progress', 'waiting', 'resolved'];
 
+let moving = false;
+
 export function Transitions({ c, transitions, onReload, key } = {}) {
     const open = state._transitionDialogFor === c.id;
     const target = state._transitionDialogTarget;
@@ -21,6 +23,8 @@ export function Transitions({ c, transitions, onReload, key } = {}) {
     const close = () => { state._transitionDialogFor = null; schedule(); };
 
     const confirm = async () => {
+        if (moving) return;
+        moving = true;
         try {
             const updated = await postTransition(c.id, target, reason || undefined);
             close();
@@ -29,10 +33,11 @@ export function Transitions({ c, transitions, onReload, key } = {}) {
                 : word('ui.transitions_moved_silent', { stage: stageLabel(target) }));
             if (onReload) await onReload(c.id);
         } catch (e) { toast(await failMsg(e, word('ui.transitions_not_changed', { stage: stageLabel(c.status) })), 'err'); }
+        finally { moving = false; }
     };
 
     return h('div', { key, class: 'casey-transitions' },
-        h('label', {}, word('ui.transitions_label')),
+        h('span', { class: 'casey-transitions-label' }, word('ui.transitions_label')),
         transitions && transitions.length
             ? h('div', { class: 'casey-transition-btns' }, ...transitions.map(t => Btn({
                 key: t, size: 'sm', variant: 'ghost', children: word('ui.transitions_button', { stage: stageLabel(t) }),

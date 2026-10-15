@@ -30,7 +30,7 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
 
     const send = async () => {
         const t = text.trim();
-        if (!t || sending) return;
+        if (!t || state._replySending) return;
         state._replySending = true; schedule();
         try {
             const r = await api('/api/cases/' + encodeURIComponent(c.id) + '/reply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t }) });
@@ -53,7 +53,7 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
             children: h('div', { class: 'casey-draft-actions' },
                 Btn({ size: 'sm', variant: 'primary', disabled: sending, children: sending ? word('ui.reply_box_sending') : word('ui.reply_box_approve'), onClick: async () => {
                     const t = text.trim();
-                    if (sending) return;
+                    if (state._replySending) return;
                     state._replySending = true; schedule();
                     try {
                         const j = await postDraftApprove(c.id, t);
@@ -66,9 +66,9 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
                     } catch (e) { state._replySending = false; toast(await failMsg(e, word('ui.reply_box_draft_failed')), 'err'); schedule(); }
                 } }),
                 Btn({ size: 'sm', variant: 'ghost', disabled: sending, children: word('ui.reply_box_discard'), onClick: async () => {
-                    if (sending) return;
-                    if (await confirmDialog({ title: word('ui.reply_box_discard_title'), message: word('ui.reply_box_discard_message'), confirmLabel: word('ui.reply_box_discard'), danger: true }) === null) return;
+                    if (sending || state._replySending) return;
                     state._replySending = true; schedule();
+                    if (await confirmDialog({ title: word('ui.reply_box_discard_title'), message: word('ui.reply_box_discard_message'), confirmLabel: word('ui.reply_box_discard'), danger: true }) === null) { state._replySending = false; schedule(); return; }
                     try { await postDraftDiscard(c.id); state._replySending = false; toast(word('ui.reply_box_discard_done'), 'ok'); if (onReload) await onReload(c.id); }
                     catch (e) { state._replySending = false; toast(await failMsg(e, word('ui.reply_box_discard_failed')), 'err'); schedule(); }
                 } })
@@ -96,16 +96,19 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
         }),
         Btn({ size: 'sm', variant: 'ghost', disabled: sending || state._instructSending || !instructText.trim(), children: state._instructSending ? word('ui.reply_box_sending') : word('ui.reply_box_instruct_send'), onClick: sendInstruct }));
 
+    const replyLabel = replyChannelLabel(c.channel)
+        ? word('ui.reply_box_reply_on', { channel: replyChannelLabel(c.channel) })
+        : word('ui.reply_box_reply_to');
+
     return h('div', { key, class: 'casey-reply-box' },
         draftBanner,
-        h('label', { class: 'casey-reply-label' }, replyChannelLabel(c.channel)
-            ? word('ui.reply_box_reply_on', { channel: replyChannelLabel(c.channel) })
-            : word('ui.reply_box_reply_to')),
+        h('span', { class: 'casey-reply-label' }, replyLabel),
         replyChannelLabel(c.channel) ? null : Alert({ kind: 'warn', children: word('ui.reply_box_no_app', { entity: entityLabel(), channel: channelLabel(c.channel) }) }),
         h('div', { onkeydown: (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); send(); } } },
             TextField({
                 multiline: true, rows: 3, value: text, maxLength: REPLY_MAXLEN,
                 placeholder: word('ui.reply_box_placeholder'),
+                'aria-label': replyLabel,
                 onInput: setText,
             })),
         instructBlock,

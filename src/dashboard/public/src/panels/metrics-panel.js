@@ -95,7 +95,7 @@ export function MetricsPanel() {
     const body = loader.slot(() => {
         const { overview, report, risk } = state._metrics || {};
         return h('div', {},
-            overview ? summaryCards(overview) : Alert({ kind: 'warn', children: word('ui.metrics_panel_load_failed') }),
+            overview ? summaryCards(overview) : Alert({ kind: 'warn', children: h('div', {}, word('ui.metrics_panel_load_failed') + ' ', Btn({ size: 'sm', variant: 'ghost', children: word('ui.panel_load_try_again'), onClick: () => loader.reload() })) }),
             risk ? atRiskByType(risk) : null,
             report ? byTypeTable(report) : null);
     });

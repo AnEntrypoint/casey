@@ -21,7 +21,7 @@ const loader = createPanelLoader({
 
 function statRow(mode, s) {
     const fieldsPct = s.total_fields ? Math.round(((s.avg_filled ?? 0) / s.total_fields) * 100) : 0;
-    const vcPct = s.vc_total ? Math.round((s.vc_complete / s.count) * 100) : 0;
+    const vcPct = s.vc_total && s.count ? Math.round((s.vc_complete / s.count) * 100) : 0;
     const vcAlarm = s.count > 0 && s.vc_complete === 0;
     const essentialPct = s.vc_total ? Math.round(((s.avg_vc_filled ?? 0) / s.vc_total) * 100) : 0;
     return [

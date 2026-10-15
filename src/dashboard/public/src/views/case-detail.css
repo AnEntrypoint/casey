@@ -21,7 +21,7 @@
 .casey-meta-toggle{display:inline-flex;align-items:center;gap:var(--space-1);background:transparent;border:0;color:var(--fg-3);cursor:pointer;padding:var(--space-1) 0;font-size:inherit;transition:color var(--dur-snap) var(--ease)}
 
 .casey-meta-toggle:hover{color:var(--fg)}
-.casey-meta-body{display:flex;align-items:center;gap:var(--space-2);margin-top:var(--space-1)}
+.casey-meta-body{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);margin-top:var(--space-1)}
 .casey-meta-id{font-family:var(--ff-mono);font-size:var(--fs-pico);color:var(--fg-3)}
 
 .casey-progress{display:flex;flex-wrap:wrap;align-items:center;gap:0;row-gap:var(--space-1);padding:var(--space-2) 0}
@@ -59,7 +59,7 @@
 .casey-rep-value{min-width:0;overflow-wrap:anywhere}
 .casey-rep-editable:hover,.casey-rep-editable:focus{background:var(--bg-2);outline:none}
 .casey-rep-editable:focus-visible{outline:var(--focus-w) solid var(--focus-color);outline-offset:-2px}
-.casey-rep-edit-actions{display:flex;gap:var(--space-1-75)}
+.casey-rep-edit-actions{display:flex;flex-wrap:wrap;gap:var(--space-1-75)}
 
 .casey-detail-pane .casey-rep-note-btn{background:transparent;border:0;color:var(--accent-ink);cursor:pointer;padding:0;height:var(--ctl-sm);font-size:var(--fs-pico);align-self:flex-start}
 @media (pointer: coarse){.casey-rep-note-btn{min-height:44px}}
@@ -86,7 +86,7 @@
 .casey-transition-btns{display:flex;flex-wrap:wrap;gap:var(--space-1)}
 .casey-hint{font-size:var(--fs-nano);color:var(--fg-3)}
 
-.casey-draft-actions{display:flex;gap:var(--space-2);margin-top:var(--space-2)}
+.casey-draft-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-2)}
 .casey-reply-box{display:flex;flex-direction:column;gap:var(--space-2)}
 .casey-reply-label{font-size:var(--fs-nano);color:var(--fg-3)}
 .casey-reply-send-row{display:flex;justify-content:flex-end}
@@ -108,14 +108,14 @@
 
 .casey-share-url{font-size:var(--fs-sm);word-break:break-all;background:var(--bg-2);border-radius:var(--r-0);padding:var(--space-2) var(--space-1-75)}
 
-.casey-timeline-actions{display:flex;gap:var(--space-2);justify-content:flex-end}
+.casey-timeline-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);justify-content:flex-end}
 
 @media (prefers-reduced-motion: reduce){
   .casey-progress-line,.casey-rep-editable,.casey-meta-toggle{transition:none;animation:none}
 }
 
 @media (max-width: 480px){
-  .casey-detail-pane{padding-left:0;padding-right:0}
+  .casey-detail-pane{padding-left:var(--space-3);padding-right:var(--space-3)}
   .casey-report{padding-left:var(--space-2);padding-right:var(--space-2)}
 }
 

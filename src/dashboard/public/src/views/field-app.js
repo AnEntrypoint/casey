@@ -8,14 +8,14 @@ import { FeedbackDialog } from '../components/feedback-dialog.js';
 import { ToastTray } from '../components/toast-tray.js';
 import { Dialog, confirmDialog } from '../components/dialog-shell.js';
 import { MapPanel } from '../panels/map-panel.js';
-import { PillButton, QueueMore } from '../components/filter-chip.js';
+import { PillButton } from '../components/filter-chip.js';
 import { toast, failMsg } from '../toasts.js';
 import { createCase } from '../api.js';
 import { fetchFieldCases, pollFieldCases, isTechnician, roleName } from '../api-roles.js';
 import { pushHash } from '../route.js';
 import { setActiveId } from '../state.js';
 import { stageLabel, headline, rel } from '../format.js';
-import { brandName, entityLabel, entityLabelPlural, EntityLabelPlural, countOf } from '../vocabulary.js';
+import { brandName, entityLabel, entityLabelPlural, countOf } from '../vocabulary.js';
 import { word } from '../words.js';
 import { ViewTitle, VIEW_TITLE_ID } from './view-title.js';
 import { FieldCaseView, resetFieldCase } from './field-case.js';
@@ -240,7 +240,7 @@ function Filters(d) {
 function ClosedList(d) {
   const title = word('ui.field_closed_title');
   const more = d.closedOn && fs.closed.length < fs.closedTotal
-    ? [QueueMore({ key: 'more', onClick: showMoreClosed, children: word('ui.field_show_more') })] : [];
+    ? [Btn({ key: 'more', variant: 'ghost', size: 'sm', class: 'ds-queue-more', disabled: fs.closedBusy, onClick: showMoreClosed, children: word('ui.field_show_more') })] : [];
   const rows = d.closed.map((c) => Row(c, { showMissing: false }));
   return Panel({ title, count: d.closed.length || undefined, children: [rows.length ? h('div', { key: 'rows' }, ...rows) : (fs.error ? null : h('p', { key: 'empty', class: 'casey-hint' }, d.closedOn ? word('ui.field_closed_empty') : word('ui.field_app_nothing_closed'))), ...more].filter(Boolean) });
 }
@@ -310,7 +310,7 @@ export function FieldApp() {
       ViewTitle(title),
       h('div', { class: 'casey-timeline-actions' },
         Btn({ variant: 'primary', children: [Icon('plus', { size: 15 }), word('ui.field_app_new_button', { entity: entityLabel() })], onClick: addReport, 'aria-label': word('ui.field_app_start_new_aria', { entity: entityLabel() }) }),
-        Btn({ variant: 'ghost', children: word('ui.field_app_refresh'), onClick: refreshFieldLists })),
+        Btn({ variant: 'ghost', disabled: fs.loading, children: word('ui.field_app_refresh'), onClick: refreshFieldLists })),
       Filters(fs.view === 'home' && fs.loaded ? derived : null),
       fs.view === 'map' ? MapView() : Home(derived));
   const crumb = Crumb({ trail: [brand], leaf: roleName(), right: [h('div', { key: 'appbar', class: 'ds-appbar' }, AccountMenu())] });
@@ -319,7 +319,9 @@ export function FieldApp() {
     AppShell({
       topbar: Topbar({ brand, leaf: roleName(), items: [], themeToggle: false }), crumb, side: nav(),
       status: Status({ left: [h('span', { key: 'c' }, !fs.loaded ? word('ui.field_app_loading_reports') : (fs.error ? word('ui.field_app_count_unavailable') : word('ui.field_app_you_have', { count: countOf(fs.openTotal) })))], right: [h('span', { key: 'n' }, state.connLost ? word('ui.field_app_not_connected') : word('ui.field_app_connected'))], ariaLabel: word('ui.field_app_status_aria') }),
-      main: [main], bannerLabel: word('ui.field_app_top_bar'), mainLabelledby: VIEW_TITLE_ID,
+      main: [main], bannerLabel: word('ui.field_app_top_bar'),
+      mainLabelledby: open ? undefined : VIEW_TITLE_ID,
+      mainLabel: open ? word('ui.field_case_header_label', { entity: entityLabel() }) : undefined,
     }),
     FieldHelp(),
     FeedbackDialog(),

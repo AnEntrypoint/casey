@@ -10,7 +10,9 @@ import * as api from './api.js';
 import { checkHandoffs, setInboxBadge, setBaseTitle } from './components/handoff-banner.js';
 import { registerRefreshAll, registerOpenIntakeNew } from './views/nav-config.js';
 import { openCase, closeCase, reloadCases as reloadCaseListRows, promptNewCase } from './views/case-list-detail-layout.js';
-import { brandName, entityLabelPlural } from './vocabulary.js';
+import { brandName, entityLabel, entityLabelPlural } from './vocabulary.js';
+import { toast } from './toasts.js';
+import { word } from './words.js';
 
 import { StatsPanel } from './panels/stats-panel.js';
 import { SettingsPanel } from './panels/settings-panel.js';
@@ -111,7 +113,8 @@ registerKeyboardHandlers({
   claim: async () => {
     const id = state.activeId || state._focusRowId;
     if (!id) return;
-    try { await api.postBulk([id], 'claim'); await reloadCaseListRows(); } catch {  }
+    try { await api.postBulk([id], 'claim'); await reloadCaseListRows(); }
+    catch { toast(word('ui.header_claim_failed', { entity: entityLabel() }), 'warn'); }
   },
   focusReply: () => { const el = document.querySelector('.casey-reply-box textarea, textarea[name=reply]'); if (el) el.focus(); },
   newCase: () => promptNewCase(),

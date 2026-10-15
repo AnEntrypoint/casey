@@ -64,7 +64,7 @@ export async function api(path, opts = {}) {
     const headers = viewAs ? Object.assign({}, opts.headers || {}, { 'x-view-as': viewAs }) : opts.headers;
     res = await fetch(path, Object.assign({ credentials: 'include' }, opts, headers ? { headers } : {}, { signal }));
   } catch (e) {
-    setConnLost(true);
+    if (!(passedSignal && passedSignal.aborted)) setConnLost(true);
     throw e;
   } finally {
     clearTimeout(timeoutId);

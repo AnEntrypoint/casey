@@ -1,7 +1,7 @@
 import * as webjsx from 'webjsx';
 import { Dropdown } from 'ds/components/overlay-primitives.js';
 import { Icon } from 'ds/components/shell.js';
-import { state } from '../state.js';
+import { state, schedule } from '../state.js';
 import { openCaseRoute } from '../route.js';
 import { word } from '../words.js';
 const h = webjsx.createElement;
@@ -60,7 +60,7 @@ export function NotificationsCenter() {
     ],
     items,
     onSelect: (id) => {
-      if (id === 'snooze-all') { alerts.forEach(a => snoozeAlert(a.id)); return; }
+      if (id === 'snooze-all') { alerts.forEach(a => snoozeAlert(a.id)); schedule(); return; }
       if (id === 'none') return;
       const found = alerts.find(a => a.id === id);
       if (found && found.caseId) openCaseRoute(found.caseId);

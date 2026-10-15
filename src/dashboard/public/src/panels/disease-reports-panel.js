@@ -24,7 +24,7 @@ export function WordCloud(rows) {
   return h('ul', { class: 'rep-cloud', 'aria-label': word('ui.disease_reports_panel_cloud_aria') },
     ...named.slice(0, 30).map((r) => {
       const step = 1 + Math.min(4, Math.floor((r.count / max) * 4.999));
-      return h('li', { key: r.disease, class: 'rep-cloud-w rep-cloud-' + step, title: word(r.count === 1 ? 'ui.disease_reports_panel_case_one' : 'ui.disease_reports_panel_case_many', { count: r.count }) }, r.disease);
+      return h('li', { key: r.disease, class: 'rep-cloud-w rep-cloud-' + step, title: word(r.count === 1 ? 'ui.disease_reports_panel_case_one' : 'ui.disease_reports_panel_case_many', { count: r.count }) }, nice(r.disease));
     }));
 }
 
@@ -90,7 +90,7 @@ export function DiseaseReportsPanel() {
         [orBelow(r.total), word('ui.disease_reports_panel_kpi_signed_off')],
         ...(suspected && r.total != null ? [[String(r.total - suspected.count), word('ui.disease_reports_panel_kpi_confirmed_or_not')], [String(suspected.count), word('ui.disease_reports_panel_kpi_suspected_only')]] : []),
         [String(diseases.length), word('ui.disease_reports_panel_kpi_diseases_found')],
-        [top ? top.disease : '--', word('ui.disease_reports_panel_kpi_most_common')],
+        [top ? nice(top.disease) : '--', word('ui.disease_reports_panel_kpi_most_common')],
         [String(namedAreas.length), word('ui.disease_reports_panel_kpi_areas_named')],
       ] }),
       r.ruled_out ? h('p', { class: 'casey-hint' }, word('ui.disease_reports_panel_ruled_out', { count: r.ruled_out })) : null,

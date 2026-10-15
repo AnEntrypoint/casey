@@ -62,6 +62,7 @@ function storedTranslations(events) {
     return out;
 }
 const TRANSLATE_MAX_CHARS = 2000;
+let olderLoading = false;
 const isContactMessage = (e) => e.kind === 'inbound' && e.actor === 'contact';
 export function reportLanguage(c) {
     try { const r = c && c.report ? JSON.parse(c.report) : {}; const l = r && r.language_detected; return typeof l === 'string' ? l.trim().slice(0, 40) : ''; } catch { return ''; }
@@ -156,11 +157,14 @@ export function Timeline({ caseId, events, eventsTotal, key, canTranslate = fals
     const hasMore = eventsTotal != null && events.length < eventsTotal;
 
     const loadMore = async () => {
+        if (olderLoading) return;
+        olderLoading = true; schedule();
         const off = events.length;
         try {
             const older = await fetchCaseEvents(caseId, { offset: String(off) });
             appendTimelineEvents(older.events || []);
         } catch (err) { toast(await failMsg(err, word('ui.timeline_older_failed')), 'err'); }
+        finally { olderLoading = false; schedule(); }
     };
 
     return h('div', { key, class: 'casey-timeline-wrap' },
@@ -176,6 +180,6 @@ export function Timeline({ caseId, events, eventsTotal, key, canTranslate = fals
             const shown = canTranslate && isContactMessage(e) ? (trState()[e.id] && trState()[e.id].english ? trState()[e.id] : stored[e.id]) : null;
             return [TimelineRow({ key: e.id || i, e, caseId, caseRef, canTranslate, shown, language }), shown ? TranslationNote({ key: 'tr-' + (e.id || i), shown }) : null].filter(Boolean);
         })),
-        hasMore ? Btn({ variant: 'ghost', size: 'sm', class: 'casey-load-older', onClick: loadMore, children: word('ui.timeline_load_older') }) : null
+        hasMore ? Btn({ variant: 'ghost', size: 'sm', class: 'casey-load-older', disabled: olderLoading, onClick: loadMore, children: word('ui.timeline_load_older') }) : null
     );
 }
