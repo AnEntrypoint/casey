@@ -17,7 +17,6 @@ export const PARENT_MSG = Object.freeze({
 })
 
 export function ipcSend(target, type, payload = {}) {
-  if (target && typeof target.send === 'function') {
-    try { target.send({ type, payload }) } catch {  }
-  }
+  if (!target || typeof target.send !== 'function' || !target.connected) return
+  try { target.send({ type, payload }, () => {}) } catch {  }
 }
