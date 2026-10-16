@@ -4,6 +4,7 @@ import { App, registerModalBody, registerPanelBody } from './views/app-view.js';
 import { checkSession } from './auth.js';
 import { installGlobalKeyboard, registerKeyboardHandlers } from './keyboard.js';
 import { initRouteSync, applyRouteToState, currentRoute, closeCaseRoute } from './route.js';
+import { installClientLog, forwardRoute } from './client-log.js';
 import { applyView, decodeView } from './saved-views.js';
 import { initTheme } from './components/account-menu.js';
 import * as api from './api.js';
@@ -213,7 +214,10 @@ async function boot() {
   await refreshDegradedTurns();
 }
 
+installClientLog();
+
 initRouteSync((r) => {
+  if (state.authed) forwardRoute(r);
   if (r.home) setHomeView(r.home);
   if (r.caseId) setActiveId(r.caseId);
   else if (state.activeId != null) {
@@ -233,6 +237,7 @@ initRouteSync((r) => {
     return;
   }
   await boot();
+  forwardRoute(currentRoute());
   render();
   maybeShowOnboarding();
 })();

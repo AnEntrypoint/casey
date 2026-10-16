@@ -39,3 +39,22 @@ export function guiActionLogger() {
     next()
   }
 }
+
+export function guiRequestLogger() {
+  return (req, res, next) => {
+    const startedAt = Date.now()
+    res.once('finish', () => {
+      try {
+        console.log(JSON.stringify({
+          t: new Date().toISOString(), level: 'info', component: 'dashboard', msg: 'gui_request',
+          method: req.method,
+          route: routeTemplate(req),
+          status: res.statusCode,
+          ...operatorFields(req),
+          duration_ms: Date.now() - startedAt,
+        }))
+      } catch {}
+    })
+    next()
+  }
+}
