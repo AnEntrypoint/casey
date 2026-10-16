@@ -7,13 +7,14 @@ import { CaseDetailView } from './case-detail-view.js';
 import { openCase, closeCase } from './case-list-detail-layout.js';
 import { ViewTitle } from './view-title.js';
 import { panelTitle } from './nav-config.js';
+import { word } from '../words.js';
 
 const h = webjsx.createElement;
 
 function paneToggle() {
   return h('div', { class: 'ds-pane-toggle' }, FilterPills({
-    label: 'Map or list', selected: state.mobilePane,
-    options: [{ id: 'map', label: 'Map' }, { id: 'list', label: 'List' }],
+    label: word('ui.map_mode_label'), selected: state.mobilePane,
+    options: [{ id: 'map', label: word('ui.map_mode_map') }, { id: 'list', label: word('ui.map_mode_list') }],
     onSelect: setMobilePane,
   }));
 }
@@ -25,7 +26,7 @@ export function MapCommandCenter() {
       + (hasActive ? ' has-active' : '')
       + ' m-' + (state.mobilePane === 'list' ? 'list' : 'map'),
   },
-    ViewTitle(panelTitle('home_map') || 'Map'),
+    ViewTitle(panelTitle('home_map') || word('ui.map_title')),
     paneToggle(),
     h('div', { class: 'case-list-pane', key: 'map' },
       MapPanel()
@@ -34,7 +35,7 @@ export function MapCommandCenter() {
       hasActive
         ? h('div', { class: 'ds-rail-stack' },
             h('div', { class: 'ds-rail-back' },
-              Btn({ variant: 'ghost', children: 'Back to the list', onClick: () => closeCase() })),
+              Btn({ variant: 'ghost', children: word('ui.map_back_to_list'), onClick: () => closeCase() })),
             CaseDetailView({ onClose: closeCase, onOpenCase: openCase, key: 'detail-view', showBack: false }))
         : MapRail()
     )
