@@ -324,7 +324,7 @@ export function FieldCaseView({ id, onBack }) {
   const back = Btn({ variant: 'link', size: 'sm', class: 'casey-back-btn', 'aria-label': word('ui.field_case_back_label'), onClick: onBack, children: [Icon('chevron-left', { size: 14 }), word('ui.field_case_back')] });
   if (fc.error) return h('div', { class: 'casey-detail-pane' }, back, h('p', { class: 'casey-hint' }, fc.error),
     h('div', { class: 'casey-timeline-actions' }, Btn({ variant: 'primary', size: 'sm', children: word('ui.field_case_try_again'), onClick: () => load(id) })));
-  if (!fc.data || fc.data.case.id !== id) return h('div', { class: 'casey-detail-pane' }, back, Skeleton({ count: 5, height: '1.4em', label: word('ui.field_case_loading') }));
+  if (!fc.data || fc.data.case.id !== id) return h('div', { class: 'casey-detail-pane', key: 'field-case-' + id }, back, Skeleton({ count: 5, height: '1.4em', label: word('ui.field_case_loading') }));
   if (fc.lost) {
     const typed = [...Object.values(fc.draft), fc.note].map((v) => String(v || '').trim()).filter(Boolean);
     return h('div', { class: 'casey-detail-pane', key: 'field-case-lost-' + id },
