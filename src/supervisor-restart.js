@@ -10,11 +10,12 @@ export { RELOAD_DEBOUNCE_MS }
 export function createRestartCycle({ log, rt, sup, spawnWorker }) {
 
   function drainWorker() {
-    if (!rt.worker || !rt.worker.connected) return Promise.resolve()
+    const worker = rt.worker
+    if (!worker || worker.exitCode !== null || worker.signalCode !== null) return Promise.resolve()
+    if (!worker.connected) return terminateWorker(worker)
     return new Promise((resolve) => {
       rt.draining = true
 
-      const worker = rt.worker
       worker._expectedExit = true
       let done = false
       const finish = () => {
@@ -34,6 +35,24 @@ export function createRestartCycle({ log, rt, sup, spawnWorker }) {
         log.warn?.('[supervisor] drain deadline exceeded, force-killing worker')
         try { worker?.kill('SIGKILL') } catch {}
         finish()
+      }, DRAIN_DEADLINE_MS).unref?.()
+    })
+  }
+
+  function terminateWorker(worker) {
+    return new Promise((resolve) => {
+      rt.draining = true
+      worker._expectedExit = true
+      const finish = () => {
+        rt.draining = false
+        resolve()
+      }
+      worker.once('exit', finish)
+      try { worker.kill('SIGTERM') } catch {}
+      setTimeout(() => {
+        if (worker.exitCode !== null || worker.signalCode !== null) return
+        log.warn?.('[supervisor] disconnected worker ignored SIGTERM, force-killing', { pid: worker.pid })
+        try { worker.kill('SIGKILL') } catch {}
       }, DRAIN_DEADLINE_MS).unref?.()
     })
   }
