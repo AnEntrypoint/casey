@@ -92,7 +92,7 @@ export async function drainQueuedTurnsBody({ store, log, gateway, adapters }, { 
       }
     }
 
-    log?.info?.('[casey] queue drain complete', { scanned, drained })
+    if (scanned || drained) log?.info?.('[casey] queue drain complete', { scanned, drained })
     return { scanned, drained }
   }
 }
