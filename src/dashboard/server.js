@@ -20,6 +20,7 @@ import { registerTeam } from './routes/team.js'
 import { registerAreas } from './routes/areas.js'
 import { registerTeamImport } from './routes/team-import.js'
 import { registerFeedback } from './routes/feedback.js'
+import { registerClientLog } from './routes/client-log.js'
 import { registerWhatsappWebhook } from './routes/whatsapp-webhook.js'
 import { registerCases } from './routes/cases.js'
 import { registerAccounts } from './routes/accounts.js'
@@ -35,7 +36,7 @@ import { registerOperations } from './routes/operations.js'
 import { registerTranslate } from './routes/translate.js'
 import { registerTiles, CLIENT_TILE_URL } from './routes/tiles.js'
 import { publicSiteDir, landingHandler } from './routes/public-site.js'
-import { guiActionLogger } from './gui-action-log.js'
+import { guiActionLogger, guiRequestLogger } from './gui-action-log.js'
 const esc = escapeHtml
 import {
   COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
@@ -300,6 +301,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   const SHELL_ENTRY = PUBLIC_SITE_ROOT ? '/app' : '/'
   registerWhatsappWebhook(app, { express, resolveWhatsappAdapter })
   app.use(guiActionLogger())
+  app.use(guiRequestLogger())
   app.use(compressResponses)
   app.use(express.json())
   app.use(express.urlencoded({ extended: false }))
@@ -404,6 +406,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   registerAreas(app, deps)
   registerTeamImport(app, deps)
   registerFeedback(app, deps)
+  registerClientLog(app, deps)
   registerTiles(app, deps)
 
   const PWA_BRAND = BRAND.name

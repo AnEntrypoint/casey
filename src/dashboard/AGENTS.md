@@ -29,6 +29,7 @@ Imperatives for the operator console. Root `AGENTS.md` covers the access ladder,
 
 - `registerAuth` order: session -> CSRF Origin/Referer -> public -> `authGate` -> static. Never reorder. `/api/sync/*` is gate-exempt only via `requireScope`.
 - `changePassword` re-verifies the current password, bumps `session_epoch`, and its caller MUST re-issue the cookie. `deleteAccount` revokes the epoch BEFORE removing the row and never deletes the last enabled admin. Write epochs as strings. Self-revoke uses `req.caseyAccount.id`.
+- `POST /api/client-log` (routes/client-log.js) is session-gated; it keeps 30 lines per session per minute in memory and logs only level/event/detail/route/operator, each cut to 200 characters with control characters stripped. Every request (any method) gets a `gui_request` line from `guiRequestLogger`, mounted after the webhook; writes also keep `gui_action`. The browser hooks (public/src/client-log.js) forward message text and view names only, never case ids.
 - No bearer token or `?token=`. `secretary` is a legacy alias (never created new); `agent` is the unclaimed marker; `x-view-as` is admin-only and read-only.
 - `roleGate`: decide on the lower-cased prefix; media is exactly `/media/<caseId>/<file>` decoded, with `nosniff` and `Content-Disposition`; viewer allowlist holds only PII-free routes; `expected_ref` mismatch is 409.
 -> recall {query:"casey dashboard auth session epoch changePassword roleGate viewer allowlist media"}
