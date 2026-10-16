@@ -140,7 +140,9 @@ function Results(onDone) {
       b.applied ? null : Btn({ key: 'add', variant: 'primary', disabled: !canAdd || b.busy, children: b.busy ? word('ui.bulk_team_add_adding') : word(addKey, { count: s.create + s.update }), onClick: () => apply(onDone) }),
       Btn({ key: 'copy', variant: 'ghost', children: b.copied ? word('ui.bulk_team_add_copied') : word('ui.bulk_team_add_copy_results'), onClick: copyResults }),
       Btn({ key: 'clear', variant: 'ghost', children: b.applied ? word('ui.bulk_team_add_start_another') : word('ui.bulk_team_add_start_over'), onClick: reset })),
-    TextField({ key: 'copybox', name: 'bulk-results', label: word('ui.bulk_team_add_results_label'), multiline: true, rows: 4, value: resultsText(), onInput: () => {} }),
+    h('label', { key: 'copybox', class: 'ds-field' },
+      h('span', { key: 'l', class: 'ds-field-label' }, word('ui.bulk_team_add_results_label')),
+      h('textarea', { key: 'i', name: 'bulk-results', rows: 4, readonly: true, value: resultsText() })),
     !b.applied && s.create + s.update === 0 ? h('p', { key: 'none', class: 'casey-hint' }, word('ui.bulk_team_add_nothing_here')) : null);
 }
 
