@@ -40,7 +40,7 @@ export function createSupervisorState({ machine, log, onTransition, onRuntimeEve
     state = res.target
     ctx.since = nowMs
     if (reason) ctx.lastCrashReason = event === 'CRASH' || event === 'HEALTH_DEGRADED' ? reason : ctx.lastCrashReason
-    log.info?.('[supervisor] transition', { from, event, to: state, reason: reason || undefined })
+    if (from !== state || event !== 'HEALTH_OK') log.info?.('[supervisor] transition', { from, event, to: state, reason: reason || undefined })
     pushStateToWorker()
 
     if (AUDITED_EVENTS.has(event)) onRuntimeEvent(event, reason, nowMs)
