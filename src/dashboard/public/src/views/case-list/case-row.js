@@ -29,9 +29,9 @@ function guardrailTags(c) {
 
 function intakeSourceTag(c) {
   const tg = tagList(c);
-  if (tg.includes('intake_mode:manual')) return { label: 'Manual', tone: 'muted' };
-  if (tg.includes('intake_mode:public_form')) return { label: 'Form', tone: 'accent' };
-  if (tg.includes('intake_mode:channel')) return { label: 'AI', tone: 'accent' };
+  if (tg.includes('intake_mode:manual')) return { label: word('ui.intake_source_manual'), tone: 'muted' };
+  if (tg.includes('intake_mode:public_form')) return { label: word('ui.intake_source_form'), tone: 'accent' };
+  if (tg.includes('intake_mode:channel')) return { label: word('ui.intake_source_ai'), tone: 'accent' };
   return null;
 }
 

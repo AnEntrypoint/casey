@@ -1,4 +1,5 @@
 import { setViewAs, viewAsId } from './api.js';
+import { word } from './words.js';
 
 export function syncPreviewBar(whoami) {
   const old = document.getElementById('casey-preview-bar');
@@ -8,12 +9,12 @@ export function syncPreviewBar(whoami) {
   const bar = document.createElement('div');
   bar.id = 'casey-preview-bar';
   bar.setAttribute('role', 'status');
-  const who = whoami.display_name || whoami.username || 'this login';
+  const who = whoami.display_name || whoami.username || word('ui.preview_bar_this_login');
   const text = document.createElement('span');
-  text.textContent = 'Previewing ' + who + ' (' + String(whoami.role || '').replace(/_/g, ' ') + '). Read-only: nothing you do here changes anything.';
+  text.textContent = word('ui.preview_bar_text', { who, role: String(whoami.role || '').replace(/_/g, ' ') });
   const leave = document.createElement('button');
   leave.type = 'button';
-  leave.textContent = 'Leave the preview';
+  leave.textContent = word('ui.preview_bar_leave');
   leave.addEventListener('click', () => setViewAs(''));
   bar.append(text, leave);
   document.body.prepend(bar);

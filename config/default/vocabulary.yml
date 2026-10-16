@@ -1822,6 +1822,23 @@ ui:
   translate_too_long: "This message is too long to translate."
   translate_rate: "Too many translations just now. Wait a minute and try again."
   language_chip: "Written in {language}"
+  preview_bar_text: "Previewing {who} ({role}). Read-only: nothing you do here changes anything."
+  preview_bar_leave: "Leave the preview"
+  preview_bar_this_login: "this login"
+  saved_view_name_required: "Name is required."
+  saved_view_save_failed: "Could not save that view (name too long?)."
+  map_mode_label: "Map or list"
+  map_mode_map: "Map"
+  map_mode_list: "List"
+  map_title: "Map"
+  map_back_to_list: "Back to the list"
+  intake_source_manual: "Manual"
+  intake_source_form: "Form"
+  intake_source_ai: "AI"
+  match_notice: "Saved as \"{store}\" -- already on record for {label}, and {how}."
+  match_notice_llm: "the AI helper read it as the same thing"
+  match_notice_plain: "it is the same words"
+  match_notice_field: "this field"
 
 # --- Plain-words explanations shown when someone hovers a term. -----------------
 glossary:

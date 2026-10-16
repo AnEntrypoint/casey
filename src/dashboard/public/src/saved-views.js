@@ -1,4 +1,5 @@
 import { state, setFilt, setInboxMode } from './state.js';
+import { word } from './words.js';
 
 function fvOf(raw) {
   const out = {};
@@ -50,9 +51,9 @@ export function listNamedViews() {
 }
 
 export function saveCurrentView(name) {
-  if (!name || !name.trim()) return { ok: false, error: 'Name is required.' };
+  if (!name || !name.trim()) return { ok: false, error: word('ui.saved_view_name_required') };
   const ok = saveNamedView(name.trim(), currentView());
-  return ok ? { ok: true } : { ok: false, error: 'Could not save that view (name too long?).' };
+  return ok ? { ok: true } : { ok: false, error: word('ui.saved_view_save_failed') };
 }
 export function applyNamedView(name) {
   const v = getNamedView(name);
