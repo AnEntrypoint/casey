@@ -179,7 +179,7 @@ function logChatTurn(req, startedAt, outcome, thrown = null) {
     started_at: new Date(startedAt).toISOString(),
     duration_ms: Date.now() - startedAt,
     inbound_chars: inboundText.length,
-    inbound_text: inboundText,
+    inbound_text: '[redacted: the exact message is kept in the local case store]',
     outcome: thrown ? 'thrown' : (error === 'timeout' ? 'timeout' : (error ? 'error' : 'reply')),
     error,
     iterations: outcome?.iterations ?? 0,
