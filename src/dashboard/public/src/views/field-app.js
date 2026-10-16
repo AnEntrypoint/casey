@@ -138,9 +138,24 @@ function worstFirst(list) {
   return list.map((c) => [key(c), c]).sort((a, b) => { const x = a[0], y = b[0]; for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; }).map(([, c]) => c);
 }
 
-function openReport(id) { pushHash({ caseId: id }); setActiveId(id); }
+const VIEW_FOCUS_WINDOW_MS = 1500;
+let viewFocus = null;
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+function requestViewFocus(selector) { viewFocus = { selector, until: Date.now() + VIEW_FOCUS_WINDOW_MS, fresh: true }; }
+function settleViewFocus() {
+  if (!viewFocus) return;
+  if (Date.now() > viewFocus.until) { viewFocus = null; return; }
+  const active = document.activeElement;
+  if (!viewFocus.fresh && active && active !== document.body) return;
+  const el = document.querySelector('.field-app ' + viewFocus.selector);
+  if (!el) return;
+  viewFocus.fresh = false;
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ block: 'nearest', behavior: reduceMotion() ? 'auto' : 'smooth' });
+}
+function openReport(id) { requestViewFocus('.casey-back-btn'); pushHash({ caseId: id }); setActiveId(id); }
 function openRef(ref) { const hit = [...fs.mine, ...fs.signoff, ...fs.closed].find((c) => c.ref === ref); if (hit) openReport(hit.id); }
-function closeReport() { pushHash({ caseId: null }); setActiveId(null); resetFieldCase(); refreshFieldLists(); }
+function closeReport() { requestViewFocus('#ds-view-title'); pushHash({ caseId: null }); setActiveId(null); resetFieldCase(); refreshFieldLists(); }
 
 const HOLD_KEY = { Closed: 'ui.field_app_hold_closed', Claimed: 'ui.field_app_hold_claimed', Open: 'ui.field_app_hold_open' };
 function holdState(c) {
@@ -272,7 +287,7 @@ function MapView() {
 
 function nav() {
   const tech = isTechnician();
-  const go = (v) => (e) => { if (e && e.preventDefault) e.preventDefault(); if (state.activeId) closeReport(); fs.view = v; schedule(); };
+  const go = (v) => (e) => { if (e && e.preventDefault) e.preventDefault(); if (state.activeId) closeReport(); requestViewFocus('#ds-view-title'); fs.view = v; schedule(); };
   const home = tech ? word('ui.field_app_ready_sign_off') : word('ui.field_app_my_entity', { entity_plural: entityLabelPlural() });
   return Side({
     sections: [{
@@ -314,6 +329,7 @@ export function FieldApp() {
       Filters(fs.view === 'home' && fs.loaded ? derived : null),
       fs.view === 'map' ? MapView() : Home(derived));
   const crumb = Crumb({ trail: [brand], leaf: roleName(), right: [h('div', { key: 'appbar', class: 'ds-appbar' }, AccountMenu())] });
+  setTimeout(settleViewFocus, 0);
   return h('div', { class: 'ds-app-root field-app' },
     ConnectionBanner(),
     AppShell({
