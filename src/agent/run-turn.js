@@ -255,6 +255,7 @@ async function runTurnAttempt({
   if (entry) entry.lastUsedAt = Date.now()
 
   if (timedOut) {
+    agent.cancel({ kind: 'timeout' })
     return { result: null, error: 'timeout', messages: [], iterations: 0 }
   }
   return summarizeSince(agent, firstSeq)
