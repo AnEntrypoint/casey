@@ -100,11 +100,22 @@ async function languageHint(store, log, caseId) {
   catch (e) { log.warn?.('[casey] language hint unavailable for transcription', { caseId, error: e.message }); return null }
 }
 
+const PERSISTED_CHOICE_KEYS = ['chosen', 'source', 'confidence', 'llm_model', 'decided_at', 'note']
+
+function persistedCandidates(tr) {
+  if (!Array.isArray(tr.candidates)) return {}
+  const choice = tr.stt_choice
+  return {
+    stt_candidates: tr.candidates.map(({ text, ...meta }) => ({ ...meta, has_text: !!text })),
+    stt_choice: choice ? Object.fromEntries(PERSISTED_CHOICE_KEYS.filter(k => k in choice).map(k => [k, choice[k]])) : null,
+  }
+}
+
 export function inboundAudioData(msg, typedText) {
   const tr = msg._transcript
   if (!tr) return {}
   const base = { typed_chars: typedText.length }
-  const candidates = Array.isArray(tr.candidates) ? { stt_candidates: tr.candidates, stt_choice: tr.stt_choice || null } : {}
+  const candidates = persistedCandidates(tr)
   if (tr.unheard) return { ...base, ...candidates, stt_verdict: tr.text ? 'unheard' : 'failed', stt_failure: tr.unheard }
   return { ...base, ...candidates, stt_verdict: 'heard', transcribed: true, transcribed_by: 'ai_helper', stt: sttProvenance(tr) }
 }
