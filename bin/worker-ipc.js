@@ -27,7 +27,7 @@ export function installWorkerRuntimeIo({ casey, dash, forked, runtime }) {
       if (m.type === PARENT_MSG.DRAIN) drainAndExit(0)
       else if (m.type === PARENT_MSG.HEALTH_QUERY) reportHealth()
       else if (m.type === PARENT_MSG.STATE) runtime.applySnapshot(m.payload)
-      else if (m.type === PARENT_MSG.RUNTIME_EVENT) runtime.recordRuntimeEvent(m.payload || {})
+      else if (m.type === PARENT_MSG.RUNTIME_EVENT && !draining) runtime.recordRuntimeEvent(m.payload || {})
     })
     const hb = setInterval(reportHealth, 10_000)
     hb.unref?.()
