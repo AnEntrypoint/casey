@@ -15,6 +15,7 @@ const FIELD_ROLES = ['eco_ranger', 'animal_health_technician'];
 export const currentRole = () => (state.currentUser && state.currentUser.role) || null;
 export const isFieldRole = () => !!state.authed && !['admin', 'operator', 'secretary', 'viewer'].includes(currentRole());
 export const isViewerRole = () => !!state.authed && currentRole() === 'viewer';
+export const isAdminRole = () => !!state.authed && currentRole() === 'admin';
 export const isTechnician = () => currentRole() === 'animal_health_technician';
 export const ROLE_NAME = { eco_ranger: 'Eco Ranger', animal_health_technician: 'Animal Health Technician', viewer: 'Read-only viewer' };
 export const roleName = () => ROLE_NAME[currentRole()] || 'Field team';
