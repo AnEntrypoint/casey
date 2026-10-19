@@ -336,7 +336,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
       return { done: false, retryFeedback: `\n\n[System note: your previous reply was not sent because ${faults.join('; and because ')}.${alsoMulti} Keep it short, warm and in plain sentences, and never say any of this to them.]` }
     }
 
-    const crisisReply = persona.safetyText && (!safetyNumbers.length || verdict.reasons.some(r => /safety.?line.?missing/i.test(r)))
+    const crisisReply = persona.safetyText && verdict.reasons.some(r => /safety.?line.?missing/i.test(r))
     if (crisisReply) {
       const faultNames = faultRoutes.filter(([re]) => verdict.reasons?.some(r => re.test(r))).map(([re]) => re.source)
       await store.appendEvent(fresh.id, observation(`CRISIS-REPLY-REPLACED: the judged reply was not sent; the safety text was sent instead and the case was raised to operators (faults: ${faultNames.join(', ')})`))
