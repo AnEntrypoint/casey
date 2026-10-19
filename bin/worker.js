@@ -16,6 +16,9 @@ function crashLoud(kind, err) {
 }
 process.on('uncaughtException', (err) => crashLoud('uncaughtException', err))
 process.on('unhandledRejection', (err) => crashLoud('unhandledRejection', err))
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (err) => { if (err.code !== 'EPIPE') throw err })
+}
 
 function parseFlags(argv) {
   const f = {}
