@@ -39,6 +39,10 @@ async function startAutoUpdate() {
   const { execFile } = await import('node:child_process')
   const interval = Number(process.env.CASEY_AUTO_UPDATE_INTERVAL_MS) || 60_000
   const repoRoot = ROOT
+  if (!existsSync(path.join(repoRoot, '.git'))) {
+    console.log(`  auto-update: ${yellow('off')}${dim('   (no git checkout here; a release extract updates by redeploy)')}`)
+    return null
+  }
   let warnedSkip = false
   const git = (args) => new Promise((resolve) => execFile('git', args, { cwd: repoRoot }, (err, stdout, stderr) =>
     resolve({ err, out: String(stdout || ''), errText: String(stderr || (err && err.message) || '') })))
