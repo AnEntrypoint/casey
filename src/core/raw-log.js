@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { requireObservation } from './observation.js'
+import { withSeverity } from './log-severity.js'
 
 export const DEFAULT_MAX_SEGMENT_BYTES = 8 * 1024 * 1024
 const ARCHIVE_RE = /^observations\.(\d+)\.jsonl$/
@@ -39,10 +40,10 @@ export class RawLog {
     let archive = path.join(this.dir, `observations.${stamp}.jsonl`)
     while (fs.existsSync(archive)) archive = path.join(this.dir, `observations.${++stamp}.jsonl`)
     fs.renameSync(this.file, archive)
-    console.log(JSON.stringify({
+    console.log(JSON.stringify(withSeverity({
       t: new Date().toISOString(), level: 'info', component: 'raw-log',
       msg: 'raw_log_rotated', archive: path.basename(archive), bytes: size,
-    }))
+    })))
     return archive
   }
 
@@ -62,11 +63,11 @@ export class RawLog {
     } catch (e) {
       this._writeFailures += 1
       this._lastWriteError = e?.message || String(e)
-      console.error(JSON.stringify({
+      console.error(JSON.stringify(withSeverity({
         t: new Date().toISOString(), level: 'error', component: 'raw-log',
         msg: 'raw_log_append_failed', file: this.file, error: this._lastWriteError,
         write_failures: this._writeFailures,
-      }))
+      })))
       throw e
     }
     if (this._cache) this._cache.set(observation.id, observation)

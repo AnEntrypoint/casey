@@ -1,3 +1,5 @@
+import { withSeverity } from '../core/log-severity.js'
+
 const LOGGED_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const ID_LIKE_SEGMENT = /\d|^.{20,}$/
 
@@ -26,14 +28,14 @@ export function guiActionLogger() {
     const startedAt = Date.now()
     res.once('finish', () => {
       try {
-        console.log(JSON.stringify({
+        console.log(JSON.stringify(withSeverity({
           t: new Date().toISOString(), level: 'info', component: 'dashboard', msg: 'gui_action',
           method: req.method,
           route: routeTemplate(req),
           status: res.statusCode,
           ...operatorFields(req),
           duration_ms: Date.now() - startedAt,
-        }))
+        })))
       } catch {}
     })
     next()
@@ -45,14 +47,14 @@ export function guiRequestLogger() {
     const startedAt = Date.now()
     res.once('finish', () => {
       try {
-        console.log(JSON.stringify({
+        console.log(JSON.stringify(withSeverity({
           t: new Date().toISOString(), level: 'info', component: 'dashboard', msg: 'gui_request',
           method: req.method,
           route: routeTemplate(req),
           status: res.statusCode,
           ...operatorFields(req),
           duration_ms: Date.now() - startedAt,
-        }))
+        })))
       } catch {}
     })
     next()
