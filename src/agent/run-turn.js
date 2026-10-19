@@ -5,6 +5,7 @@ import { installCasePrompt } from '../../freddie-bundle/src/case-tools/case-prom
 import { LOCATION_STALE_MS } from '../hooks/prompt-context.js'
 import { resolveTierValue } from '../contact-tiers.js'
 import { eraseCaseSessions, agentKeyFor } from '../store/agent-sessions.js'
+import { withSeverity } from '../core/log-severity.js'
 
 let _ctx = null
 export function setAgentContext(ctx) {
@@ -27,7 +28,7 @@ export const AGENT_IDLE_TTL_MS = Number(process.env.CASEY_AGENT_IDLE_TTL_MS) || 
 const IDLE_SWEEP_INTERVAL_MS = Number(process.env.CASEY_AGENT_IDLE_SWEEP_MS) || 5 * 60e3
 
 function logAgentEvent(msg, fields) {
-  console.log(JSON.stringify({ t: new Date().toISOString(), level: 'info', component: 'agent', msg, ...fields }))
+  console.log(JSON.stringify(withSeverity({ t: new Date().toISOString(), level: 'info', component: 'agent', msg, ...fields })))
 }
 
 let sweepTimer = null
@@ -59,10 +60,10 @@ export async function evictAgent(sessionKey, reason) {
     await entry.dispose?.()
     logAgentEvent('agent_evicted', { sessionKey, reason, idle_ms: idleMs, resident: liveAgents.size })
   } catch (e) {
-    console.error(JSON.stringify({
+    console.error(JSON.stringify(withSeverity({
       t: new Date().toISOString(), level: 'error', component: 'agent',
       msg: 'agent_dispose_failed', sessionKey, reason, error: e?.message || String(e),
-    }))
+    })))
   }
   return entry.agent
 }
@@ -109,10 +110,10 @@ async function getOrCreateAgent(sessionKey, akey, provider, model, enabledToolNa
   } catch (e) {
     const message = e?.message || String(e)
     if (!/not found/i.test(message)) {
-      console.error(JSON.stringify({
+      console.error(JSON.stringify(withSeverity({
         t: new Date().toISOString(), level: 'error', component: 'agent',
         msg: 'agent_resume_failed', sessionKey, error: message,
-      }))
+      })))
     }
   }
   if (handle) {
@@ -171,7 +172,7 @@ function logChatTurn(req, startedAt, outcome, thrown = null) {
   const inboundText = String(toolCtx?.inboundText ?? '')
   const reply = typeof outcome?.result === 'string' ? outcome.result : ''
   const error = thrown ? (thrown.message || String(thrown)) : (outcome?.error ?? null)
-  console.log(JSON.stringify({
+  console.log(JSON.stringify(withSeverity({
     t: new Date().toISOString(), level: 'info', component: 'turn', msg: 'chat_turn',
     session_key: req?.sessionKey ?? null,
     platform: toolCtx?.channel ?? null,
@@ -184,7 +185,7 @@ function logChatTurn(req, startedAt, outcome, thrown = null) {
     error,
     iterations: outcome?.iterations ?? 0,
     reply_chars: reply.length,
-  }))
+  })))
 }
 
 export async function runTurn(req = {}) {
@@ -231,10 +232,10 @@ async function runTurnAttempt({
     || messages.find(m => m?.role === 'system')?.content
     || ''
   if (composedSystemPrompt) currentSystemPrompt.set(akey, composedSystemPrompt)
-  else console.error(JSON.stringify({
+  else console.error(JSON.stringify(withSeverity({
     t: new Date().toISOString(), level: 'error', component: 'agent',
     msg: 'agent_turn_without_case_system_prompt', sessionKey,
-  }))
+  })))
 
   currentAllowedNames.set(akey, enabledToolNames)
   const agent = await getOrCreateAgent(sessionKey, akey, provider, model, enabledToolNames, turnTier)

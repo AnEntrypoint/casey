@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mountRoutes } from './register.js'
 import { operatorFields } from '../gui-action-log.js'
+import { withSeverity } from '../../core/log-severity.js'
 
 const LEVELS = new Set(['error', 'warn', 'info'])
 const BODY_KEYS = new Set(['level', 'event', 'detail', 'route'])
@@ -48,13 +49,13 @@ export function postClientLog({ authed, parseCookies, COOKIE_NAME }) {
     const session = String(parseCookies(req.get('cookie'))[COOKIE_NAME] || '')
     const key = createHash('sha256').update(session).digest('hex')
     if (!admit(key, Date.now())) return res.status(204).end()
-    console.log(JSON.stringify({
+    console.log(JSON.stringify(withSeverity({
       t: new Date().toISOString(), level: b.level, component: 'gui', msg: 'gui_client',
       event: cleanField(b.event),
       detail: cleanField(b.detail),
       route: cleanField(b.route),
       operator: operatorFields(req).operator,
-    }))
+    })))
     res.status(204).end()
   }
 }

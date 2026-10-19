@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { BRAND } from '../brand.js'
+import { withSeverity } from '../../core/log-severity.js'
 
 const DEFAULT_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 
@@ -24,7 +25,7 @@ const UPSTREAM_TIMEOUT_MS = Number(process.env.CASEY_TILE_TIMEOUT_MS) || 15000
 const MAX_Z = 19
 
 function logLine(fields) {
-  console.log(JSON.stringify({ t: new Date().toISOString(), component: 'tiles', ...fields }))
+  console.log(JSON.stringify(withSeverity({ t: new Date().toISOString(), component: 'tiles', ...fields })))
 }
 
 const TOUCH_FLOOR_MS = 60 * 60 * 1000
