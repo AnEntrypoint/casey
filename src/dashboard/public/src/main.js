@@ -33,7 +33,7 @@ import { NudgesPanel } from './panels/nudges-panel.js';
 import { AreasPanel } from './panels/areas-panel.js';
 import { ViewAsPanel } from './panels/view-as-panel.js';
 import { FeedbackPanel } from './panels/feedback-panel.js';
-import { isFieldRole, isViewerRole } from './api-roles.js';
+import { isAdminRole, isFieldRole, isViewerRole } from './api-roles.js';
 import { ResolvedMapPanel } from './panels/resolved-map-panel.js';
 import { DiseaseReportsPanel } from './panels/disease-reports-panel.js';
 import { refreshFieldLists, fieldMapShown } from './views/field-app.js';
@@ -163,16 +163,18 @@ async function refreshAttention() {
   } catch {  }
 }
 
-const settled = (p) => p.then((value) => ({ value }), () => ({ failed: true }));
+const settled = (p) => Promise.resolve(p).then((value) => ({ value }), () => ({ failed: true }));
 async function refreshHealth() {
-  const [ai, runtime, guardrails] = await Promise.all([api.fetchHealth(), api.fetchRuntime(), api.fetchFleetHealth()].map(settled));
+  const runtimeAllowed = isAdminRole();
+  const [ai, runtime, guardrails] = await Promise.all([api.fetchHealth(), runtimeAllowed ? api.fetchRuntime() : null, api.fetchFleetHealth()].map(settled));
   const patch = { ai: ai.failed ? { ok: false, label: 'AI helper: cannot be checked', detail: 'This browser could not reach the server to ask about the AI helper. Auto-replies may still be running.' } : ai.value };
-  if (!runtime.failed) patch.runtime = runtime.value;
+  if (runtimeAllowed && !runtime.failed) patch.runtime = runtime.value;
   if (!guardrails.failed) patch.guardrails = guardrails.value;
   setHealth(patch);
 }
 
 async function refreshDegradedTurns() {
+  if (!isAdminRole()) return;
   try {
     const { body: rows, unchanged } = await api.pollDegradedTurns();
     if (unchanged) return;
