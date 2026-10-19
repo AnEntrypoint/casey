@@ -160,7 +160,7 @@ export async function recordInboundLocation({ store, log, caseId, msg }) {
   if (!pin) return ''
 
   if (!isValidLatLon(pin.lat, pin.lon)) {
-    log.warn?.('[casey] location pin out of range; not recorded', { caseId, lat: pin.lat, lon: pin.lon })
+    log.warn?.('[casey] location pin out of range; not recorded', { caseId })
     try { await store.appendEvent(caseId, observation(`LOCATION PIN REJECTED: the shared position was out of range (lat=${pin.lat}, lon=${pin.lon}) and was not recorded. Ask where they are.`)) }
     catch (e) { log.warn?.('[casey] location pin rejection note failed', { caseId, error: e.message }) }
     return PIN_NOT_STORED('was not a real position (it was out of range)')

@@ -227,7 +227,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     : []
   if (stray.length) {
     if (canRetry) {
-      log.warn?.('[casey] reply carries a number or address nobody configured; retrying turn with feedback', { caseId: fresh.id, attempt, stray })
+      log.warn?.('[casey] reply carries a number or address nobody configured; retrying turn with feedback', { caseId: fresh.id, attempt, stray_count: stray.length })
       await note(`STRAY-CONTACT-DETAIL: reply carried ${stray.join(', ')}; retrying turn with feedback (attempt ${attempt})`)
       return { done: false, retryFeedback: `\n\n[System note: your previous reply was not sent because it gave ${stray.join(', ')}, which is not in your instructions. Remove that, and keep the numbers that ARE in your safety instructions, written out in full, if the person may be in danger. Give no other phone number, text-message number or web address, and no other country. No list.]` }
     }
