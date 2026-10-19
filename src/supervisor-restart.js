@@ -84,6 +84,7 @@ export function createRestartCycle({ log, rt, sup, spawnWorker }) {
   function requestReload(nowMs) {
     if (rt.stopping) return
 
+    if (sup.state === 'booting') { rt.reloadDeferred = true; return }
     if (sup.state === 'restarting') { rt.reloadQueued = true; return }
     const fired = sup.fire('RELOAD_REQUESTED', nowMs)
     if (fired) reloadNow(nowMs)

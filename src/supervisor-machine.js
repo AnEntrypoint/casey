@@ -21,6 +21,7 @@ const RUNTIME_STATES = {
       HEALTH_OK: { target: 'healthy' },
       RELOAD_REQUESTED: { target: 'restarting' },
       CRASH: { target: 'restarting' },
+      COOLDOWN_ELAPSED: { target: 'restarting' },
       STOP: { target: 'stopping' },
     },
   },
