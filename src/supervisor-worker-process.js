@@ -11,6 +11,7 @@ export const WORKER_ENTRY = path.join(__dirname, '..', 'bin', 'worker.js')
 
 const STDERR_TAIL_LINES = 40
 const STDERR_PARTIAL_LINE_CAP = 8192
+const DEGRADED_RETRY_MS = Number(process.env.CASEY_DEGRADED_RETRY_MS || 60_000)
 
 function causeFromStderrTail(lines) {
   const meaningful = lines.filter(l => l.trim() && !/^\s+at\s/.test(l) && !/^Node\.js v/.test(l.trim()))
@@ -75,6 +76,7 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
     if (!bootedOk && sup.state !== 'healthy') sup.resyncHealthy(Date.now())
     sup.pushStateToWorker()
     runtimeEvents.flush()
+    if (rt.reloadDeferred) { rt.reloadDeferred = false; restart().requestReload(Date.now()) }
     log.info?.('[supervisor] worker ready', { pid: child.pid, port: payload?.port })
   }
 
@@ -96,6 +98,7 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
     if (decision.kind === 'config-fatal') {
       sup.fire('BUDGET_EXCEEDED', now, decision.reason)
       log.error?.('[supervisor] worker port is already in use (another casey running?) -- not restarting. Stop the other instance or pass a different --port.', { code })
+      scheduleDegradedRetry()
       return
     }
 
@@ -105,10 +108,10 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
     sup.fire('CRASH', now, decision.reason)
     if (decision.kind === 'budget') {
       sup.fire('BUDGET_EXCEEDED', now, decision.reason)
-      log.error?.('[supervisor] crash budget exceeded -- entering degraded, no further auto-restart', {
-        crashes: decision.crashes.length, windowMs: decision.windowMs, limit: decision.limit,
+      log.error?.('[supervisor] crash budget exceeded -- entering degraded, retrying after cooldown', {
+        crashes: decision.crashes.length, windowMs: decision.windowMs, limit: decision.limit, retryMs: DEGRADED_RETRY_MS,
       })
-
+      scheduleDegradedRetry()
       return
     }
     log.info?.('[supervisor] restarting after crash', { backoffMs: decision.backoffMs })
@@ -120,6 +123,17 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
     if (!pendingRestartTimer) return
     clearTimeout(pendingRestartTimer)
     pendingRestartTimer = null
+  }
+
+  function scheduleDegradedRetry() {
+    cancelPendingRestart()
+    pendingRestartTimer = setTimeout(() => {
+      pendingRestartTimer = null
+      if (rt.stopping || sup.state !== 'degraded') return
+      sup.ctx.crashes = []
+      sup.fire('COOLDOWN_ELAPSED', Date.now())
+      restart().respawn(Date.now())
+    }, DEGRADED_RETRY_MS)
   }
 
   return { spawn, cancelPendingRestart }

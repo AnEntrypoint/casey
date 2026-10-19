@@ -27,6 +27,7 @@ export function createSupervisor(opts = {}) {
     watchers: [],
     stopping: false,
     reloadQueued: false,
+    reloadDeferred: false,
     draining: false,
     resolveDrain: null,
     keepAlive: null,
