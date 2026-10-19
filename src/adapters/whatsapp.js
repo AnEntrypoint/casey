@@ -8,6 +8,8 @@ import { fetchWithTimeout, timingSafeEqualStr, verifiedSend, emitWithDetachedMed
 const SEND_TIMEOUT_MS = 15000
 const DISPLAY_TIMEOUT_MS = 4000
 const DISPLAY_RETRY_MS = 5 * 60e3
+const DISPLAY_ATTEMPTS = 4
+const DISPLAY_BACKOFF_MS = 1000
 const PARTIAL_SEND_TTL_MS = 30 * 60e3
 const PARTIAL_SEND_CAP = 200
 
@@ -55,15 +57,23 @@ export class WhatsappAdapter extends EventEmitter {
     if (!this.token || !this.phoneId) return Promise.resolve('')
     this._displayTriedAt = Date.now()
     this._displayInflight = (async () => {
-      try {
-        const r = await fetchWithTimeout(`${this.api}/${encodeURIComponent(this.phoneId)}?fields=display_phone_number`, { headers: { authorization: `Bearer ${this.token}` } }, DISPLAY_TIMEOUT_MS)
-        if (!r.ok) throw new Error(`status ${r.status}`)
-        const j = await r.json()
-        const n = String(j?.display_phone_number || '').replace(/[^\d+()\s-]/g, '').trim().slice(0, 32)
-        if (n) this._displayNumber = n
-      } catch (e) {
-        console.warn('[whatsapp] could not read the display phone number:', e?.message || 'failed')
-      } finally { this._displayInflight = null }
+      let lastError = ''
+      for (let attempt = 1; attempt <= DISPLAY_ATTEMPTS; attempt++) {
+        try {
+          const r = await fetchWithTimeout(`${this.api}/${encodeURIComponent(this.phoneId)}?fields=display_phone_number`, { headers: { authorization: `Bearer ${this.token}` } }, DISPLAY_TIMEOUT_MS)
+          if (!r.ok) throw new Error(`status ${r.status}`)
+          const j = await r.json()
+          const n = String(j?.display_phone_number || '').replace(/[^\d+()\s-]/g, '').trim().slice(0, 32)
+          if (n) this._displayNumber = n
+          lastError = ''
+          break
+        } catch (e) {
+          lastError = e?.message || 'failed'
+          if (attempt < DISPLAY_ATTEMPTS) await new Promise(resolve => setTimeout(resolve, DISPLAY_BACKOFF_MS * 2 ** (attempt - 1)))
+        }
+      }
+      if (lastError) console.warn(`[whatsapp] could not read the display phone number after ${DISPLAY_ATTEMPTS} attempts:`, lastError)
+      this._displayInflight = null
       return this._displayNumber
     })()
     return this._displayInflight
