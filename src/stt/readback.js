@@ -1,10 +1,14 @@
 import { STT_FAILURE } from './errors.js'
 import { languageOf } from './languages.js'
 
+// A transcript counts as heard only with at least this many non-space characters; shorter output is noise or a cut-off fragment.
+export const MIN_HEARD_NON_SPACE_CHARS = 8
+
 export function unheardKind(tr, minConfidence) {
   if (!tr?.text) return tr?.failureKind || STT_FAILURE.UNAVAILABLE
-  if (tr.languageSupported === false) return STT_FAILURE.UNSUPPORTED_LANGUAGE
+  if (tr.languageSupported === false || (tr.language && !languageOf(tr.language))) return STT_FAILURE.UNSUPPORTED_LANGUAGE
   if (typeof tr.confidence === 'number' && tr.confidence < minConfidence) return STT_FAILURE.LOW_CONFIDENCE
+  if (tr.text.replace(/\s/g, '').length < MIN_HEARD_NON_SPACE_CHARS) return STT_FAILURE.LOW_CONFIDENCE
   return ''
 }
 

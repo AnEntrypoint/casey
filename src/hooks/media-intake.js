@@ -210,7 +210,7 @@ export async function recordInboundMedia({ store, log, caseId, msg, relay = null
   const tr = audioItem ? await transcribeInboundAudio({ store, log, caseId, msg }) : { text: '', error: '' }
   if (audioItem) {
 
-    log.info?.('[casey] voice note received', { caseId, mime: audioItem.mimeType, bytes: audioItem.buffer?.length || 0, provider: tr.provider, transcribed: !!tr.text, transcriptChars: tr.text.length, language: tr.language || undefined, confidence: tr.confidence ?? undefined, durationSec: tr.durationSec ?? undefined, ms: tr.ms, failureKind: tr.failureKind || undefined, error: tr.error || undefined })
+    log.info?.('[casey] voice note received', { caseId, mime: audioItem.mimeType, bytes: audioItem.buffer?.length || 0, provider: tr.provider, transcribed: !!tr.text && !tr.unheard, transcriptChars: tr.text.length, language: tr.language || undefined, confidence: tr.confidence ?? undefined, durationSec: tr.durationSec ?? undefined, ms: tr.ms, failureKind: tr.unheard || tr.failureKind || undefined, error: tr.error || undefined })
   }
   const audioNote = inboundAudioNote(msg, tr)
   if (audioNote) {
