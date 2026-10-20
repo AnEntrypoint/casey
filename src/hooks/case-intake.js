@@ -1,6 +1,6 @@
 
 
-import { observation, flagNeedsHuman } from './case-writes.js'
+import { observation, flagNeedsHuman, raiseOperatorItem } from './case-writes.js'
 import { applyServiceControls, isLlmDown } from './service-controls.js'
 import { describeMedia, recordInboundMedia, recordInboundLocation, transcribeInboundAudio, inboundAudioData } from './media-intake.js'
 import { voiceNote, voiceFailureNote } from '../stt/readback.js'
@@ -173,7 +173,7 @@ export async function llmDownQueueGate({ store, log, llmStatus, fresh, events, m
   }
   try {
     await store.appendEvent(fresh.id, observation(`QUEUED-FOR-AGENT:${msgId}`))
-    log.error?.('[casey] LLM backend down; queued inbound, no reply sent', { caseId: fresh.id, msgId })
+    await raiseOperatorItem({ store, log, caseId: fresh.id, code: 'turn.llm_down_queued', level: 'error' })
     return { to: replyTo, text: '', platform, caseId: fresh.id, queued: true }
   } catch (e) {
     log.warn?.('[casey] queue-gate append failed; falling through to live turn', { caseId: fresh.id, error: e.message })

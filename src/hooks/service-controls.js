@@ -3,7 +3,7 @@
 import { tagList } from '../timestamp.js'
 import { mergeTag, dropTag, detectContactIntent, OPTED_OUT_TAG, STOP_PENDING_PREFIX } from './heuristics.js'
 import { stopPendingState, stopPendingTag, stopConfirmEvent } from './stop-pending.js'
-import { observation } from './case-writes.js'
+import { observation, raiseOperatorItem } from './case-writes.js'
 import { controlActor, forgetSpeakerAfterHelp } from '../phone-persons.js'
 import { resolveTierValue, TIER_REPORTER } from '../contact-tiers.js'
 
@@ -29,7 +29,7 @@ export async function applyServiceControls({ store, log, llmStatus, caseRow, typ
     if (isPublicPhone(caseRow)) await forgetSpeakerAfterHelp(store, caseRow.contact_id)
 
     if (await isLlmDown(llmStatus)) {
-      log.error?.('[casey] LLM backend down; opt-back-in state recorded but no reply composed (no hardcoded-language fallback)', { caseId: caseRow.id })
+      await raiseOperatorItem({ store, log, caseId: caseRow.id, code: 'control.ack_degraded', level: 'error', fields: { intent: 'resume' } })
       await store.appendEvent(caseRow.id, observation('RESUME-ACK-DEGRADED: LLM unreachable; opt-back-in was applied, but no acknowledgement reply could be composed.', { degraded_turn: true, reason: 'llm_down_on_irreversible_control' }))
       return { to: replyTo, text: '', platform, caseId: caseRow.id, intent: 'resume', degraded: true }
     }
@@ -69,7 +69,7 @@ export async function applyServiceControls({ store, log, llmStatus, caseRow, typ
   catch (e) { log.warn?.('[casey] opt-out audit event failed', { caseId: caseRow.id, error: e.message }) }
 
   if (await isLlmDown(llmStatus)) {
-    log.error?.('[casey] LLM backend down; opt-out state recorded but no reply composed (no hardcoded-language fallback)', { caseId: caseRow.id, intent })
+    await raiseOperatorItem({ store, log, caseId: caseRow.id, code: 'control.ack_degraded', level: 'error', fields: { intent: 'stop' } })
     await store.appendEvent(caseRow.id, observation(`STOP-ACK-DEGRADED: LLM unreachable; the opt-out itself was applied, but no acknowledgement reply could be composed.`, { degraded_turn: true, reason: 'llm_down_on_irreversible_control' }))
     return { to: replyTo, text: '', platform, caseId: caseRow.id, intent, degraded: true }
   }
