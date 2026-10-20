@@ -65,6 +65,16 @@ export function resolveAreaFromLocation(areas, location) {
   return resolveArea(areas, { association: '', location })
 }
 
+export async function generalAreaFor(store, stated) {
+  const text = String(stated ?? '').replace(/\s+/g, ' ').trim()
+  try {
+    const hit = resolveAreaFromLocation(await loadAreas(store), text)
+    return hit ? hit.area.name : text
+  } catch {
+    return text
+  }
+}
+
 export const statedArea = (report) => (AREA_FIELD && report?.[AREA_FIELD] != null ? String(report[AREA_FIELD]).trim() : '')
 
 function replay(events) {

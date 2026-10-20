@@ -58,7 +58,7 @@ export const VOCAB_BOT_KEYS = {
   help_ranger: 'helpRanger',
   help_technician: 'helpTechnician',
   help_onboarding: 'helpOnboarding',
-  location_confirm: 'locationConfirmNudge',
+  area_question: 'areaQuestion',
   visit_mode: 'visitModeText',
   worker_catch_up: 'workerCatchUpText',
   casual_enquiry_blocked: 'casualReporterEnquiryBlockedText',

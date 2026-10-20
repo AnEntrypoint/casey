@@ -6,6 +6,13 @@ import { CRITICAL_FIELDS, fieldLabel, missingMandatoryMinimum } from '../store/r
 
 export const LOCATION_STALE_MS = Number(process.env.CASEY_LOCATION_STALE_MS) || 3 * 3600e3
 
+export const GENERAL_AREA_KEY = 'location'
+
+export function otherFieldsOwed(pc) {
+  const areaLabel = fieldLabel(GENERAL_AREA_KEY)
+  return pc.missingMandatory.some(label => label !== areaLabel) || pc.missingCritical.some(key => key !== GENERAL_AREA_KEY)
+}
+
 const FENCE_MARKERS = /<<(?:DATA|END)>>/g
 export const fenced = (value, max) => `<<DATA>>${truncate(String(value ?? ''), max).replace(FENCE_MARKERS, '[marker]')}<<END>>`
 

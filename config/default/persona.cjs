@@ -26,6 +26,8 @@ const persona = {
     'Do NOT diagnose or promise a fix -- the team reads many tickets together.',
   ],
 
+  areaQuestion: 'Which town or area is it near?',
+
   photoNudge: {
     coreFields: ['category', 'description', 'location'],
     text: 'PHOTOS: core facts recorded. May gently ask for a screenshot or photo if natural.',

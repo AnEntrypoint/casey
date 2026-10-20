@@ -27,9 +27,8 @@ import { controlRegistered, offeredChoices } from './turn-results.js'
 import { speakerState, noteAsked } from '../phone-persons.js'
 import { consentManaged, consentState } from '../phone-consent.js'
 import { noteReturn } from '../return-clarify.js'
-import { ensurePin } from '../pin-estimate.js'
-import { pinAskOwed, pinAskValue } from '../pin-confidence.js'
-import { buildPromptContext } from './prompt-context.js'
+import { areaAskOwed, areaAskValue } from '../area-ask.js'
+import { buildPromptContext, otherFieldsOwed } from './prompt-context.js'
 import { pendingNoticesFor, pendingNoticeNote, markNoticesDelivered } from './pending-notices.js'
 
 const BURST_SETTLE_MS = Math.max(0, Number(process.env.CASEY_BURST_SETTLE_MS ?? 2500) || 0)
@@ -161,10 +160,10 @@ async function driveAgentTurn(deps, {
 
   if (isPublic && !isBackgroundRedrive) await noteReturn(store, { caseRow: fresh, events, contact, msgId }).catch(() => {})
 
-  let askedPin = false
-  if (isPublic && !isBackgroundRedrive && pinAskOwed(fresh)) {
+  let askedArea = false
+  if (isPublic && !isBackgroundRedrive && areaAskOwed(fresh)) {
     const pc = buildPromptContext(fresh, events)
-    askedPin = !pc.missingMandatory.length && !pc.missingCritical.length
+    askedArea = !otherFieldsOwed(pc)
       && !(consentManaged() && await consentState(store, contact.id, { caseId: fresh.id }) !== 'agreed')
   }
   const owed = await pendingNoticesFor(store, fresh).catch(() => [])
@@ -175,8 +174,7 @@ async function driveAgentTurn(deps, {
   })
   const { result, errored, jargonReasons, falseConfirmReasons, adviceReasons, degradedReason } = turn
 
-  if (askedPin && String(turn.text || '').trim()) await store.updateCaseChecked(fresh.id, { pin_ask: pinAskValue(fresh) }).catch(() => {})
-  if (!isBackgroundRedrive && isPublic) void ensurePin({ store, callLLM, log, caseId: turn.activeCase?.id || fresh.id })
+  if (askedArea && String(turn.text || '').trim()) await store.updateCaseChecked(fresh.id, { pin_ask: areaAskValue(fresh) }).catch(() => {})
   let text = turn.text
 
   const endedOnId = turn.activeCase?.id || fresh.id

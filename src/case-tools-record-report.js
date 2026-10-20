@@ -1,20 +1,17 @@
 
 
-import { AGENT_USER, REPORT_KEYS } from './case-store.js'
-import { toStorable } from './store/guards.js'
-import { REPORT_FIELD_DEFS, REPORT_GEO_FIELD_DEFS, REPORT_TOOL_NAME, REPORT_TOOL_DESCRIPTION, SIGNOFF_DIAGNOSIS_FIELDS, SYSTEM_SET_FIELDS } from './store/report-shape.js'
+import { AGENT_USER } from './case-store.js'
+import { REPORTER_FIELD_DEFS, REPORTER_KEYS, REPORT_TOOL_NAME, REPORT_TOOL_DESCRIPTION, SIGNOFF_DIAGNOSIS_FIELDS, SYSTEM_SET_FIELDS } from './store/report-shape.js'
 import { normalizeLocation } from './location-normalize.js'
 import { recordProvenanceObservation } from './provenance-wire.js'
-import { defTool, str, pick, boundCase, isValidLatLon } from './case-tools-shared.js'
+import { defTool, str, pick, boundCase } from './case-tools-shared.js'
 import { findCase, deskAuthorityOn, claimSelfFiledReport } from './case-tools-team-shared.js'
 import { canQueryCases } from './contact-tiers.js'
 import { stampReporter } from './phone-persons.js'
 import { consentManaged, consentState } from './phone-consent.js'
 import { returnGate } from './return-clarify.js'
-import { pinConfidence, placeText } from './pin-confidence.js'
 
 const OBSERVE_BLOCKED = { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
-const LOCATION_SOURCE_VALUES = new Set(['gps', 'estimated', 'confirmed'])
 
 export function buildCaseReportTools(store) {
   return [
@@ -24,19 +21,11 @@ export function buildCaseReportTools(store) {
         type: 'object',
         properties: {
           id: str('Case id'),
-          ...Object.fromEntries(REPORT_FIELD_DEFS.filter(f => !SYSTEM_SET_FIELDS.has(f.key)).map(f => [f.key, str(f.description)])),
-          ...Object.fromEntries(REPORT_GEO_FIELD_DEFS.map(f => [f.key, { type: 'number', description: f.description }])),
-          location_source: str(
-            'REQUIRED whenever lat/lon are supplied. "gps" ONLY if the person read out exact coordinates. ' +
-            'Otherwise "estimated" -- your own best-effort guess from a place name, not yet confirmed with them. ' +
-            'After you voice an estimate back and they confirm it or give a better description, call again with ' +
-            '"confirmed" and your refined lat/lon. Never guess "confirmed" -- it means they actually agreed.',
-            { enum: ['gps', 'estimated', 'confirmed'] },
-          ),
+          ...Object.fromEntries(REPORTER_FIELD_DEFS.filter(f => !SYSTEM_SET_FIELDS.has(f.key)).map(f => [f.key, str(f.description)])),
         },
         required: ['id'],
       },
-      async ({ id, lat, lon, location_source, location_confidence, ...fields }, ctx) => {
+      async ({ id, ...fields }, ctx) => {
 
         if (consentManaged() && ctx?.contact?.id && !canQueryCases(ctx?.tier)) {
           const state = await consentState(store(), ctx.contact.id, { caseId: boundCase(ctx).id })
@@ -54,10 +43,9 @@ export function buildCaseReportTools(store) {
         const target = await resolveReportTarget(store, id, ctx)
         if (target.error) return { error: target.error }
         id = target.id
-        const args = validateReportArgs({ fields, lat, lon, location_source })
-        if (args.error) return { error: args.error, ...(args.allowed ? { allowed: args.allowed } : {}) }
-        const { incoming, resolvedLocationSource } = args
-        let { hasLatLon } = args
+        const args = await validateReportArgs(store, fields)
+        if (args.error) return { error: args.error }
+        const { incoming } = args
 
         const merged = await mergeIncomingReport(store, id, incoming)
         if (merged.error) return { error: merged.error }
@@ -66,17 +54,11 @@ export function buildCaseReportTools(store) {
         if (ctx?.contact?.id && !canQueryCases(ctx?.tier)) { try { await stampReporter(store(), ctx.contact.id, id) } catch {  } }
         await claimSelfFiledReport(store(), ctx, id)
 
-        let locationKept = ''
-        if (hasLatLon) {
-          const wrote = await writeReportLocation(store, id, { lat, lon, resolvedLocationSource, confidence: pinConfidence(resolvedLocationSource, location_confidence) })
-          if (wrote.error) return { error: wrote.error }
-
-          if (wrote.locationKept) { locationKept = wrote.locationKept; hasLatLon = false }
-        }
         await syncDerivedLocation(store, id, incoming)
-        await auditReportWrite(store, id, { incoming, priorReport, hasLatLon, lat, lon })
-        await wireProvenance(store, ctx, id, { incoming, res, hasLatLon, lat, lon })
-        return { ok: true, report: res.report, fieldsRecorded: recordedFields(incoming, hasLatLon), ...(notDiagnosis.length ? { notRecorded: `${notDiagnosis.join(', ')} -- only the animal health technician records these, when signing off; say nothing about it` } : {}), ...(locationKept ? { locationKept } : {}), ...(res.cappedFields?.length ? { cappedFields: res.cappedFields } : {}) }
+        await assignByArea(store, id, incoming)
+        await auditReportWrite(store, id, { incoming, priorReport })
+        await wireProvenance(store, ctx, id, { incoming, res })
+        return { ok: true, report: res.report, fieldsRecorded: Object.keys(incoming), ...(notDiagnosis.length ? { notRecorded: `${notDiagnosis.join(', ')} -- only the animal health technician records these, when signing off; say nothing about it` } : {}), ...(res.cappedFields?.length ? { cappedFields: res.cappedFields } : {}) }
       }),
   ]
 }
@@ -120,20 +102,14 @@ async function resolveReportTarget(store, id, ctx) {
     : 'case_report has no bound active case on this turn -- cannot target an arbitrary case id' }
 }
 
-function validateReportArgs({ fields, lat, lon, location_source }) {
-  const incoming = pick(fields, [...REPORT_KEYS])
-  const latLonSupplied = typeof lat === 'number' && typeof lon === 'number' && Number.isFinite(lat) && Number.isFinite(lon)
-  const hasLatLon = latLonSupplied && isValidLatLon(lat, lon)
-
-  if (latLonSupplied && !hasLatLon) {
-    return { error: `lat/lon out of range: lat=${lat}, lon=${lon} (expected |lat|<=90, |lon|<=180)` }
+async function validateReportArgs(store, fields) {
+  const incoming = pick(fields, [...REPORTER_KEYS])
+  if (!Object.keys(incoming).length) return { error: 'no report fields supplied' }
+  if (typeof incoming.location === 'string') {
+    const { generalAreaFor } = await import('./areas.js')
+    incoming.location = await generalAreaFor(store(), incoming.location)
   }
-
-  if (location_source != null && !LOCATION_SOURCE_VALUES.has(location_source)) {
-    return { error: `invalid location_source: ${location_source}`, allowed: [...LOCATION_SOURCE_VALUES] }
-  }
-  if (!Object.keys(incoming).length && !hasLatLon) return { error: 'no report fields supplied' }
-  return { incoming, hasLatLon, resolvedLocationSource: hasLatLon ? (location_source || 'estimated') : null }
+  return { incoming }
 }
 
 async function mergeIncomingReport(store, id, incoming) {
@@ -161,31 +137,9 @@ async function mergeIncomingReport(store, id, incoming) {
   return { res, priorReport: res.priorReport || {} }
 }
 
-async function writeReportLocation(store, id, { lat, lon, resolvedLocationSource, confidence }) {
-
-  if (resolvedLocationSource !== 'confirmed') {
-    const prior = await store().getCase(id).catch(() => null)
-    const priorSource = prior?.location_source
-    if ((priorSource === 'gps' || priorSource === 'confirmed') && prior?.lat != null && prior?.lon != null) {
-      return { locationKept: `this report already holds a ${priorSource} position (lat ${prior.lat}, lon ${prior.lon}); what you wrote was not recorded over it. Do not say you changed it. Ask them to confirm or correct that position instead.` }
-    }
-  }
-  const latLonResult = await store().updateCaseChecked(id, { lat, lon, location_source: resolvedLocationSource, location_confidence: confidence, location_basis: placeText(await store().getCase(id).catch(() => null)) }, AGENT_USER)
-  if (latLonResult.error === 'observe') return { error: OBSERVE_BLOCKED.error }
-  if (latLonResult.error) return { error: latLonResult.error }
-  const c = latLonResult.case
-
+async function assignByArea(store, id, incoming) {
+  if (!('location' in incoming) && !('association' in incoming)) return
   try { const { autoAssignByArea } = await import('./areas.js'); await autoAssignByArea(store(), id) } catch (e) { store().log?.warn?.('[casey] area auto-assign failed', { caseId: id, error: e.message }) }
-
-  if (c?.contact_id) {
-    try {
-      await store().t.update('contact', c.contact_id, toStorable({
-        last_report_lat: lat, last_report_lon: lon, last_report_at: new Date().toISOString(),
-        last_report_case_id: id,
-      }), AGENT_USER)
-    } catch {  }
-  }
-  return {}
 }
 
 async function syncDerivedLocation(store, id, incoming) {
@@ -194,12 +148,8 @@ async function syncDerivedLocation(store, id, incoming) {
   catch {  }
 }
 
-function recordedFields(incoming, hasLatLon) {
-  return [...Object.keys(incoming), ...(hasLatLon ? ['lat', 'lon', 'location_source'] : [])]
-}
-
-async function auditReportWrite(store, id, { incoming, priorReport, hasLatLon, lat, lon }) {
-  const fieldsRecorded = recordedFields(incoming, hasLatLon)
+async function auditReportWrite(store, id, { incoming, priorReport }) {
+  const fieldsRecorded = Object.keys(incoming)
   const corrections = Object.keys(incoming)
     .filter(k => k !== 'photos' && k !== 'audio' && k !== 'sites')
     .filter(k => priorReport[k] != null && String(priorReport[k]).trim() !== '' && String(priorReport[k]) !== String(incoming[k]))
@@ -207,15 +157,15 @@ async function auditReportWrite(store, id, { incoming, priorReport, hasLatLon, l
   const text = corrections.length
     ? `recorded report fields: ${fieldsRecorded.join(', ')}; changed: ${corrections.join(', ')}`
     : `recorded report fields: ${fieldsRecorded.join(', ')}`
-  await store().appendEvent(id, { kind: 'action', actor: 'agent', text, data: { ...incoming, ...(hasLatLon ? { lat, lon } : {}), ...(corrections.length ? { corrections } : {}) } })
+  await store().appendEvent(id, { kind: 'action', actor: 'agent', text, data: { ...incoming, ...(corrections.length ? { corrections } : {}) } })
 }
 
-async function wireProvenance(store, ctx, id, { incoming, res, hasLatLon, lat, lon }) {
+async function wireProvenance(store, ctx, id, { incoming, res }) {
   try {
     const dataDir = store().dataDir
     const provenanceIncoming = res.cappedFields?.length
       ? Object.fromEntries(Object.entries(incoming).filter(([k]) => !res.cappedFields.includes(k)))
       : incoming
-    if (dataDir) await recordProvenanceObservation({ dataDir, caseId: id, author: ctx?.author, incoming: provenanceIncoming, hasLatLon, lat, lon })
+    if (dataDir) await recordProvenanceObservation({ dataDir, caseId: id, author: ctx?.author, incoming: provenanceIncoming })
   } catch {  }
 }

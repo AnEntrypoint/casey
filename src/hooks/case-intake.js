@@ -120,11 +120,9 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
     await recordInboundMedia({ store, log, caseId: caseRow.id, msg })
   }
 
-  if (route?.mode !== 'relay') promptNote += (await recordInboundLocation({ store, log, caseId: caseRow.id, msg })) || ''
-  if (barePin) {
-    const answered = await answerBarePin({ store, log, caseRow, msg })
-    if (answered) { promptNote += answered.promptNote; inboundChoices = answered.choices }
-  }
+  const answered = barePin ? await answerBarePin({ store, log, caseRow, msg }) : null
+  if (answered) { promptNote += answered.promptNote; inboundChoices = answered.choices }
+  else if (route?.mode !== 'relay') promptNote += (await recordInboundLocation({ store, log, caseId: caseRow.id, msg })) || ''
   if (!created) return { promptNote, ingressRecorded, inboundChoices }
   if (!caseRow.subject) {
     const subj = truncate(inboundText || media || 'New conversation', 80)
