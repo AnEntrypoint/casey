@@ -3,7 +3,7 @@
 import { truncate } from './heuristics.js'
 import { observation, raiseOperatorItem } from './case-writes.js'
 import { transcribeAudioDetailed, describePhoto } from './media.js'
-import { isValidLatLon } from '../case-tools-shared.js'
+import { loadDomainConfig } from '../config-loader.js'
 import { withoutIssuedCodes } from '../role-invites.js'
 import { parseReport } from '../timestamp.js'
 import { languageOf } from '../stt/languages.js'
@@ -167,37 +167,12 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
   }
 }
 
-const PIN_STORED = '\n\n[System note: the location pin they shared was saved on the map as their exact position. Do not ask for coordinates, GPS numbers or another pin, and do not write that coordinates were unreadable; ask about the place only if a name or landmark is still missing.]'
-const PIN_NOT_STORED = (why) => `\n\n[System note: the location pin they shared ${why}, so NO position was stored. Do not say you have their location; tell them plainly it did not come through and ask where the animals are (a town or farm name, or send the pin again).]`
+const AREA_ASK_NOTE = (question) => `\n\n[System note: the location pin they shared was NOT stored. The team keeps only the general town or area of a report, never a map pin, coordinates, GPS numbers or directions, so do not say you have their location and do not ask for a pin, coordinates or directions. In this reply ask ONE question, in their language, in one short natural sentence: "${question}"]`
 export async function recordInboundLocation({ store, log, caseId, msg }) {
-  const pin = msg.location
-  if (!pin) return ''
-
-  if (!isValidLatLon(pin.lat, pin.lon)) {
-    await raiseOperatorItem({ store, log, caseId, code: 'location.rejected' })
-    try { await store.appendEvent(caseId, observation(`LOCATION PIN REJECTED: the shared position was out of range (lat=${pin.lat}, lon=${pin.lon}) and was not recorded. Ask where they are.`)) }
-    catch (e) { log.warn?.('[casey] location pin rejection note failed', { caseId, error: e.message }) }
-    return PIN_NOT_STORED('was not a real position (it was out of range)')
-  }
-  const place = [pin.name, pin.address].filter(Boolean).join(', ')
-  try {
-    const res = await store.updateCaseChecked(caseId, { lat: pin.lat, lon: pin.lon, location_source: 'gps', location_confidence: 100 })
-    if (res?.error && res.error !== 'observe') {
-      await raiseOperatorItem({ store, log, caseId, code: 'location.write_failed' })
-      return PIN_NOT_STORED('could not be saved just now')
-    }
-    const recorded = res?.error === 'observe'
-      ? 'not recorded on the map (a person is handling this themselves)'
-      : 'recorded on the map as an exact GPS position'
-    await store.appendEvent(caseId, observation(
-      `LOCATION PIN RECEIVED: lat ${pin.lat}, lon ${pin.lon}${place ? ` -- WhatsApp labels this spot "${truncate(place, 200)}" (its own label, not the person's words)` : ''}. Read off the person's own device and ${recorded}.`,
-    ))
-
-    return res?.error === 'observe' ? '' : PIN_STORED
-  } catch {
-    await raiseOperatorItem({ store, log, caseId, code: 'location.write_failed' })
-    return PIN_NOT_STORED('could not be saved just now')
-  }
+  if (!msg.location) return ''
+  try { await store.appendEvent(caseId, observation('LOCATION PIN NOT STORED: a map pin was shared. Only the general town or area is recorded, so nothing was saved from it.')) }
+  catch (e) { log.warn?.('[casey] location pin note failed', { caseId, error: e.message }) }
+  return AREA_ASK_NOTE(loadDomainConfig().persona.areaQuestion)
 }
 
 export async function recordInboundMedia({ store, log, caseId, msg, relay = null }) {

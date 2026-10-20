@@ -1,6 +1,7 @@
 import { mergeTag } from '../../hooks/heuristics.js'
-import { DASHBOARD_UI, REPORT_FIELD_DEFS, fieldLabel } from '../../store/report-shape.js'
+import { DASHBOARD_UI, REPORTER_FIELD_DEFS, fieldLabel } from '../../store/report-shape.js'
 import { vocabWord } from '../../config-loader.js'
+import { generalAreaFor } from '../../areas.js'
 import { BRAND, TYPE_SCALE_CSS } from '../brand.js'
 import { parseReport } from '../../timestamp.js'
 import { mountRoutes } from './register.js'
@@ -53,7 +54,7 @@ const FIELD_MAXLEN = 4000
 const OTHER_CHOICE = '__other__'
 
 const PUBLIC_FIELDS = (() => {
-  const shown = (REPORT_FIELD_DEFS || []).filter(f => f && f.key && !f.append && f.public !== false)
+  const shown = (REPORTER_FIELD_DEFS || []).filter(f => f && f.key && !f.append && f.public !== false)
   const row = (f) => ({
     key: f.key,
     label: f.public_label || f.display_label || f.key,
@@ -484,6 +485,7 @@ export function postReport({ store, esc }) {
         if (value.length > FIELD_MAXLEN) cut++
         incoming[key] = value.slice(0, FIELD_MAXLEN)
       }
+      if (typeof incoming.location === 'string') incoming.location = await generalAreaFor(store, incoming.location)
       let held = 0
       if (!ref && !openedHere) {
         const already = parseReport(found)

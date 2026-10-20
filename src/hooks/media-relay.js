@@ -9,6 +9,7 @@ import { assigneeKeyFor, isAssignedTo, isOwnConversation } from '../case-assignm
 import { refsIn, writeGate, focusOf, proposeFocus, identifyingLine } from '../team-focus.js'
 import { isOpenCase } from '../format.js'
 import { isValidLatLon } from '../case-tools-shared.js'
+import { loadDomainConfig } from '../config-loader.js'
 import { toStorable } from '../store/guards.js'
 import { confirmRecordChoices, candidateChoices } from '../choices.js'
 
@@ -92,7 +93,7 @@ export async function noteRoute({ store, log, caseRow, route, msg, barePin = fal
   let text
   if (route.mode === 'relay') {
     text = `MEDIA FILED ON ${cand(route.target)}: ${what} they just sent was recorded on that record on the reporter's behalf, not on this chat. In your reply name that reference and what it is, and confirm what was saved.`
-    if (msg.location && !barePin) text += ` The pin was recorded as THEIR OWN position (the record's own position is unchanged). Ask if that pin is also where the animals are; only if they say yes, record it with case_edit using EXACTLY lat ${msg.location.lat}, lon ${msg.location.lon} and location_source gps (never a position guessed from a place name).`
+    if (msg.location && !barePin) text += ` The pin is the sender's own position and is NOT the animals' location: never record it or any coordinates on the report, and do not ask whether it is where the animals are. Ask the reporter only: "${loadDomainConfig().persona.areaQuestion}"`
   } else {
     const list = route.candidates.map(cand).join('; ')
     text = `MEDIA NOT FILED ON A TEAM RECORD: ${what} they just sent stayed on this chat only. ${route.reason} Candidate${route.candidates.length > 1 ? 's' : ''}: ${list}${route.more > 0 ? ` (and ${route.more} more)` : ''}. Never say it was saved, filed or received on a record: say plainly that it is NOT on the record yet. Ask which record it belongs to, naming the candidate, as the last thing in your reply; do not guess. Only after they answer yes in their NEXT message call case_focus with that record and confirm set to true; nothing already sent is moved automatically, so it must be sent again after they confirm (an operator can also move it).${heardAsk(msg)}`

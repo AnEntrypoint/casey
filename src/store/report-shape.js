@@ -12,6 +12,8 @@ export function deriveReportShape(reportFields) {
 
   const REPORT_KEYS = new Set(reportFields.fields.map(f => f.key))
   const REPORT_KEY_ORDER = reportFields.fields.map(f => f.key)
+  const REPORTER_FIELDS = reportFields.fields.filter(f => f.staff_only !== true)
+  const REPORTER_KEYS = new Set(REPORTER_FIELDS.map(f => f.key))
 
   const CRITICAL_FIELDS = reportFields.fields.filter(f => f.critical_for_visit).map(f => f.key)
 
@@ -142,6 +144,8 @@ export function deriveReportShape(reportFields) {
     REPORT_TOOL_NAME: reportFields.tool_name || 'case_report',
     REPORT_TOOL_DESCRIPTION: reportFields.tool_description || '',
     REPORT_FIELD_DEFS: reportFields.fields.map(withOptionsNote),
+    REPORTER_KEYS,
+    REPORTER_FIELD_DEFS: REPORTER_FIELDS.map(withOptionsNote),
     REPORT_GEO_FIELD_DEFS: reportFields.geo_fields || [],
     DASHBOARD_UI,
     TIER_LABELS,
@@ -151,6 +155,7 @@ export function deriveReportShape(reportFields) {
 const _default = deriveReportShape(loadDomainConfig().reportFields)
 
 export const REPORT_KEYS = _default.REPORT_KEYS
+export const REPORTER_KEYS = _default.REPORTER_KEYS
 export const REPORT_KEY_ORDER = _default.REPORT_KEY_ORDER
 export const CRITICAL_FIELDS = _default.CRITICAL_FIELDS
 export const APPEND_FIELDS = _default.APPEND_FIELDS
@@ -175,6 +180,7 @@ export const REPORT_ENTITY_LABEL = _default.REPORT_ENTITY_LABEL
 export const REPORT_TOOL_NAME = _default.REPORT_TOOL_NAME
 export const REPORT_TOOL_DESCRIPTION = _default.REPORT_TOOL_DESCRIPTION
 export const REPORT_FIELD_DEFS = _default.REPORT_FIELD_DEFS
+export const REPORTER_FIELD_DEFS = _default.REPORTER_FIELD_DEFS
 export const REPORT_GEO_FIELD_DEFS = _default.REPORT_GEO_FIELD_DEFS
 export const DASHBOARD_UI = _default.DASHBOARD_UI
 export const FIELD_OPTIONS = _default.FIELD_OPTIONS
