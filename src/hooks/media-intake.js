@@ -102,6 +102,11 @@ async function languageHint(store, log, caseId) {
 
 const PERSISTED_CHOICE_KEYS = ['chosen', 'source', 'confidence', 'llm_model', 'decided_at', 'note']
 
+function sttStageMs(tr) {
+  if (!Array.isArray(tr.candidates)) return {}
+  return Object.fromEntries(tr.candidates.filter(c => c.id).map(c => [`stt_ms_${c.id}`, c.ms]))
+}
+
 function persistedCandidates(tr) {
   if (!Array.isArray(tr.candidates)) return {}
   const choice = tr.stt_choice
@@ -192,7 +197,7 @@ export async function recordInboundMedia({ store, log, caseId, msg, relay = null
   if (audioItem) {
 
     if (tr.unheard) await raiseOperatorItem({ store, log, caseId, code: `voice.${tr.unheard}`, fields: { transcribed: !!tr.text } })
-    log.info?.('[casey] voice note received', { caseId, mime: audioItem.mimeType, bytes: audioItem.buffer?.length || 0, provider: tr.provider, transcribed: !!tr.text && !tr.unheard, transcriptChars: tr.text.length, language: tr.language || undefined, confidence: tr.confidence ?? undefined, durationSec: tr.durationSec ?? undefined, ms: tr.ms, failureKind: tr.unheard || tr.failureKind || undefined, error: tr.error || undefined })
+    log.info?.('[casey] voice note received', { caseId, mime: audioItem.mimeType, bytes: audioItem.buffer?.length || 0, provider: tr.provider, transcribed: !!tr.text && !tr.unheard, transcriptChars: tr.text.length, language: tr.language || undefined, confidence: tr.confidence ?? undefined, durationSec: tr.durationSec ?? undefined, ms: tr.ms, ...sttStageMs(tr), failureKind: tr.unheard || tr.failureKind || undefined, error: tr.error || undefined })
   }
   const audioNote = inboundAudioNote(msg, tr)
   if (audioNote) {
