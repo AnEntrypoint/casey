@@ -1,6 +1,6 @@
 
 
-import { observation } from './case-writes.js'
+import { observation, raiseOperatorItem } from './case-writes.js'
 import { attachWamids } from '../delivery-status.js'
 import { synthesizeVoice } from './media.js'
 import { fitChoices, appendFallback, stampChoices, rememberChoices } from '../choices.js'
@@ -35,10 +35,12 @@ export async function sendGuaranteedFallback({
       fallbackDelivered = true
 
       await attachWamids(store, fallbackEvent, await adapter.send(fallbackReply), { log, recentSends: adapter.recentSends })
+    } else {
+      await raiseOperatorItem({ store, log, caseId: fresh.id, code: 'delivery.no_adapter', level: 'error', fields: { kind: 'fallback', channel } })
     }
   } catch (e) {
     fallbackDelivered = false
-    log.error?.('[casey] guaranteed-fallback send failed', { caseId: fresh.id, error: e.message })
+    await raiseOperatorItem({ store, log, caseId: fresh.id, code: 'delivery.failed', level: 'error', fields: { kind: 'fallback', channel } })
 
     await store.appendEvent(fresh.id, observation(`fallback send failed on ${channel}: ${e.message}`))
   }
@@ -95,13 +97,13 @@ export async function sendAgentReply({
     try { await attachWamids(store, outboundEvent, await adapter.send(reply), { log, recentSends: adapter.recentSends }) }
     catch (e) {
       delivered = false
-      log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message })
+      await raiseOperatorItem({ store, log, caseId: fresh.id, code: 'delivery.failed', level: 'error', fields: { kind: 'reply', channel, platform } })
       await store.appendEvent(fresh.id, observation(`send failed on ${channel}: ${e.message}`))
 
       await markOutboundUndelivered(store, outboundEvent, replyTo, isFallback, e.message, log)
     }
   } else {
-
+    await raiseOperatorItem({ store, log, caseId: fresh.id, code: 'delivery.no_adapter', level: 'error', fields: { kind: 'reply', channel } })
     await markOutboundUndelivered(store, outboundEvent, replyTo, isFallback,
       `no adapter for channel "${channel}" -- nothing was sent`, log)
     await store.appendEvent(fresh.id, observation(`reply not sent: no adapter for channel "${channel}"`))
