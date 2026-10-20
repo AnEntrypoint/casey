@@ -33,6 +33,10 @@ import { pendingNoticesFor, pendingNoticeNote, markNoticesDelivered } from './pe
 
 const BURST_SETTLE_MS = Math.max(0, Number(process.env.CASEY_BURST_SETTLE_MS ?? 2500) || 0)
 
+const startBurstSettle = (msg) => (carriesArtifact(msg) && BURST_SETTLE_MS
+  ? new Promise(r => setTimeout(r, BURST_SETTLE_MS))
+  : Promise.resolve())
+
 const isControlWord = (msg) => detectContactIntent(stripChannelMarkup(msg.text || '')) !== null
 
 async function intakeOne(receiver, deps, ctx, msg) {
@@ -50,14 +54,14 @@ async function intakeOne(receiver, deps, ctx, msg) {
   return { ...opened, ...side }
 }
 
-async function absorbBurst(receiver, deps, ctx, first, msg) {
+async function absorbBurst(receiver, deps, ctx, first, msg, settled) {
   const { admission, store, log } = deps
   const group = {
     ids: [first.msgId], inboundText: first.inboundText, typedText: first.typedText, media: first.media,
     promptNote: first.promptNote || '', ingressRecorded: !!first.ingressRecorded, inboundChoices: first.inboundChoices || null,
   }
   if (isControlWord(msg)) return group
-  if (carriesArtifact(msg) && BURST_SETTLE_MS) await new Promise(r => setTimeout(r, BURST_SETTLE_MS))
+  await settled
   for (let batch = admission.takeBufferedWhile(ctx.external_id, m => !isControlWord(m)); batch.length; batch = admission.takeBufferedWhile(ctx.external_id, m => !isControlWord(m))) {
     for (const next of batch) {
       const got = await intakeOne(receiver, deps, ctx, next)
@@ -82,10 +86,11 @@ export async function runInboundTurn(receiver, deps, { platform, msg, channel, e
   const adapter = resolveAdapter(receiver, platform)
   const ctx = { adapter, channel, external_id, replyTo, platform }
 
+  const settled = startBurstSettle(msg)
   const first = await intakeOne(receiver, deps, ctx, msg)
   if (first.done) return first.done
   const caseRow = first.caseRow
-  const group = await absorbBurst(receiver, deps, ctx, first, msg)
+  const group = await absorbBurst(receiver, deps, ctx, first, msg, settled)
   const { inboundText, typedText, media, ids: groupIds, promptNote = '', ingressRecorded = false, inboundChoices = null } = group
   const msgId = first.msgId
   if (!autoRespond) return { to: replyTo, text: '', platform, caseId: caseRow.id }
