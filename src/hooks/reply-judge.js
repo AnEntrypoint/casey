@@ -225,7 +225,9 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
   }
   const [first, wrongLanguage] = await Promise.all([pass(), languageDiffers(callLLM, replyText, latestInbound, recordedLanguage)])
   const langReasons = wrongLanguage ? ['wrong-language'] : []
-  if (!first || !first.length) return langReasons.length ? { clean: false, reasons: langReasons, category: 'other' } : { clean: true, reasons: [], category: null }
+  const verdict = langReasons.length ? { clean: false, reasons: langReasons, category: 'other' } : { clean: true, reasons: [], category: null }
+  if (first === null) return { ...verdict, fault: 'judge-unavailable' }
+  if (!first.length) return verdict
 
   const second = await pass()
 

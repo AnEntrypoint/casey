@@ -1,6 +1,6 @@
 
 
-import { observation, flagNeedsHuman } from './case-writes.js'
+import { observation, flagNeedsHuman, raiseOperatorItem } from './case-writes.js'
 import { sanitizeOutboundRef, mergeTag, dropTag, canAgentAct, CASE_REF_RE } from './heuristics.js'
 import { resolveTierValue, canQueryCases } from '../contact-tiers.js'
 import { deskAuthorityOn } from '../case-tools-team-shared.js'
@@ -9,17 +9,18 @@ import { tagList } from '../timestamp.js'
 import { recordDegradedTurn, FAILURE_REASONS } from '../degraded-turns.js'
 
 export async function recordDegradedOutcome({ store, log, fresh, result, errored, degradedReason, contactId, turnStartedAt, channel }) {
+  const reason = degradedReason || (!errored && result?.error ? FAILURE_REASONS.LLM_REFUSAL : FAILURE_REASONS.RETRY_EXHAUSTED)
   if (!errored && result?.error) {
-    log.error?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
+    log.error?.('[casey] agent returned error result', { caseId: fresh.id, code: 'turn.agent_error' })
     await store.appendEvent(fresh.id, observation(`agent result error: ${result.error}`, { turn_error: String(result.error).slice(0, 500) }))
   }
-  log.error?.('[casey] degraded turn produced no reply', { caseId: fresh.id })
+  await raiseOperatorItem({ store, log, caseId: fresh.id, code: 'turn.no_reply', level: 'error', fields: { reason, errored: !!errored } })
   await store.appendEvent(fresh.id, observation('degraded turn (empty/error/echo/stock-ack/repeat); no reply sent.'))
 
   await recordDegradedTurn(store, {
     caseId: fresh.id,
     contactId: contactId || fresh.contact_id,
-    reason: degradedReason || (!errored && result?.error ? FAILURE_REASONS.LLM_REFUSAL : FAILURE_REASONS.RETRY_EXHAUSTED),
+    reason,
     turnStartMs: turnStartedAt,
     channel,
     error: !errored && result?.error ? String(result.error).slice(0, 500) : null,

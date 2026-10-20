@@ -19,3 +19,13 @@ export async function flagNeedsHuman({ store, log, caseRow, notifyHandoff, chann
     }
   } catch (e) { log.warn?.(`[casey] ${flagLabel} flag failed`, { caseId: caseRow.id, error: e.message }) }
 }
+
+export async function raiseOperatorItem({ store, log, caseId, code, level = 'warn', fields = {} }) {
+  log?.[level]?.(`[casey] ${code}`, { code, caseId, ...fields })
+  try {
+    const caseRow = await store.getCase(caseId)
+    if (caseRow) await flagNeedsHuman({ store, log, caseRow, flagLabel: code, notifyLabel: code })
+  } catch {
+    log?.error?.(`[casey] ${code} operator item not raised`, { code, caseId })
+  }
+}
