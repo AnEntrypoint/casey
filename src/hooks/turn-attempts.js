@@ -1,7 +1,7 @@
 
 
 import { runTurn } from '../agent/run-turn.js'
-import { observation, flagNeedsHuman } from './case-writes.js'
+import { observation, flagNeedsHuman, raiseOperatorItem } from './case-writes.js'
 import { caseSystemPrompt } from './prompt.js'
 import { speakerState } from '../phone-persons.js'
 import { consentManaged, consentState } from '../phone-consent.js'
@@ -263,6 +263,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     return { done: false, retryFeedback: jargonFeedback(jargon, fresh.ref) }
   }
   let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, consentOwed, consentAgreed, clarifyOwed, recordedLanguage, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
+  if (verdict.fault) await raiseOperatorItem({ store, log, caseId: fresh.id, code: 'judge.fault', fields: { attempt, fault: verdict.fault } })
 
   if (isStaff && !verdict.clean && verdict.reasons?.length) {
     const rest = verdict.reasons.filter(r => !/jargon|multi.?ask|wall of text|repeat.?ask/i.test(r) && !(isTechnician && /advice.?given/i.test(r)))
