@@ -1,7 +1,7 @@
 
 
 import { truncate } from './heuristics.js'
-import { observation } from './case-writes.js'
+import { observation, raiseOperatorItem } from './case-writes.js'
 import { transcribeAudioDetailed, describePhoto } from './media.js'
 import { isValidLatLon } from '../case-tools-shared.js'
 import { withoutIssuedCodes } from '../role-invites.js'
@@ -133,7 +133,7 @@ export async function transcribeInboundAudio({ store, log, caseId, msg, callLLM 
       catch (e) { log.error?.('[casey] transcript code redaction failed', { caseId, error: e.message }); tr.text = ''; tr.error = tr.error || 'transcript withheld' }
     }
   } catch (e) {
-    log.error?.('[casey] voice note transcription threw', { caseId, error: e.message })
+    log.error?.('[casey] voice.transcribe_threw', { code: 'voice.transcribe_threw', caseId, failureKind: failureKindOf(e) })
     tr = { text: '', error: String(e.message || e), failureKind: failureKindOf(e) }
   }
   tr.unheard = unheardKind(tr, googleSttConfig().minConfidence)
@@ -141,7 +141,7 @@ export async function transcribeInboundAudio({ store, log, caseId, msg, callLLM 
   return tr
 }
 
-async function recordArrival({ store, log, caseId, field, note, kind, mediaItem, eventPrefix, failLabel, relay = null }) {
+async function recordArrival({ store, log, caseId, field, note, kind, mediaItem, eventPrefix, relay = null }) {
   try {
     let text = relayedNote(note, relay)
     if (mediaItem) {
@@ -160,8 +160,11 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
     }
     if (r?.reportWasCorrupted) {
       await store.appendEvent(caseId, observation(`WARNING: this case's stored report JSON was corrupted and has been reset before appending this ${kind} note -- some previously recorded fields may be lost.`))
+      await raiseOperatorItem({ store, log, caseId, code: 'report.corrupted', level: 'error', fields: { kind } })
     }
-  } catch (e) { log.warn?.(`[casey] ${failLabel} failed`, { caseId, error: e.message }) }
+  } catch {
+    await raiseOperatorItem({ store, log, caseId, code: 'media.record_failed', level: 'error', fields: { kind } })
+  }
 }
 
 const PIN_STORED = '\n\n[System note: the location pin they shared was saved on the map as their exact position. Do not ask for coordinates, GPS numbers or another pin, and do not write that coordinates were unreadable; ask about the place only if a name or landmark is still missing.]'
@@ -171,7 +174,7 @@ export async function recordInboundLocation({ store, log, caseId, msg }) {
   if (!pin) return ''
 
   if (!isValidLatLon(pin.lat, pin.lon)) {
-    log.warn?.('[casey] location pin out of range; not recorded', { caseId })
+    await raiseOperatorItem({ store, log, caseId, code: 'location.rejected' })
     try { await store.appendEvent(caseId, observation(`LOCATION PIN REJECTED: the shared position was out of range (lat=${pin.lat}, lon=${pin.lon}) and was not recorded. Ask where they are.`)) }
     catch (e) { log.warn?.('[casey] location pin rejection note failed', { caseId, error: e.message }) }
     return PIN_NOT_STORED('was not a real position (it was out of range)')
@@ -180,7 +183,7 @@ export async function recordInboundLocation({ store, log, caseId, msg }) {
   try {
     const res = await store.updateCaseChecked(caseId, { lat: pin.lat, lon: pin.lon, location_source: 'gps', location_confidence: 100 })
     if (res?.error && res.error !== 'observe') {
-      log.warn?.('[casey] location pin write failed', { caseId, error: res.error })
+      await raiseOperatorItem({ store, log, caseId, code: 'location.write_failed' })
       return PIN_NOT_STORED('could not be saved just now')
     }
     const recorded = res?.error === 'observe'
@@ -191,7 +194,10 @@ export async function recordInboundLocation({ store, log, caseId, msg }) {
     ))
 
     return res?.error === 'observe' ? '' : PIN_STORED
-  } catch (e) { log.warn?.('[casey] location pin mark failed', { caseId, error: e.message }); return PIN_NOT_STORED('could not be saved just now') }
+  } catch {
+    await raiseOperatorItem({ store, log, caseId, code: 'location.write_failed' })
+    return PIN_NOT_STORED('could not be saved just now')
+  }
 }
 
 export async function recordInboundMedia({ store, log, caseId, msg, relay = null }) {
@@ -203,13 +209,14 @@ export async function recordInboundMedia({ store, log, caseId, msg, relay = null
     await recordArrival({
       store, log, caseId, field: 'photos', note: photoNote, kind: 'photo',
       mediaItem: photoItem,
-      eventPrefix: 'PHOTO RECEIVED', failLabel: 'photo mark', relay,
+      eventPrefix: 'PHOTO RECEIVED', relay,
     })
   }
 
   const tr = audioItem ? await transcribeInboundAudio({ store, log, caseId, msg }) : { text: '', error: '' }
   if (audioItem) {
 
+    if (tr.unheard) await raiseOperatorItem({ store, log, caseId, code: `voice.${tr.unheard}`, fields: { transcribed: !!tr.text } })
     log.info?.('[casey] voice note received', { caseId, mime: audioItem.mimeType, bytes: audioItem.buffer?.length || 0, provider: tr.provider, transcribed: !!tr.text && !tr.unheard, transcriptChars: tr.text.length, language: tr.language || undefined, confidence: tr.confidence ?? undefined, durationSec: tr.durationSec ?? undefined, ms: tr.ms, failureKind: tr.unheard || tr.failureKind || undefined, error: tr.error || undefined })
   }
   const audioNote = inboundAudioNote(msg, tr)
@@ -217,7 +224,7 @@ export async function recordInboundMedia({ store, log, caseId, msg, relay = null
     await recordArrival({
       store, log, caseId, field: 'audio', note: audioNote, kind: 'audio',
       mediaItem: audioItem,
-      eventPrefix: 'AUDIO RECEIVED', failLabel: 'audio mark', relay,
+      eventPrefix: 'AUDIO RECEIVED', relay,
     })
   }
 }

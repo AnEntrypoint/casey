@@ -1,6 +1,6 @@
 
 
-import { observation } from './case-writes.js'
+import { observation, raiseOperatorItem } from './case-writes.js'
 import { carriesArtifact } from './media-intake.js'
 import { truncate } from './heuristics.js'
 import { staffLabel } from './staff-outbound.js'
@@ -48,7 +48,7 @@ export async function routeStaffArtifact({ store, log, caseRow, msg, inboundText
     if (candidates.length === 1) await proposeFocus(store, contact.id, candidates[0], msgId, now)
     return { mode: 'ask', contact, candidates, more: mine.length - candidates.length, reason: 'No assigned record is confirmed as the one they are working on right now.' }
   } catch (e) {
-    log.warn?.('[casey] staff media routing failed; keeping media on the sender\'s own record', { caseId: caseRow.id, error: e.message })
+    await raiseOperatorItem({ store, log, caseId: caseRow.id, code: 'media.route_failed' })
     return null
   }
 }
@@ -61,6 +61,7 @@ export async function recordRelayedLocationPin({ store, log, route, msg }) {
   const data = { on_behalf: true, relayed_by: by, staff_contact_id: contact.id }
   try {
     if (!isValidLatLon(pin.lat, pin.lon)) {
+      await raiseOperatorItem({ store, log, caseId: target.id, code: 'location.rejected' })
       await store.appendEvent(target.id, observation(`RANGER LOCATION PIN REJECTED: the position ${by} shared was out of range (lat=${pin.lat}, lon=${pin.lon}) and was not recorded.`, data))
       return
     }
@@ -70,7 +71,9 @@ export async function recordRelayedLocationPin({ store, log, route, msg }) {
     const place = [pin.name, pin.address].filter(Boolean).join(', ')
     await store.appendEvent(target.id, observation(
       `ranger location pin: lat ${pin.lat}, lon ${pin.lon}${place ? ` (WhatsApp label "${truncate(place, 200)}")` : ''} -- relayed by ${by} on the reporter's behalf. This is ${by}'s own position on site, not the animals' location; the record's own position is unchanged.`, data))
-  } catch (e) { log.warn?.('[casey] ranger location pin failed', { caseId: target.id, error: e.message }) }
+  } catch {
+    await raiseOperatorItem({ store, log, caseId: target.id, code: 'location.write_failed' })
+  }
 }
 
 export function routeChoices(route) {
