@@ -1,7 +1,7 @@
 
 
 import { runTurn } from '../agent/run-turn.js'
-import { observation } from './case-writes.js'
+import { observation, flagNeedsHuman } from './case-writes.js'
 import { caseSystemPrompt } from './prompt.js'
 import { speakerState } from '../phone-persons.js'
 import { consentManaged, consentState } from '../phone-consent.js'
@@ -336,8 +336,15 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
       return { done: false, retryFeedback: `\n\n[System note: your previous reply was not sent because ${faults.join('; and because ')}.${alsoMulti} Keep it short, warm and in plain sentences, and never say any of this to them.]` }
     }
 
-    const crisisReply = persona.safetyText && (!safetyNumbers.length || verdict.reasons.some(r => /safety.?line.?missing/i.test(r)))
-    if (faultRoutes[0][0].test(verdict.reasons.join(' ')) && !crisisReply) {
+    const crisisReply = persona.safetyText && verdict.reasons.some(r => /safety.?line.?missing/i.test(r))
+    if (crisisReply) {
+      const faultNames = faultRoutes.filter(([re]) => verdict.reasons?.some(r => re.test(r))).map(([re]) => re.source)
+      await store.appendEvent(fresh.id, observation(`CRISIS-REPLY-REPLACED: the judged reply was not sent; the safety text was sent instead and the case was raised to operators (faults: ${faultNames.join(', ')})`))
+      await flagNeedsHuman({ store, log, caseRow: fresh, channel: null, from: null, flagLabel: 'crisis escalation', notifyLabel: 'crisis handoff' })
+      log.warn?.('[casey] judged crisis reply on a spent retry budget; sent the safety text and raised the case to operators', { caseId: fresh.id, faults: faultNames })
+      return { done: true, text: persona.safetyText }
+    }
+    if (faultRoutes[0][0].test(verdict.reasons.join(' '))) {
 
       const safe = await composeAdviceRefusal(turnCallLLM, { inboundText, language: recordedLanguage })
       if (safe) {
@@ -348,7 +355,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
       log.warn?.('[casey] reply still gave advice on a spent retry budget; holding for a human', { caseId: fresh.id, reasons: verdict.reasons })
       return { done: true, text: candidate, adviceReasons: verdict.reasons }
     }
-    log.warn?.('[casey] reply judge flagged a promise, the language or advice in a crisis reply on a spent retry budget; sending anyway', { caseId: fresh.id, reasons: verdict.reasons })
+    log.warn?.('[casey] reply judge flagged a promise, the language or advice on a spent retry budget; sending anyway', { caseId: fresh.id, reasons: verdict.reasons })
     await store.appendEvent(fresh.id, observation(`REPLY-JUDGE-FLAGGED-BUT-SENT: ${verdict.reasons.join('; ')}`))
     return { done: true, text: candidate }
   }
