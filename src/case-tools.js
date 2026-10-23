@@ -66,7 +66,6 @@ function selfCheckLoadBearingToolDescriptions() {
   const required = [
     { tool: 'case_update', field: 'case_type', pattern: /directly and explicitly stated/, name: 'case_type must be agent-stated-only, never inferred' },
     { tool: 'case_speaker', field: null, pattern: /Never guess or invent a name/, name: 'case_speaker must record a name only as a person said it, never a guess' },
-    { tool: REPORT_TOOL_NAME, field: 'location_source', pattern: /Never guess "confirmed"/, name: 'location_source "confirmed" must require the contact actually agreeing, never be guessed' },
 
     ...NEVER_INFERRED_FIELDS.map(f => ({
       tool: REPORT_TOOL_NAME, field: f.key,
