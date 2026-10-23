@@ -31,7 +31,6 @@ export function headerSection(persona, caseRow, contact) {
     `${caseRow.ref} is fine to write out in full.`,
     autonomyLine(persona, caseRow),
 
-    ...(persona.safetyText ? [persona.safetyText] : []),
 
     ...(persona.boundaryText ? [persona.boundaryText] : []),
     ``,
