@@ -1,6 +1,6 @@
 
 
-export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [], shape = null, adviceRefusal = null, controlNoted = false, safetyNumbers = [], consentOwed = false, consentAgreed = false, clarifyOwed = false, recordedLanguage = '' } = {}) {
+export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [], shape = null, adviceRefusal = null, controlNoted = false, consentOwed = false, consentAgreed = false, clarifyOwed = false, recordedLanguage = '' } = {}) {
   if (!replyText || !String(replyText).trim()) return { clean: true, reasons: [], category: null }
   if (typeof callLLM !== 'function') return { clean: true, reasons: [], category: null }
 
@@ -121,14 +121,6 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `   Only a claim or offer about WHEN, HOW or THAT someone will phone, visit or arrive is flagged.`,
     controlNoted ? `   The person asked for a human (or to stop) and the system DID register that this turn (a system fact): saying their request is written down is CLEAN; saying anyone will reply, call or come, or when, is not.` : null,
     `   Write the reason as "promise-made".`,
-    safetyNumbers.length && latestInbound ? [
-      `14. SAFETY LINE MISSING: read the PERSON'S LATEST MESSAGE below. If it says they may hurt`,
-      `   or kill themselves or someone else, the reply MUST contain these helpline numbers, written out:`,
-      `   ${safetyNumbers.join(', ')} (a system fact: the candidate reply does NOT contain all of them).`,
-      `   If the latest message says nothing of the kind, this shape does not apply. Write the reason as`,
-      `   "safety-line-missing".`,
-    ].join('\n') : null,
-
     consentOwed ? [
       `15. CONSENT NOT ASKED: this person's number has not yet said it is okay for the team to keep what they send`,
       `   (a system fact). The reply MUST clearly ask them, in their language, whether that is okay. A reply that only`,
@@ -189,7 +181,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `copied from the candidate reply that show it>"}, ...]} with one entry per shape that applies.`,
     `The quote MUST be copied character for character from the CANDIDATE REPLY (a short run of`,
     `its own words); a finding whose quote is not in the reply is thrown away. Only the shapes`,
-    `whose fault is something MISSING (${[missingFacts.length ? '"farewell-gap"' : null, consentOwed ? '"consent-not-asked"' : null, clarifyOwed ? '"clarify-not-asked"' : null, safetyNumbers.length && latestInbound ? '"safety-line-missing"' : null].filter(Boolean).join(', ') || 'none here'}) may leave "quote" empty.`,
+    `whose fault is something MISSING (${[missingFacts.length ? '"farewell-gap"' : null, consentOwed ? '"consent-not-asked"' : null, clarifyOwed ? '"clarify-not-asked"' : null].filter(Boolean).join(', ') || 'none here'}) may leave "quote" empty.`,
     `Judge only the shapes actually shown to you, and never treat a gap in the numbering as a`,
     `shape withheld. Each shape has a REQUIRED reason word (the heading words are a wire protocol,`,
     `not prose; see this file's header): ${[
@@ -200,13 +192,12 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       clarifyOwed ? 'shape 16 "clarify-not-asked"' : null,
       consentAgreed ? 'shape 17 "consent-reask"' : null,
       (hadSuccessfulWrite === false && missingFacts.length && latestInbound) ? 'shape 18 "not-recorded"' : null,
-      safetyNumbers.length && latestInbound ? 'shape 14 "safety-line-missing"' : null,
     ].filter(Boolean).join(', ')}. Shapes 1-5 and 8 use "prompt-echo", "stock-ack", "repeated", "tool-refusal", "meta-commentary" and "false-confirmation".`,
   ].filter(line => line !== null).join('\n')
 
   const norm = (t) => String(t ?? '').toLowerCase().replace(/[\u2018\u2019\u201c\u201d"'`]/g, '').replace(/\s+/g, ' ').trim()
   const haystack = norm(replyText)
-  const ABSENCE = /farewell.?gap|consent.?not.?asked|clarify.?not.?asked|safety.?line.?missing/i
+  const ABSENCE = /farewell.?gap|consent.?not.?asked|clarify.?not.?asked/i
   async function pass() {
     let raw = ''
     for (let tryNo = 0; tryNo < 2 && !raw; tryNo++) {
@@ -231,7 +222,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
 
   const second = await pass()
 
-  const FIRST_PASS_ONLY = /farewell.?gap|safety.?line.?missing/i
+  const FIRST_PASS_ONLY = /farewell.?gap/i
   const agreed = [...new Set(first)].filter(w => FIRST_PASS_ONLY.test(w) || (second || []).some(x => x.toLowerCase() === w.toLowerCase()))
   const reasons = [...agreed, ...langReasons]
   return reasons.length ? { clean: false, reasons, category: 'other' } : { clean: true, reasons: [], category: null }

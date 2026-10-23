@@ -94,23 +94,3 @@ export function normaliseReply(text, { keepLists = false } = {}) {
 }
 
 const REF_TOKEN = /CASE-\d+-[a-z0-9]+/gi
-const DIGIT_RUN = /\+?\d(?:[ \-]?\d)+/g
-const WEB_ADDRESS = /\b(?:https?:\/\/|www\.)[^\s)]+|\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:org|com|net|info|gov|co\.za|org\.za|gov\.za)\b[^\s)]*/gi
-const digitsOf = (t) => t.replace(/\D/g, '')
-const contactTokens = (text) => {
-  const s = String(text ?? '').replace(REF_TOKEN, ' ')
-  const nums = (s.match(DIGIT_RUN) || []).map(t => ({ shown: t.trim(), key: digitsOf(t) })).filter(x => x.key.length >= 3)
-  const webs = (s.match(WEB_ADDRESS) || []).map(t => ({ shown: t.replace(/[.,;:!?]+$/, ''), key: t.replace(/[.,;:!?]+$/, '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/+$/, '') }))
-  return [...nums, ...webs]
-}
-export function strayContactDetails(reply, allowedTexts = []) {
-  const allowed = new Set(allowedTexts.flatMap(t => contactTokens(t).map(x => x.key)))
-  const seen = new Set()
-  const stray = []
-  for (const tok of contactTokens(reply)) {
-    if (allowed.has(tok.key) || seen.has(tok.key)) continue
-    seen.add(tok.key)
-    stray.push(tok.shown)
-  }
-  return stray
-}

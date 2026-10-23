@@ -1,7 +1,7 @@
 
 
 import { runTurn } from '../agent/run-turn.js'
-import { observation, flagNeedsHuman, raiseOperatorItem } from './case-writes.js'
+import { observation, raiseOperatorItem } from './case-writes.js'
 import { caseSystemPrompt } from './prompt.js'
 import { speakerState } from '../phone-persons.js'
 import { consentManaged, consentState } from '../phone-consent.js'
@@ -9,7 +9,7 @@ import { returnState } from '../return-clarify.js'
 import { buildPromptContext } from './prompt-context.js'
 import { fieldLabel } from '../store/report-shape.js'
 import { judgeReply } from './reply-judge.js'
-import { replyShape, strayContactDetails, singleAsk, jargonIn } from './plain-text.js'
+import { replyShape, singleAsk, jargonIn } from './plain-text.js'
 import { loadDomainConfig } from '../config-loader.js'
 import { stripThinkingBlock, OPTED_OUT_TAG, detectContactIntent } from './heuristics.js'
 import { tagList, parseReport } from '../timestamp.js'
@@ -222,22 +222,9 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   }
 
   const persona = loadDomainConfig().persona
-  const stray = persona.safetyText
-    ? strayContactDetails(candidate, [persona.safetyText, inboundText, process.env.CASEY_PUBLIC_URL, fresh.ref])
-    : []
-  if (stray.length) {
-    if (canRetry) {
-      log.warn?.('[casey] reply carries a number or address nobody configured; retrying turn with feedback', { caseId: fresh.id, attempt, stray_count: stray.length })
-      await note(`STRAY-CONTACT-DETAIL: reply carried ${stray.join(', ')}; retrying turn with feedback (attempt ${attempt})`)
-      return { done: false, retryFeedback: `\n\n[System note: your previous reply was not sent because it gave ${stray.join(', ')}, which is not in your instructions. Remove that, and keep the numbers that ARE in your safety instructions, written out in full, if the person may be in danger. Give no other phone number, text-message number or web address, and no other country. No list.]` }
-    }
-    await store.appendEvent(fresh.id, observation(`STRAY-CONTACT-DETAIL-BUT-SENT: reply carried ${stray.join(', ')}`))
-  }
-
   const controlNoted = controlRegistered(result) || detectContactIntent(typedText) === 'stop'
 
   const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result) || controlNoted || controlRegistered(result, 'case_consent')
-  const safetyNumbers = persona.safetyText ? strayContactDetails(persona.safetyText, [candidate]) : []
   const { missingFacts = [], knownFacts = [] } = factsForJudge ? await factsForJudge() : {}
 
   const consentNow = consentOn && fresh.contact_id ? await consentState(store, fresh.contact_id, { caseId: fresh.id }) : null
@@ -262,7 +249,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     await note(`JARGON-LEAK: reply used ${jargon.join(', ')}; retrying turn with feedback (attempt ${attempt})`)
     return { done: false, retryFeedback: jargonFeedback(jargon, fresh.ref) }
   }
-  let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, consentOwed, consentAgreed, clarifyOwed, recordedLanguage, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
+  let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, consentOwed, consentAgreed, clarifyOwed, recordedLanguage, adviceRefusal: persona.adviceRefusalText || null, controlNoted })
   if (verdict.fault) await raiseOperatorItem({ store, log, caseId: fresh.id, code: 'judge.fault', fields: { attempt, fault: verdict.fault } })
 
   if (isStaff && !verdict.clean && verdict.reasons?.length) {
@@ -319,7 +306,6 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   const faultRoutes = [
     [/advice.?given/i, `it gave advice (a treatment, medicine, dose, precaution, handling step, reassurance, counselling, "you should", a disease guess or a claim that something is legal or safe). You connect people and never advise, whatever they asked. Where the person may be in danger, give warm words and the helpline numbers from your safety instructions only. Otherwise, if they asked what to do about the animals, convey only this, in your own words: ${persona.adviceRefusalText || 'you do not give advice'}. Then carry on with the report`],
     [/promise.?made/i, 'it said or implied that someone has been alerted, asked or flagged, will come, phone, reply or follow up. Nothing here does that. Do not claim anything about what happens to it next; if they asked when or whether someone will come or call, say kindly that you cannot say'],
-    [/safety.?line.?missing/i, `the person may be in danger and it did not include the helpline numbers from your safety instructions (${safetyNumbers.join(', ')}). Write them out in full, in two or three warm plain sentences, with no other number and no list`],
     [/wrong.?language/i, "it was not in the language of their latest message. Write the whole reply again in exactly the language their latest message is written in, and no other"],
     [/clarify.?not.?asked/i, "it did not ask whether this is more about their existing report or a new problem, and who is writing. This person came back to a report that is already complete, so in this reply ask that in one short natural sentence in their language, naming the report in a few words, and ask who is writing; it is your one question. If their latest message already answers it, call case_clarify first"],
     [/consent.?not.?asked/i, "it did not ask whether it is okay for the team to keep what they send, and this number has not agreed yet. In this reply say briefly, in your own words and their language, what is kept and who can see it, and ask if that is okay: it is your one question. If their latest message already answers that question, call case_consent first (agreed true for a yes, false for a no)"],
@@ -330,21 +316,13 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   if (faults.length) {
     const alsoMulti = verdict.reasons?.some(r => /multi.?ask|wall of text/i.test(r)) ? ' Also ask only ONE question naming at most TWO things, with no list.' : ''
 
-    const hardFault = verdict.reasons?.some(r => /advice.?given|safety.?line.?missing|consent.?not.?asked|clarify.?not.?asked|consent.?reask|not.?recorded/i.test(r))
+    const hardFault = verdict.reasons?.some(r => /advice.?given|consent.?not.?asked|clarify.?not.?asked|consent.?reask|not.?recorded/i.test(r))
     if (hardFault ? canRetry : softCanRetry) {
       log.warn?.('[casey] reply judge flagged advice, a promise or the language; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
       await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
       return { done: false, retryFeedback: `\n\n[System note: your previous reply was not sent because ${faults.join('; and because ')}.${alsoMulti} Keep it short, warm and in plain sentences, and never say any of this to them.]` }
     }
 
-    const crisisReply = persona.safetyText && verdict.reasons.some(r => /safety.?line.?missing/i.test(r))
-    if (crisisReply) {
-      const faultNames = faultRoutes.filter(([re]) => verdict.reasons?.some(r => re.test(r))).map(([re]) => re.source)
-      await store.appendEvent(fresh.id, observation(`CRISIS-REPLY-REPLACED: the judged reply was not sent; the safety text was sent instead and the case was raised to operators (faults: ${faultNames.join(', ')})`))
-      await flagNeedsHuman({ store, log, caseRow: fresh, channel: null, from: null, flagLabel: 'crisis escalation', notifyLabel: 'crisis handoff' })
-      log.warn?.('[casey] judged crisis reply on a spent retry budget; sent the safety text and raised the case to operators', { caseId: fresh.id, faults: faultNames })
-      return { done: true, text: persona.safetyText }
-    }
     if (faultRoutes[0][0].test(verdict.reasons.join(' '))) {
 
       const safe = await composeAdviceRefusal(turnCallLLM, { inboundText, language: recordedLanguage })
