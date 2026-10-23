@@ -9,7 +9,7 @@ import { returnState } from '../return-clarify.js'
 import { buildPromptContext } from './prompt-context.js'
 import { fieldLabel } from '../store/report-shape.js'
 import { judgeReply } from './reply-judge.js'
-import { replyShape, singleAsk, jargonIn } from './plain-text.js'
+import { replyShape, strayContactDetails, singleAsk, jargonIn } from './plain-text.js'
 import { loadDomainConfig } from '../config-loader.js'
 import { stripThinkingBlock, OPTED_OUT_TAG, detectContactIntent } from './heuristics.js'
 import { tagList, parseReport } from '../timestamp.js'
@@ -222,6 +222,16 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   }
 
   const persona = loadDomainConfig().persona
+  const stray = strayContactDetails(candidate, [inboundText, process.env.CASEY_PUBLIC_URL, fresh.ref])
+  if (stray.length) {
+    if (canRetry) {
+      log.warn?.('[casey] reply carries a number or address nobody configured; retrying turn with feedback', { caseId: fresh.id, attempt, stray_count: stray.length })
+      await note(`STRAY-CONTACT-DETAIL: reply carried ${stray.join(', ')}; retrying turn with feedback (attempt ${attempt})`)
+      return { done: false, retryFeedback: `\n\n[System note: your previous reply was not sent because it gave ${stray.join(', ')}, which is not in your instructions. Remove that. Give no phone number, text-message number or web address, and no other country. No list.]` }
+    }
+    await store.appendEvent(fresh.id, observation(`STRAY-CONTACT-DETAIL-BUT-SENT: reply carried ${stray.join(', ')}`))
+  }
+
   const controlNoted = controlRegistered(result) || detectContactIntent(typedText) === 'stop'
 
   const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result) || controlNoted || controlRegistered(result, 'case_consent')
