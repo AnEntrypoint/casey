@@ -5,6 +5,7 @@ import { normalizeMsisdn } from '../role-invites.js'
 import { ACCOUNT_ROLES } from './roles.js'
 import { UNCLAIMED_ASSIGNEE } from '../case-store.js'
 import { smtpConfig } from '../mail/smtp.js'
+import { appsScriptConfig } from '../mail/apps-script.js'
 import { sendSetupEmail } from '../mail/setup-email.js'
 
 export const SETUP_TTL_HOURS = 72
@@ -159,7 +160,7 @@ export async function issueSetupLink(store, acct, setupBaseUrl = '') {
   let status = 'sent'
   let code = ''
   try {
-    smtpConfig()
+    if (!appsScriptConfig()) smtpConfig()
     const base = String(process.env.CASEY_PUBLIC_URL || setupBaseUrl || '').replace(/\/+$/, '')
     if (!base) throw Object.assign(new Error('no public address for the link'), { code: 'no_public_url' })
     const { token, expiresAt, id } = await issueSetupToken(store, acct.id)
