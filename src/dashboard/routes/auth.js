@@ -41,6 +41,7 @@ export function csrfGuard() {
     if (!req.caseyAccount || !STATE_CHANGING.has(req.method)) return next()
     const origin = req.get('origin') || req.get('referer')
     if (!origin) return next()
+    if (origin === 'null') return req.get('sec-fetch-site') === 'same-origin' ? next() : res.status(403).json({ error: 'invalid origin' })
     let originHost
     try { originHost = new URL(origin).host } catch { return res.status(403).json({ error: 'invalid origin' }) }
     if (originHost !== req.get('host')) return res.status(403).json({ error: 'cross-origin request rejected' })
