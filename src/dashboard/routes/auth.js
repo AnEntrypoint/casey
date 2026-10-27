@@ -8,6 +8,7 @@ import { mountRoutes } from './register.js'
 import { registerPublicSiteAssets } from './public-site.js'
 import { RUNTIME_STATES } from './operations.js'
 import { roleGate, roleOf, expectedRefGuard } from '../roles.js'
+import { getSetPassword, postSetPassword } from './set-password.js'
 
 export function sessionMiddleware({ store, parseCookies, verifySession, COOKIE_NAME, getAccount }) {
   return async (req, res, next) => {
@@ -709,6 +710,9 @@ export function registerAuth(app, deps) {
   }
 
   if (PUBLIC_SITE_ROOT) registerPublicSiteAssets(app, PUBLIC_SITE_ROOT)
+
+  app.get('/set-password', getSetPassword())
+  app.post('/api/set-password', postSetPassword(deps))
 
   mountRoutes(app, deps, ROUTES)
 
