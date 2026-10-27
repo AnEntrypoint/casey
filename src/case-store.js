@@ -75,6 +75,7 @@ export class CaseStore {
         contact: ['external_id'],
         operator_account: ['username'],
         operator_identity: ['operator_id'],
+        account_setup_token: ['token_hash'],
       },
     })
     await this.thatcher.init()

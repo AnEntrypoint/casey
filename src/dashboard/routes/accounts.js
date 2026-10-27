@@ -1,7 +1,10 @@
 import { mountRoutes } from './register.js'
 import { FIELD_ROLES } from '../roles.js'
+import { resendSetupLink } from '../auth.js'
 
-export const publicAccount = (a) => ({ id: a.id, username: a.username, display_name: a.display_name, role: a.role, contact_phone: a.contact_phone || null, disabled: a.disabled === '1', last_login_at: a.last_login_at || null })
+export const publicAccount = (a) => ({ id: a.id, username: a.username, display_name: a.display_name, role: a.role, contact_phone: a.contact_phone || null, disabled: a.disabled === '1', last_login_at: a.last_login_at || null, setup_email_status: a.setup_email_status || null })
+
+const requestBase = (req) => `${req.protocol}://${req.get('host')}`
 
 export function getOperators({ authed, actingOperator, getRoster }) {
   return async (req, res) => {
@@ -24,9 +27,20 @@ export function postAccount({ store, authed, isAdmin, createAccount }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
     try {
-      const { username, password, display_name, role, contact_phone } = req.body || {}
-      const acct = await createAccount(store, { username, password, displayName: display_name, role, contactPhone: contact_phone })
-      res.status(201).json({ account: publicAccount(acct) })
+      const { username, password, display_name, role, contact_phone, email } = req.body || {}
+      const acct = await createAccount(store, { username, password, displayName: display_name, role, contactPhone: contact_phone, email, setupBaseUrl: requestBase(req) })
+      res.status(201).json({ account: publicAccount(acct), setup_email_error: acct.setup_email_error || null })
+    } catch (e) { res.status(400).json({ error: e.message }) }
+  }
+}
+
+export function postResendSetup({ store, authed, isAdmin }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    try {
+      const acct = await resendSetupLink(store, req.params.id, requestBase(req))
+      res.json({ account: publicAccount(acct), setup_email_error: acct.setup_email_error || null })
     } catch (e) { res.status(400).json({ error: e.message }) }
   }
 }
@@ -89,6 +103,7 @@ const ROUTES = [
   ['get', '/api/operators', getOperators],
   ['get', '/api/accounts', getAccounts],
   ['post', '/api/accounts', postAccount, { raw: true }],
+  ['post', '/api/accounts/:id/resend-setup', postResendSetup, { raw: true }],
   ['post', '/api/accounts/:id/disable', postAccountDisabled(true), { raw: true }],
   ['post', '/api/accounts/:id/enable', postAccountDisabled(false), { raw: true }],
   ['post', '/api/accounts/:id/contact-phone', postAccountContactPhone, { raw: true }],

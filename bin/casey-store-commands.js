@@ -534,14 +534,14 @@ export async function cmdOperators({ flags, rest }) {
   const { ACCOUNT_ROLES } = await import('../src/dashboard/roles.js')
   if (sub === 'add') {
     const username = positional[0]
-    if (!username) { say('usage: casey operators add <username> [--password ...] [--name ...] [--role admin|operator|eco_ranger|animal_health_technician|viewer]'); await closeAndExit(store, 1) }
+    if (!username) { say('usage: casey operators add <username> --email <address> [--name ...] [--role admin|operator|eco_ranger|animal_health_technician|viewer]  (or --password <8+ chars> to set it yourself)'); await closeAndExit(store, 1) }
     if (flags.role !== undefined) await requireOneOf(store, 'role', flags.role, ACCOUNT_ROLES)
-    if (flags.password === true) { say(bad('--password needs a value (omit it entirely to have one generated).')); await closeAndExit(store, 1) }
-    const password = typeof flags.password === 'string' ? flags.password : randomBytes(10).toString('hex')
+    if (flags.password === true || flags.email === true) { say(bad('--password and --email each need a value.')); await closeAndExit(store, 1) }
+    const password = typeof flags.password === 'string' ? flags.password : undefined
     try {
-      const acct = await createAccount(store, { username, password, displayName: typeof flags.name === 'string' ? flags.name : undefined, role: flags.role || 'operator' })
+      const acct = await createAccount(store, { username, password, email: typeof flags.email === 'string' ? flags.email : undefined, displayName: typeof flags.name === 'string' ? flags.name : undefined, role: flags.role || 'operator' })
       console.log(green(`created account "${acct.username}" (role: ${acct.role})`))
-      if (!flags.password) console.log(dim('  generated password: ') + bold(password) + dim('  -- record this now, it is not shown again'))
+      if (!password) console.log(dim(acct.setup_email_status === 'sent' ? '  a one-time password setup link was emailed to them.' : `  the setup email was not sent (${acct.setup_email_error || 'unknown'}); the login cannot be used until it is resent from the console.`))
       await closeAndExit(store, 0)
     } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
   }

@@ -31,7 +31,7 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
     let acctCols = new Set()
     if (tables.has('operator_account')) {
       acctCols = await tableCols(db, 'operator_account')
-      const sel = ['id', 'username', 'display_name', 'role', 'disabled', 'status'].filter(c => acctCols.has(c))
+      const sel = ['id', 'username', 'display_name', 'role', 'disabled', 'status', 'setup_email_status'].filter(c => acctCols.has(c))
       if (acctCols.has('contact_phone')) sel.push('contact_phone')
       accounts = (await q(db, `SELECT ${sel.join(', ')} FROM operator_account`)).filter(a => a.status !== 'deleted')
     }
@@ -40,6 +40,8 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
     if (!accounts.length) rows.push(row('admin', 'info', 'no dashboard logins yet: a bootstrap admin is created on first boot'))
     else if (!admins.length) rows.push(row('admin', 'fail', 'there is NO enabled admin login: nobody can create logins, grant the operator rung or unlock accounts', 'Create one from the terminal: casey operators add <name> --role admin (prints a generated password).'))
     else rows.push(row('admin', 'ok', `${admins.length} enabled admin login(s), ${live.length} enabled login(s) in all`))
+    const unsent = accounts.filter(a => a.setup_email_status === 'not_sent')
+    if (unsent.length) rows.push(row('account-setup', 'warn', `${unsent.length} new login(s) have no password yet because their setup email was not sent`, 'Set CASEY_SMTP_HOST and CASEY_SMTP_FROM for the service (also CASEY_SMTP_PORT, CASEY_SMTP_USER and CASEY_SMTP_PASSWORD when the relay needs them), restart the service, then POST /api/accounts/<id>/resend-setup for each such login.'))
 
     let contacts = []
     if (tables.has('contact')) {

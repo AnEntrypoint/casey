@@ -4,6 +4,12 @@ import path from 'node:path'
 import { normalizeMsisdn } from '../role-invites.js'
 import { ACCOUNT_ROLES } from './roles.js'
 import { UNCLAIMED_ASSIGNEE } from '../case-store.js'
+import { smtpConfig } from '../mail/smtp.js'
+import { sendSetupEmail } from '../mail/setup-email.js'
+
+export const SETUP_TTL_HOURS = 72
+const SETUP_TABLE = 'account_setup_token'
+const EMAIL_RE = /^[^\s@<>()[\],;:"]+@[^\s@<>()[\],;:"]+\.[^\s@<>()[\],;:"]+$/
 
 const SCRYPT_KEYLEN = 64
 const SCRYPT_OPTS = { N: 16384, r: 8, p: 1 }
@@ -102,23 +108,94 @@ export async function listAccounts(store) {
   return store.t.list('operator_account', {}, { limit: 500 })
 }
 
-export async function createAccount(store, { username, password, displayName, role = 'operator', mustChangePassword = false, contactPhone = '' }) {
+export function normalizeEmail(raw) {
+  const e = String(raw || '').trim().toLowerCase()
+  if (!e) return ''
+  if (e.length > 254 || !EMAIL_RE.test(e)) throw new Error('email address is not valid')
+  return e
+}
+
+export async function createAccount(store, { username, password, displayName, role = 'operator', mustChangePassword = false, contactPhone = '', email = '', setupBaseUrl = '' }) {
   if (role === 'secretary') role = 'operator'
   const sid = slugUsername(username)
   if (!sid) throw new Error('invalid username')
   if (sid === UNCLAIMED_ASSIGNEE) throw new Error(`"${sid}" is reserved (it marks an unclaimed report) -- pick another username`)
   if (role != null && role !== '' && !ACCOUNT_ROLES.includes(role)) throw new Error(`role must be one of ${ACCOUNT_ROLES.join(', ')}`)
-  if (!password || String(password).length < 8) throw new Error('password must be at least 8 characters')
+  const hasPassword = password != null && String(password) !== ''
+  if (hasPassword && String(password).length < 8) throw new Error('password must be at least 8 characters')
+  const mail = normalizeEmail(email)
+  if (!hasPassword && !mail) throw new Error('enter an email address so the person can set their own password')
   if (await findAccountByUsername(store, sid)) throw new Error(`account "${sid}" already exists`)
   const phone = String(contactPhone || '').trim() ? normalizeMsisdn(contactPhone) : ''
   if (String(contactPhone || '').trim() && !phone) throw new Error('phone number is not valid -- use a full number such as 082 123 4567')
-  const { hash, salt } = hashPassword(password)
-  return store.t.create('operator_account', {
+  const { hash, salt } = hasPassword ? hashPassword(password) : { hash: '', salt: '' }
+  const acct = await store.t.create('operator_account', {
     username: sid, password_hash: hash, password_salt: salt,
     display_name: String(displayName || sid).slice(0, 80), role: ACCOUNT_ROLES.includes(role) ? role : 'operator',
     ...(phone ? { contact_phone: phone } : {}),
-    disabled: '0', must_change_password: mustChangePassword ? '1' : '0',
+    ...(mail ? { email: mail } : {}),
+    disabled: '0', must_change_password: hasPassword ? (mustChangePassword ? '1' : '0') : '1',
   }, SYSTEM)
+  if (hasPassword) return acct
+  const { status, code } = await issueSetupLink(store, acct, setupBaseUrl)
+  return { ...acct, setup_email_status: status, setup_email_error: code }
+}
+
+export async function issueSetupToken(store, accountId, { now = Date.now(), ttlHours = SETUP_TTL_HOURS } = {}) {
+  const token = crypto.randomBytes(32).toString('base64url')
+  const expiresAt = now + ttlHours * 3600e3
+  const row = await store.t.create(SETUP_TABLE, { token_hash: setupHash(token), account_id: accountId, expires_at: expiresAt, used_at: '' }, SYSTEM)
+  return { token, expiresAt, id: row.id }
+}
+
+const setupHash = (token) => crypto.createHash('sha256').update(String(token)).digest('hex')
+
+async function revokeSetupTokens(store, accountId, keepId = null) {
+  const rows = await store.t.list(SETUP_TABLE, { account_id: accountId }, { limit: 100 })
+  for (const r of rows) if (!r.used_at && r.id !== keepId) await store.t.update(SETUP_TABLE, r.id, { used_at: new Date().toISOString() }, SYSTEM)
+}
+
+export async function issueSetupLink(store, acct, setupBaseUrl = '') {
+  let status = 'sent'
+  let code = ''
+  try {
+    smtpConfig()
+    const base = String(process.env.CASEY_PUBLIC_URL || setupBaseUrl || '').replace(/\/+$/, '')
+    if (!base) throw Object.assign(new Error('no public address for the link'), { code: 'no_public_url' })
+    const { token, expiresAt, id } = await issueSetupToken(store, acct.id)
+    await sendSetupEmail({ to: acct.email, name: acct.display_name, link: `${base}/set-password?token=${token}`, expiresAt })
+    await revokeSetupTokens(store, acct.id, id)
+  } catch (e) {
+    status = 'not_sent'
+    code = String(e.code || 'send_failed').slice(0, 40)
+    console.warn(`[casey] setup email not sent for account ${acct.id}: ${code}`)
+  }
+  await store.t.update('operator_account', acct.id, { setup_email_status: status, setup_email_error: code }, SYSTEM)
+  return { status, code }
+}
+
+export async function resendSetupLink(store, id, setupBaseUrl = '') {
+  const acct = await getAccount(store, id)
+  if (!acct) throw new Error('account not found')
+  if (acct.must_change_password !== '1') throw new Error('this login already has its password')
+  if (!acct.email) throw new Error('this login has no email address on file')
+  const { status, code } = await issueSetupLink(store, acct, setupBaseUrl)
+  return { ...acct, setup_email_status: status, setup_email_error: code }
+}
+
+export async function redeemSetupToken(store, token, newPassword, { now = Date.now() } = {}) {
+  if (!newPassword || String(newPassword).length < 8) return { ok: false, reason: 'short' }
+  const h = setupHash(token)
+  return store._withLock(`account-setup|${h}`, async () => {
+    const [row] = await store.t.list(SETUP_TABLE, { token_hash: h }, { limit: 1 })
+    if (!row || row.used_at) return { ok: false, reason: 'invalid' }
+    if (Number(row.expires_at) <= now) return { ok: false, reason: 'expired' }
+    const acct = await getAccount(store, row.account_id)
+    if (!acct || acct.disabled === '1' || acct.status === 'deleted') return { ok: false, reason: 'invalid' }
+    await changePassword(store, acct.id, newPassword)
+    await store.t.update(SETUP_TABLE, row.id, { used_at: new Date(now).toISOString() }, SYSTEM)
+    return { ok: true, account: acct }
+  })
 }
 
 export async function changePassword(store, id, newPassword) {
