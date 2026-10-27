@@ -1,4 +1,5 @@
 import { sendMail } from './smtp.js'
+import { appsScriptConfig, sendViaAppsScript } from './apps-script.js'
 
 export const SETUP_SUBJECT = 'Set your password'
 
@@ -18,5 +19,8 @@ export function setupEmailText({ name, link, expiresAt }) {
 }
 
 export function sendSetupEmail({ to, name, link, expiresAt }, env = process.env) {
-  return sendMail({ to, subject: SETUP_SUBJECT, text: setupEmailText({ name, link, expiresAt }) }, env)
+  const message = { to, subject: SETUP_SUBJECT, text: setupEmailText({ name, link, expiresAt }) }
+  const relay = appsScriptConfig(env)
+  if (relay) return sendViaAppsScript(message, relay)
+  return sendMail(message, env)
 }
