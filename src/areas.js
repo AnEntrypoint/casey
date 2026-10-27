@@ -69,9 +69,9 @@ export async function generalAreaFor(store, stated) {
   const text = String(stated ?? '').replace(/\s+/g, ' ').trim()
   try {
     const hit = resolveAreaFromLocation(await loadAreas(store), text)
-    return hit ? hit.area.name : text
+    return hit ? hit.area.name : ''
   } catch {
-    return text
+    return ''
   }
 }
 

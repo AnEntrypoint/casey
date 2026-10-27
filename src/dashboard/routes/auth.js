@@ -486,7 +486,11 @@ export function postReport({ store, esc }) {
         if (value.length > FIELD_MAXLEN) cut++
         incoming[key] = value.slice(0, FIELD_MAXLEN)
       }
-      if (typeof incoming.location === 'string') incoming.location = await generalAreaFor(store, incoming.location)
+      if (typeof incoming.location === 'string') {
+        const area = await generalAreaFor(store, incoming.location)
+        if (area) incoming.location = area
+        else delete incoming.location
+      }
       let held = 0
       if (!ref && !openedHere) {
         const already = parseReport(found)

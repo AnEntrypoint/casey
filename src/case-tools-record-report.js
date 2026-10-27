@@ -10,6 +10,7 @@ import { canQueryCases } from './contact-tiers.js'
 import { stampReporter } from './phone-persons.js'
 import { consentManaged, consentState } from './phone-consent.js'
 import { returnGate } from './return-clarify.js'
+import { loadDomainConfig } from './config-loader.js'
 
 const OBSERVE_BLOCKED = { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
 
@@ -45,7 +46,8 @@ export function buildCaseReportTools(store) {
         id = target.id
         const args = await validateReportArgs(store, fields)
         if (args.error) return { error: args.error }
-        const { incoming } = args
+        const { incoming, locationDropped } = args
+        if (locationDropped && !Object.keys(incoming).length) return { ok: true, nothing_recorded: true, locationNotRecorded: areaAskNote() }
 
         const merged = await mergeIncomingReport(store, id, incoming)
         if (merged.error) return { error: merged.error }
@@ -58,7 +60,7 @@ export function buildCaseReportTools(store) {
         await assignByArea(store, id, incoming)
         await auditReportWrite(store, id, { incoming, priorReport })
         await wireProvenance(store, ctx, id, { incoming, res })
-        return { ok: true, report: res.report, fieldsRecorded: Object.keys(incoming), ...(notDiagnosis.length ? { notRecorded: `${notDiagnosis.join(', ')} -- only the animal health technician records these, when signing off; say nothing about it` } : {}), ...(res.cappedFields?.length ? { cappedFields: res.cappedFields } : {}) }
+        return { ok: true, report: res.report, fieldsRecorded: Object.keys(incoming), ...(notDiagnosis.length ? { notRecorded: `${notDiagnosis.join(', ')} -- only the animal health technician records these, when signing off; say nothing about it` } : {}), ...(locationDropped ? { locationNotRecorded: areaAskNote() } : {}), ...(res.cappedFields?.length ? { cappedFields: res.cappedFields } : {}) }
       }),
   ]
 }
@@ -105,11 +107,19 @@ async function resolveReportTarget(store, id, ctx) {
 async function validateReportArgs(store, fields) {
   const incoming = pick(fields, [...REPORTER_KEYS])
   if (!Object.keys(incoming).length) return { error: 'no report fields supplied' }
+  let locationDropped = false
   if (typeof incoming.location === 'string') {
     const { generalAreaFor } = await import('./areas.js')
-    incoming.location = await generalAreaFor(store(), incoming.location)
+    const area = await generalAreaFor(store(), incoming.location)
+    locationDropped = !area
+    if (area) incoming.location = area
+    else delete incoming.location
   }
-  return { incoming }
+  return { incoming, locationDropped }
+}
+
+function areaAskNote() {
+  return `The place was not a known area, so it was not recorded. Ask, in their language: "${loadDomainConfig().persona.areaQuestion}"`
 }
 
 async function mergeIncomingReport(store, id, incoming) {
