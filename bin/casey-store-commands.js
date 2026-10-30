@@ -527,7 +527,7 @@ export async function cmdRestore({ flags, rest }) {
 }
 
 export async function cmdOperators({ flags, rest }) {
-  const { createAccount, listAccounts, findAccountByUsername, setAccountDisabled } = await import('../src/dashboard/auth.js')
+  const { createAccount, listAccounts, findAccountByUsername, setAccountDisabled, resetAccountPassword } = await import('../src/dashboard/auth.js')
   const store = await openStore()
   const sub = rest[0]
   const positional = rest.slice(1).filter(a => !a.startsWith('--'))
@@ -555,6 +555,16 @@ export async function cmdOperators({ flags, rest }) {
     }
     await closeAndExit(store, 0)
   }
+  if (sub === 'reset') {
+    const username = positional[0]
+    if (!username) { say('usage: casey operators reset <username>'); await closeAndExit(store, 1) }
+    const acct = await findAccountByUsername(store, username)
+    if (!acct) { say(bad(`no account "${username}".`)); await closeAndExit(store, 1) }
+    const out = await resetAccountPassword(store, acct.id, process.env.CASEY_PUBLIC_URL || '')
+    if (out.setup_email_status === 'sent') console.log(green(`password reset for "${acct.username}"; a new setup link was emailed.`))
+    else { say(bad(`password reset for "${acct.username}", but the setup email was not sent (${out.setup_email_error || 'unknown'}).`)); await closeAndExit(store, 1) }
+    await closeAndExit(store, 0)
+  }
   if (sub === 'disable' || sub === 'enable') {
     const username = positional[0]
     if (!username) { say(`usage: casey operators ${sub} <username>`); await closeAndExit(store, 1) }
@@ -568,7 +578,7 @@ export async function cmdOperators({ flags, rest }) {
     await closeAndExit(store, 0)
   }
   if (sub) say(bad(`casey operators has no "${sub}" subcommand.`))
-  say('usage: casey operators <add|list|disable|enable> ...')
+  say('usage: casey operators <add|list|disable|enable|reset> ...')
   await closeAndExit(store, 1)
 }
 

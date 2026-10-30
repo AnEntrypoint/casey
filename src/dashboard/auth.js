@@ -175,6 +175,17 @@ export async function issueSetupLink(store, acct, setupBaseUrl = '') {
   return { status, code }
 }
 
+export async function resetAccountPassword(store, id, setupBaseUrl = '') {
+  const acct = await getAccount(store, id)
+  if (!acct) throw new Error('account not found')
+  if (!acct.email) throw new Error('this login has no email address on file')
+  const nextEpoch = (Number(acct.session_epoch) || 0) + 1
+  await store.t.update('operator_account', id, { must_change_password: '1', session_epoch: String(nextEpoch) }, SYSTEM)
+  const fresh = await getAccount(store, id)
+  const { status, code } = await issueSetupLink(store, fresh, setupBaseUrl)
+  return { ...fresh, setup_email_status: status, setup_email_error: code }
+}
+
 export async function resendSetupLink(store, id, setupBaseUrl = '') {
   const acct = await getAccount(store, id)
   if (!acct) throw new Error('account not found')
