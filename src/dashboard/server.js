@@ -40,7 +40,7 @@ import { guiActionLogger, guiRequestLogger } from './gui-action-log.js'
 const esc = escapeHtml
 import {
   COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
-  issueSession, verifySession, findAccountByUsername, verifyPassword, markLogin,
+  issueSession, verifySession, findAccountByUsername, findAccountForLogin, verifyPassword, markLogin,
   getAccount, listAccounts, createAccount, setAccountDisabled, setAccountContactPhone, deleteAccount, changePassword,
   revokeAccountSessions,
 } from './auth.js'
@@ -375,7 +375,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     PUBLIC_SITE_ROOT,
     store, express, path, DESIGN_DIR, LEAFLET_DIR, MARKERCLUSTER_DIR,
     COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
-    issueSession, verifySession, findAccountByUsername, verifyPassword,
+    issueSession, verifySession, findAccountByUsername, findAccountForLogin, verifyPassword,
     markLogin, getAccount, listAccounts, createAccount, setAccountDisabled, setAccountContactPhone,
     deleteAccount, changePassword, revokeAccountSessions,
     esc, wrap, str, clampLimit, offsetOf,

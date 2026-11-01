@@ -94,6 +94,14 @@ export { COOKIE_NAME }
 
 const SYSTEM = { id: 'casey-system', role: 'admin' }
 
+export async function findAccountForLogin(store, identifier) {
+  const raw = String(identifier || '').trim()
+  if (!raw.includes('@')) return findAccountByUsername(store, raw)
+  const want = raw.toLowerCase()
+  const rows = await store.t.list('operator_account', {}, { limit: 500 })
+  return rows.find(r => String(r.email || '').trim().toLowerCase() === want) || null
+}
+
 export async function findAccountByUsername(store, username) {
   const sid = slugUsername(username)
   if (!sid) return null

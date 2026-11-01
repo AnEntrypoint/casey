@@ -617,7 +617,7 @@ const LOGIN_WINDOW_MS = 15 * 60e3
 const loginFails = (k, now) => { const l = (LOGIN_FAILS.get(k) || []).filter(t => now - t < LOGIN_WINDOW_MS); if (l.length) LOGIN_FAILS.set(k, l); else LOGIN_FAILS.delete(k); return l }
 const DECOY = { salt: 'decoy-salt-0000000000000000000000', hash: '00'.repeat(64) }
 
-export function postLogin({ store, findAccountByUsername, verifyPassword, issueSession, sessionCookieHeader, markLogin }) {
+export function postLogin({ store, findAccountForLogin, verifyPassword, issueSession, sessionCookieHeader, markLogin }) {
   return async (req, res) => {
     const { username, password } = req.body || {}
     const now = Date.now()
@@ -626,7 +626,7 @@ export function postLogin({ store, findAccountByUsername, verifyPassword, issueS
     if (loginFails(pairKey, now).length >= 10 || loginFails(ipKey, now).length >= 60) {
       return res.status(429).json({ error: 'too many attempts; wait a few minutes and try again' })
     }
-    const acct = await findAccountByUsername(store, username)
+    const acct = await findAccountForLogin(store, username)
     const ok = acct ? verifyPassword(password, acct.password_salt, acct.password_hash) : (verifyPassword(password, DECOY.salt, DECOY.hash), false)
     if (!acct || acct.disabled === '1' || !ok) {
       for (const k of [pairKey, ipKey]) LOGIN_FAILS.set(k, [...loginFails(k, now), now])
