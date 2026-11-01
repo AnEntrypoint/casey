@@ -534,14 +534,15 @@ export async function cmdOperators({ flags, rest }) {
   const { ACCOUNT_ROLES } = await import('../src/dashboard/roles.js')
   if (sub === 'add') {
     const username = positional[0]
-    if (!username) { say('usage: casey operators add <username> --email <address> [--name ...] [--role admin|operator|eco_ranger|animal_health_technician|viewer]  (or --password <8+ chars> to set it yourself)'); await closeAndExit(store, 1) }
+    if (!username) { say('usage: casey operators add <username> [--email <address>] [--phone <number>] [--name ...] [--role admin|operator|eco_ranger|animal_health_technician|viewer]  (or --password <8+ chars> to set it yourself)'); await closeAndExit(store, 1) }
     if (flags.role !== undefined) await requireOneOf(store, 'role', flags.role, ACCOUNT_ROLES)
     if (flags.password === true || flags.email === true) { say(bad('--password and --email each need a value.')); await closeAndExit(store, 1) }
     const password = typeof flags.password === 'string' ? flags.password : undefined
     try {
-      const acct = await createAccount(store, { username, password, email: typeof flags.email === 'string' ? flags.email : undefined, displayName: typeof flags.name === 'string' ? flags.name : undefined, role: flags.role || 'operator' })
+      const acct = await createAccount(store, { username, password, email: typeof flags.email === 'string' ? flags.email : undefined, contactPhone: typeof flags.phone === 'string' ? flags.phone : undefined, displayName: typeof flags.name === 'string' ? flags.name : undefined, role: flags.role || 'operator' })
       console.log(green(`created account "${acct.username}" (role: ${acct.role})`))
-      if (!password) console.log(dim(acct.setup_email_status === 'sent' ? '  a one-time password setup link was emailed to them.' : `  the setup email was not sent (${acct.setup_email_error || 'unknown'}); the login cannot be used until it is resent from the console.`))
+      if (!password && acct.setup_email_status === 'link_only') console.log(dim(`  no email on file, so give them this one-time link privately (valid 72 hours, works once): ${acct.setup_link}`))
+      else if (!password) console.log(dim(acct.setup_email_status === 'sent' ? '  a one-time password setup link was emailed to them.' : `  the setup email was not sent (${acct.setup_email_error || 'unknown'}); the login cannot be used until it is resent from the console.`))
       await closeAndExit(store, 0)
     } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
   }
@@ -561,7 +562,8 @@ export async function cmdOperators({ flags, rest }) {
     const acct = await findAccountByUsername(store, username)
     if (!acct) { say(bad(`no account "${username}".`)); await closeAndExit(store, 1) }
     const out = await resetAccountPassword(store, acct.id, process.env.CASEY_PUBLIC_URL || '')
-    if (out.setup_email_status === 'sent') console.log(green(`password reset for "${acct.username}"; a new setup link was emailed.`))
+    if (out.setup_email_status === 'link_only') console.log(green(`password reset for "${acct.username}". No email on file, so give them this one-time link privately (valid 72 hours, works once):`) + '\n  ' + out.setup_link)
+    else if (out.setup_email_status === 'sent') console.log(green(`password reset for "${acct.username}"; a new setup link was emailed.`))
     else { say(bad(`password reset for "${acct.username}", but the setup email was not sent (${out.setup_email_error || 'unknown'}).`)); await closeAndExit(store, 1) }
     await closeAndExit(store, 0)
   }

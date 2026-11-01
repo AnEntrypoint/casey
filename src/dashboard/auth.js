@@ -96,10 +96,19 @@ const SYSTEM = { id: 'casey-system', role: 'admin' }
 
 export async function findAccountForLogin(store, identifier) {
   const raw = String(identifier || '').trim()
-  if (!raw.includes('@')) return findAccountByUsername(store, raw)
-  const want = raw.toLowerCase()
-  const rows = await store.t.list('operator_account', {}, { limit: 500 })
-  return rows.find(r => String(r.email || '').trim().toLowerCase() === want) || null
+  if (!raw) return null
+  if (raw.includes('@')) {
+    const want = raw.toLowerCase()
+    const rows = await store.t.list('operator_account', {}, { limit: 500 })
+    return rows.find(r => String(r.email || '').trim().toLowerCase() === want) || null
+  }
+  if (/^[+\d][\d\s()-]*$/.test(raw)) {
+    const phone = normalizeMsisdn(raw)
+    if (!phone) return null
+    const rows = await store.t.list('operator_account', {}, { limit: 500 })
+    return rows.find(r => String(r.contact_phone || '') === phone) || null
+  }
+  return findAccountByUsername(store, raw)
 }
 
 export async function findAccountByUsername(store, username) {
@@ -133,7 +142,8 @@ export async function createAccount(store, { username, password, displayName, ro
   const hasPassword = password != null && String(password) !== ''
   if (hasPassword && String(password).length < 8) throw new Error('password must be at least 8 characters')
   const mail = normalizeEmail(email)
-  if (!hasPassword && !mail) throw new Error('enter an email address so the person can set their own password')
+  const phoneIn = String(contactPhone || '').trim() ? normalizeMsisdn(contactPhone) : ''
+  if (!hasPassword && !mail && !phoneIn) throw new Error('enter an email address or a phone number so the person can set their own password')
   if (await findAccountByUsername(store, sid)) throw new Error(`account "${sid}" already exists`)
   const phone = String(contactPhone || '').trim() ? normalizeMsisdn(contactPhone) : ''
   if (String(contactPhone || '').trim() && !phone) throw new Error('phone number is not valid -- use a full number such as 082 123 4567')
@@ -146,8 +156,8 @@ export async function createAccount(store, { username, password, displayName, ro
     disabled: '0', must_change_password: hasPassword ? (mustChangePassword ? '1' : '0') : '1',
   }, SYSTEM)
   if (hasPassword) return acct
-  const { status, code } = await issueSetupLink(store, acct, setupBaseUrl)
-  return { ...acct, setup_email_status: status, setup_email_error: code }
+  const { status, code, link } = await issueSetupLink(store, acct, setupBaseUrl)
+  return { ...acct, setup_email_status: status, setup_email_error: code, setup_link: link }
 }
 
 export async function issueSetupToken(store, accountId, { now = Date.now(), ttlHours = SETUP_TTL_HOURS } = {}) {
@@ -167,12 +177,19 @@ async function revokeSetupTokens(store, accountId, keepId = null) {
 export async function issueSetupLink(store, acct, setupBaseUrl = '') {
   let status = 'sent'
   let code = ''
+  let link = ''
   try {
-    if (!appsScriptConfig()) smtpConfig()
     const base = String(process.env.CASEY_PUBLIC_URL || setupBaseUrl || '').replace(/\/+$/, '')
     if (!base) throw Object.assign(new Error('no public address for the link'), { code: 'no_public_url' })
     const { token, expiresAt, id } = await issueSetupToken(store, acct.id)
-    await sendSetupEmail({ to: acct.email, name: acct.display_name, link: `${base}/set-password?token=${token}`, expiresAt })
+    link = `${base}/set-password?token=${token}`
+    if (acct.email) {
+      if (!appsScriptConfig()) smtpConfig()
+      await sendSetupEmail({ to: acct.email, name: acct.display_name, link, expiresAt })
+    } else {
+      status = 'link_only'
+      code = 'no_email'
+    }
     await revokeSetupTokens(store, acct.id, id)
   } catch (e) {
     status = 'not_sent'
@@ -180,27 +197,16 @@ export async function issueSetupLink(store, acct, setupBaseUrl = '') {
     console.warn(`[casey] setup email not sent for account ${acct.id}: ${code}`)
   }
   await store.t.update('operator_account', acct.id, { setup_email_status: status, setup_email_error: code }, SYSTEM)
-  return { status, code }
-}
-
-export async function resetAccountPassword(store, id, setupBaseUrl = '') {
-  const acct = await getAccount(store, id)
-  if (!acct) throw new Error('account not found')
-  if (!acct.email) throw new Error('this login has no email address on file')
-  const nextEpoch = (Number(acct.session_epoch) || 0) + 1
-  await store.t.update('operator_account', id, { must_change_password: '1', session_epoch: String(nextEpoch) }, SYSTEM)
-  const fresh = await getAccount(store, id)
-  const { status, code } = await issueSetupLink(store, fresh, setupBaseUrl)
-  return { ...fresh, setup_email_status: status, setup_email_error: code }
+  return { status, code, link }
 }
 
 export async function resendSetupLink(store, id, setupBaseUrl = '') {
   const acct = await getAccount(store, id)
   if (!acct) throw new Error('account not found')
   if (acct.must_change_password !== '1') throw new Error('this login already has its password')
-  if (!acct.email) throw new Error('this login has no email address on file')
-  const { status, code } = await issueSetupLink(store, acct, setupBaseUrl)
-  return { ...acct, setup_email_status: status, setup_email_error: code }
+  if (!acct.email && !acct.contact_phone) throw new Error('this login has no email address or phone number on file')
+  const { status, code, link } = await issueSetupLink(store, acct, setupBaseUrl)
+  return { ...acct, setup_email_status: status, setup_email_error: code, setup_link: link }
 }
 
 export async function redeemSetupToken(store, token, newPassword, { now = Date.now() } = {}) {
