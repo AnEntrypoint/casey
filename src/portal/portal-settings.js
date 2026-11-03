@@ -1,8 +1,15 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import path from 'node:path'
 import { TABLE, ACTOR, isE164 } from './portal-store.js'
 
 export const GLOBAL_ROUTER_ID = '_global'
+
+export function loadTcBody(env = process.env) {
+  const deployed = env.CASEY_CONFIG_DIR ? path.join(path.resolve(env.CASEY_CONFIG_DIR), 'portal', 'tc-body.txt') : null
+  const file = deployed && fs.existsSync(deployed) ? deployed : new URL('./defaults/tc-body.txt', import.meta.url)
+  return fs.readFileSync(file, 'utf8').trim()
+}
 
 const DEFAULT_PUBLIC_BASE = 'https://ubuntudashboard.co.za'
 const DEFAULT_RETENTION_DAYS = 90
@@ -63,7 +70,7 @@ const DEFAULTS = Object.freeze({
   blocked_text: 'Your access ended because the WhatsApp bot did not receive a message from your number within {{contact_minutes}} minutes. This device cannot connect again for {{block_hours}} hours.',
   tc_title: 'Terms and Conditions: Free WhatsApp Access',
   tc_version: '1',
-  tc_body: fs.readFileSync(new URL('./defaults/tc-body.txt', import.meta.url), 'utf8').trim(),
+  tc_body: loadTcBody(),
 })
 
 const SETTING_KEYS = Object.freeze(Object.keys(SCHEMA))
