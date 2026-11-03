@@ -832,5 +832,5 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 #casey-preview-bar button { background: transparent; color: inherit; border: 1px solid currentColor; border-radius: var(--r-2); padding: var(--space-1) var(--space-3); font: inherit; cursor: pointer; }
 
 /* The skip link is off screen until it takes keyboard focus, on every width. */
-.skip-link { position: absolute; top: 0; left: 0; transform: translateY(-150%); z-index: 1000; }
+.skip-link { position: absolute; top: 0; left: 0; transform: translateY(-150%); z-index: var(--z-top); }
 .skip-link:focus { transform: none; top: 8px; left: 8px; outline: 2px solid currentColor; }
