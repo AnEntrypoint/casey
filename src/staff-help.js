@@ -21,6 +21,29 @@ export async function markOnboarded(store, contact) {
   await store.appendEvent(own.id, { kind: 'observation', actor: 'system', text: 'ONBOARDING shown to this team member', data: { onboarded: true, contact_id: contact.id }, touch: false })
 }
 
+const ISSUES_GROUP_URL = /^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]+$/
+
+export function issuesGroupUrl(env = process.env) {
+  const url = String(env.CASEY_ISSUES_GROUP_URL || '').trim()
+  return ISSUES_GROUP_URL.test(url) ? url : ''
+}
+
+export async function issuesInviteDue(store, contact) {
+  if (!contact?.id || !issuesGroupUrl()) return false
+  const cases = await ownCases(store, contact)
+  if (!cases.length) return false
+  for (const c of cases) {
+    if ((await store.listEvents(c.id)).some(e => evData(e).issues_invited === true)) return false
+  }
+  return true
+}
+
+export async function markIssuesInvited(store, contact) {
+  const own = (await ownCases(store, contact))[0]
+  if (!own) throw new Error('markIssuesInvited: this contact has no conversation to record the invite on')
+  await store.appendEvent(own.id, { kind: 'observation', actor: 'system', text: 'ISSUES GROUP invite shown to this team member', data: { issues_invited: true, contact_id: contact.id }, touch: false })
+}
+
 const asList = (v) => (Array.isArray(v) ? v : [v]).filter(Boolean)
 
 export function helpFor(tier) {

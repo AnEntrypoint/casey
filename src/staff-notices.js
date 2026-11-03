@@ -8,7 +8,7 @@ import { canSignOff } from './contact-tiers.js'
 import { isHandedOff } from './signoff-desk.js'
 import { isOwnConversation } from './case-assignment.js'
 import { TECHNICIAN_NOTE, notesTagged, offersFor, offerLine } from './relay.js'
-import { firstTimeStaff } from './staff-help.js'
+import { firstTimeStaff, issuesGroupUrl, issuesInviteDue, markIssuesInvited } from './staff-help.js'
 
 export const NOTICE_CASE_CAP = 25
 
@@ -118,8 +118,13 @@ export async function staffNoticeNote(store, contact) {
   try { n = (await staffNotices(store, contact)).counts; own = await ownReplyUndelivered(store, contact, { mark: true }) } catch { return '' }
   const ownNote = own ? `\n\n[System note: your previous reply to this person was NOT fully delivered by WhatsApp (${own.reason}); it began "${own.began}". Tell them so in one plain sentence before anything else and offer to send it again in shorter pieces.]` : ''
   const first = await firstTimeStaff(store, contact)
+  let inviteNote = ''
+  if (await issuesInviteDue(store, contact)) {
+    inviteNote = `\n\n[System note: this team member has not yet been invited to the issues group for reporting problems with this bot. In this reply, once, in your own words, invite them to join it: ${issuesGroupUrl()} Ask them to post any problem with the bot there. The system records the invite as sent once this turn is saved.]`
+    await markIssuesInvited(store, contact)
+  }
   const firstNote = first ? `\n\n[System note: this is the first time this team member has talked to you. After dealing with what they just said, call case_help and give them the short welcome it returns, in their language.]` : ''
-  if (!n.new_assignments && !n.new_replies && !n.dispatches && !n.undelivered && !n.sent_back && !n.new_handoffs && !n.handover_offers && !n.technician_notes) return ownNote + firstNote
+  if (!n.new_assignments && !n.new_replies && !n.dispatches && !n.undelivered && !n.sent_back && !n.new_handoffs && !n.handover_offers && !n.technician_notes) return ownNote + firstNote + inviteNote
   const bits = []
   if (n.handover_offers) bits.push(`${n.handover_offers} hand-over offered to them by another ranger (accept or decline)`)
   if (n.technician_notes) bits.push(`${n.technician_notes} with a new note from the technician`)
@@ -129,5 +134,5 @@ export async function staffNoticeNote(store, contact) {
   if (n.sent_back) bits.push(`${n.sent_back} sent back to them by the technician`)
   if (n.new_handoffs) bits.push(`${n.new_handoffs} handed over to the sign-off desk by a ranger`)
   if (n.undelivered) bits.push(`${n.undelivered} where WhatsApp did not deliver the last reply (the reporter has to message first, or be phoned)`)
-  return `${ownNote}${firstNote}\n\n[System note: waiting for this team member: ${bits.join('; ')}. Call case_pending, and after dealing with what they just said, tell them briefly in your own words. It is queued news, not a new message from them.]`
+  return `${ownNote}${firstNote}${inviteNote}\n\n[System note: waiting for this team member: ${bits.join('; ')}. Call case_pending, and after dealing with what they just said, tell them briefly in your own words. It is queued news, not a new message from them.]`
 }
