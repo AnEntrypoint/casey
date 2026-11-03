@@ -27,7 +27,7 @@ export function decodeBody(body) {
 export function healthFromCycle(h) {
   if (!isArray(h) || h.length < HEALTH_MIN_ITEMS) return fail('h must be an array of at least 16 items', 'h')
   const raw = {}
-  HEALTH_POSITIONS.forEach((key, i) => { if (h[i] !== undefined) raw[key] = h[i] })
+  HEALTH_POSITIONS.forEach((key, i) => { if (h[i] !== undefined && h[i] !== null) raw[key] = h[i] })
   try {
     if (isArray(h[10])) raw.wifi = h[10].map(([name, running, clients]) => ({ name, running: running === 1, clients }))
     if (isArray(h[11])) raw.ether = h[11].map(([name, running]) => ({ name, running: running === 1 }))
