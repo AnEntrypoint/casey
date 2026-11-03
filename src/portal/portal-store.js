@@ -5,6 +5,9 @@ export const TABLE = Object.freeze({
   registrations: 'portal_registrations',
   contacts: 'portal_contacts',
   events: 'router_events',
+  settings: 'router_settings',
+  health: 'router_health',
+  usage: 'router_usage',
 })
 
 export const EVENT_TYPES = Object.freeze(['login', 'check_pass', 'cutoff', 'block', 'heartbeat', 'other'])
@@ -13,10 +16,10 @@ export const EVENT_BATCH_MAX = 200
 export const EVENT_DETAIL_MAX_CHARS = 4000
 export const RECENT_EVENTS = 20
 const DAY_MS = 24 * 3600e3
-const ACTOR = Object.freeze({ id: 'casey-portal', role: 'agent' })
+export const ACTOR = Object.freeze({ id: 'casey-portal', role: 'agent' })
 const E164 = /^\+[1-9]\d{7,14}$/
 const MAC = /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/
-const ROUTER_ID = /^[A-Za-z0-9_-]{1,64}$/
+const ROUTER_ID = /^(?!_)[A-Za-z0-9_-]{1,64}$/
 
 export const isE164 = (v) => typeof v === 'string' && E164.test(v)
 export const validRouterId = (v) => typeof v === 'string' && ROUTER_ID.test(v)

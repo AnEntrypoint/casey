@@ -774,6 +774,35 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-invite-list, .ds-invite-confirm { display: flex; flex-direction: column; gap: var(--space-3); align-items: flex-start; }
 .ds-invite-list > .ds-table-wrap { align-self: stretch; }
 .ds-invite-fresh .ds-invite-code { font-size: var(--fs-lg); white-space: nowrap; overflow-wrap: normal; letter-spacing: 0.08em; }
+.portal-config { display: flex; flex-direction: column; gap: var(--space-3); }
+.portal-config-field { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); }
+.portal-config-field > .btn-sm { align-self: flex-start; }
+.portal-config-check { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.portal-config-check .ds-field-hint { flex-basis: 100%; }
+.portal-health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: var(--space-3); align-items: start; }
+.portal-card { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--r-2); background: var(--bg); }
+.portal-card-title { margin: 0; font-size: var(--fs-sm); font-weight: 600; }
+.portal-log-list { margin: 0; padding-left: var(--space-3); font-size: var(--fs-micro); color: var(--fg-2); overflow-wrap: break-word; }
+.portal-history { display: flex; flex-direction: column; gap: var(--space-1); }
+.portal-sparkline { display: block; width: 100%; height: 3.5rem; }
+.portal-sparkline-line { fill: none; stroke: var(--green-2); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.portal-usage-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); }
+.portal-range-pills .ds-filter-pills { flex-wrap: wrap; }
+.portal-usage-body { display: flex; flex-direction: column; gap: var(--space-3); }
+.portal-usage-focus { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--fs-sm); }
+.portal-usage-chart { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.portal-chart { display: block; width: 100%; height: auto; overflow: visible; }
+.portal-chart-grid { stroke: var(--border); stroke-width: 1; }
+.portal-chart-axis { stroke: var(--fg-3); stroke-width: 1; }
+.portal-chart-label { fill: var(--fg-2); font-size: var(--fs-micro); }
+.portal-chart-bar-down { fill: var(--green-2); }
+.portal-chart-bar-up { fill: var(--alt); }
+.portal-usage-legend { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--fs-micro); color: var(--fg-2); }
+.portal-usage-legend-item { display: inline-flex; align-items: center; gap: var(--space-1); }
+.portal-swatch { display: inline-block; width: 0.75rem; height: 0.75rem; border-radius: var(--r-0); }
+.portal-swatch-down { background: var(--green-2); }
+.portal-swatch-up { background: var(--alt); }
+.portal-device-table td { font-variant-numeric: tabular-nums; }
 #casey-print-slips { display: none; }
 @media print {
   body.casey-print-slips > *:not(#casey-print-slips) { display: none; }

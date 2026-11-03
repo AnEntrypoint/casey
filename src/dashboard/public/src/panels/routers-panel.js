@@ -7,19 +7,17 @@ import { state } from '../state.js';
 import { viewAsId } from '../api.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchRouters } from '../api-team.js';
+import { fetchPortalHealth } from '../api-portal.js';
 import { fmtTime, NO_TIME_TEXT } from '../format.js';
 import { word } from '../words.js';
+import { formatBytes, hoursAgoIso } from './portal-format.js';
+import { RouterHealth } from './portal-router-health.js';
+import { UsageSection, reloadUsage } from './portal-usage-section.js';
+import { PortalConfigEditor } from './portal-config-panel.js';
 
 const h = webjsx.createElement;
 
-let routers = [];
-
-const loader = createPanelLoader({
-  what: () => word('ui.routers_panel_what'),
-  label: () => word('ui.routers_panel_loading'),
-  fetch: () => fetchRouters(),
-  apply: (j) => { routers = (j && j.routers) || []; },
-});
+const HEALTH_HISTORY_HOURS = 24;
 
 const TYPE_KEY = {
   login: 'ui.routers_panel_type_login',
@@ -28,6 +26,28 @@ const TYPE_KEY = {
   block: 'ui.routers_panel_type_block',
   heartbeat: 'ui.routers_panel_type_heartbeat',
 };
+
+let routers = [];
+let histories = {};
+
+function healthHistory(routerId) {
+  return fetchPortalHealth({ router_id: routerId, since: hoursAgoIso(HEALTH_HISTORY_HOURS) })
+    .then((j) => (j && j.rows) || [], () => null);
+}
+
+async function loadRoutersWithHistory() {
+  const j = await fetchRouters();
+  const list = (j && j.routers) || [];
+  const rows = await Promise.all(list.map((r) => healthHistory(r.router_id)));
+  return { routers: list, histories: Object.fromEntries(list.map((r, i) => [r.router_id, rows[i]])) };
+}
+
+const loader = createPanelLoader({
+  what: () => word('ui.routers_panel_what'),
+  label: () => word('ui.routers_panel_loading'),
+  fetch: loadRoutersWithHistory,
+  apply: (j) => { routers = j.routers; histories = j.histories; },
+});
 
 const when = (iso) => fmtTime(iso) || NO_TIME_TEXT;
 const typeWord = (t) => word(TYPE_KEY[t] || 'ui.routers_panel_type_other');
@@ -49,6 +69,7 @@ function activeText(r) {
 
 function RouterCard(r) {
   const events = r.recent_events || [];
+  const data = r.usage_24h || {};
   return Panel({
     key: r.router_id,
     title: r.name || r.router_id,
@@ -57,7 +78,9 @@ function RouterCard(r) {
         DetailRow({ key: 'id', label: word('ui.routers_panel_router_id'), value: r.router_id }),
         DetailRow({ key: 'seen', label: word('ui.routers_panel_last_seen'), value: when(r.last_seen) }),
         DetailRow({ key: 'clients', label: word('ui.routers_panel_active_clients'), value: activeText(r) }),
-        DetailRow({ key: 'cutoffs', label: word('ui.routers_panel_cutoffs'), value: String(r.cutoffs_24h || 0) })),
+        DetailRow({ key: 'cutoffs', label: word('ui.routers_panel_cutoffs'), value: String(r.cutoffs_24h || 0) }),
+        DetailRow({ key: 'data', label: word('ui.routers_panel_data_24h'), value: word('ui.routers_panel_data_value', { down: formatBytes(data.down_bytes), up: formatBytes(data.up_bytes) }) })),
+      RouterHealth({ key: 'health', router: r, history: histories[r.router_id] }),
       Section({
         key: 'events',
         title: word('ui.routers_panel_events'),
@@ -76,8 +99,15 @@ export function RoutersPanel() {
   const isAdmin = state.currentUser && state.currentUser.role === 'admin' && !viewAsId();
   if (!isAdmin) return h('p', { class: 'casey-hint' }, word('ui.routers_panel_admin_only'));
   loader.ensureLoaded();
-  return loader.slot(() => h('div', { class: 'ds-people-page' },
+  return h('div', { class: 'ds-people-page' },
     h('p', { key: 'lede', class: 'casey-hint' }, word('ui.routers_panel_lede')),
-    routers.length ? routers.map(RouterCard) : h('p', { key: 'none', class: 'casey-hint' }, word('ui.routers_panel_none')),
-    h('div', { key: 'actions', class: 'ds-contact-actions' }, Btn({ variant: 'ghost', children: word('ui.routers_panel_refresh'), onClick: () => loader.reload() }))));
+    loader.slot(() => h('div', { key: 'routers' },
+      routers.length ? routers.map(RouterCard) : h('p', { key: 'none', class: 'casey-hint' }, word('ui.routers_panel_none')))),
+    UsageSection({ routers }),
+    PortalConfigEditor(),
+    h('div', { key: 'actions', class: 'ds-contact-actions' }, Btn({
+      variant: 'ghost',
+      children: word('ui.routers_panel_refresh'),
+      onClick: () => { loader.reload(); reloadUsage(); },
+    })));
 }
