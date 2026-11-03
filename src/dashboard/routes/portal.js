@@ -6,6 +6,8 @@ import { HEARTBEAT_BYTES_MAX, parseHealth, recordHealth, healthRows, latestHealt
 import { DAY_MS, BUCKETS, USAGE_SAMPLES_MAX, parseUsageSamples, ingestUsage, parseWindow, parseUsageFilter, usageReport, registeredPhone } from '../../portal/portal-usage.js'
 import { purgeIfDue } from '../../portal/portal-retention.js'
 import { createWaPrefixSource, waPrefixesText } from '../../portal/portal-wa-prefixes.js'
+import { decodeBody, parseCycle, applyCycle, parseStatusBatch, statusBatch } from '../../portal/portal-cycle.js'
+import express from 'express'
 
 const BAD_MAC = 'mac must be AA:BB:CC:DD:EE:FF'
 const RATE_WINDOW_MS = 60e3
@@ -272,6 +274,37 @@ export function getRouterWaPrefixes({ store, waPrefixSource = defaultWaPrefixSou
   }
 }
 
+const msgpackBody = express.raw({ type: 'application/msgpack', limit: '64kb' })
+
+export function postRouterCycle({ store }) {
+  return async (req, res) => {
+    const router = await routerFromBearer(store, req, res)
+    if (!router) return
+    const body = decodeBody(req.body)
+    if (!body) return res.status(400).json({ error: 'body must be a MessagePack or JSON object', field: 'body' })
+    if (body.r !== router.router_id) return res.status(403).json({ error: 'router_id does not match the token' })
+    const parsed = parseCycle(body)
+    if (parsed.error) return res.status(parsed.tooLarge ? 413 : 400).json({ error: parsed.error, field: parsed.field })
+    await purgeIfDue(store).catch(e => { console.error('[portal] retention purge failed', String(e?.message || e)); return 0 })
+    const counts = await applyCycle(store, router, parsed.cycle)
+    const effective = await portalSettings.effectiveSettings(store, router.router_id)
+    res.status(202).json({ ok: true, usage: counts.usage, events: counts.events, heartbeat: counts.heartbeat, cv: portalSettings.configVersion(effective) })
+  }
+}
+
+export function postRouterStatusBatch({ store }) {
+  return async (req, res) => {
+    const router = await routerFromBearer(store, req, res)
+    if (!router) return
+    const body = decodeBody(req.body)
+    if (!body) return res.status(400).json({ error: 'body must be a MessagePack or JSON object', field: 'body' })
+    if (body.r !== router.router_id) return res.status(403).json({ error: 'router_id does not match the token' })
+    const parsed = parseStatusBatch(body)
+    if (parsed.error) return res.status(400).json({ error: parsed.error, field: parsed.field })
+    res.json(await statusBatch(store, router.router_id, parsed.macs))
+  }
+}
+
 const ROUTES = [
   ['options', '/api/portal/register', preflightPortalRegister, { raw: true }],
   ['post', '/api/portal/register', postPortalRegister],
@@ -282,6 +315,8 @@ const ROUTES = [
   ['post', '/api/router/heartbeat', postRouterHeartbeat],
   ['post', '/api/router/usage', postRouterUsage],
   ['post', '/api/router/events', postRouterEvents],
+  ['post', '/api/router/cycle', postRouterCycle, { middleware: [msgpackBody] }],
+  ['post', '/api/router/status-batch', postRouterStatusBatch, { middleware: [msgpackBody] }],
   ['get', '/api/routers', getRouters],
   ['get', '/api/portal/config', getPortalConfig],
   ['put', '/api/portal/config', putPortalConfig],
