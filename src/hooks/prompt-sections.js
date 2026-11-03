@@ -118,6 +118,7 @@ export function gatherSection(persona, caseRow, contact, { returnedAfterGap, rep
     `Recording is INVISIBLE to the person.${canQueryCases(contact?.tier) ? ' Keep case_update summary current.' : ''}`,
     `If a message reads like a rough voice transcript with contradictory facts,`,
     `ask one clarifying question before recording.`,
+    ...(canQueryCases(contact?.tier) ? [] : (persona.voiceRules || [])),
 
     ...(canQueryCases(contact?.tier) ? [] : [
     `${returnedAfterGap ? `The person was gone a while -- ${persona.returnedAfterGapText}` : ''}`,
