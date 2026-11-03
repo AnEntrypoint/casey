@@ -1,5 +1,7 @@
 
 
+import { recordInboundContact } from './portal/portal-store.js'
+
 function channelRegistry(deps) {
   return {
     discord: () => makeDiscordAdapter(deps),
@@ -113,10 +115,11 @@ async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbo
   }
 }
 
-async function makeWhatsappAdapter({ markInbound } = {}) {
+async function makeWhatsappAdapter({ markInbound, store, log } = {}) {
   const { WhatsappAdapter } = await import('./adapters/whatsapp.js')
   const a = new WhatsappAdapter()
 
   if (typeof markInbound === 'function') a.on('message', () => { try { markInbound('whatsapp') } catch {  } })
+  if (store) a.on('message', (ev) => { recordInboundContact(store, ev).catch(e => log?.warn?.('[portal] inbound contact not recorded', { error: e?.message || String(e) })) })
   return a
 }

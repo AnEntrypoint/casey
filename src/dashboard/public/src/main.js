@@ -33,6 +33,7 @@ import { NudgesPanel } from './panels/nudges-panel.js';
 import { AreasPanel } from './panels/areas-panel.js';
 import { ViewAsPanel } from './panels/view-as-panel.js';
 import { FeedbackPanel } from './panels/feedback-panel.js';
+import { RoutersPanel } from './panels/routers-panel.js';
 import { isAdminRole, isFieldRole, isViewerRole } from './api-roles.js';
 import { ResolvedMapPanel } from './panels/resolved-map-panel.js';
 import { DiseaseReportsPanel } from './panels/disease-reports-panel.js';
@@ -72,6 +73,7 @@ registerPanelBody('nudges', NudgesPanel);
 registerPanelBody('areas', AreasPanel);
 registerPanelBody('view_as', ViewAsPanel);
 registerPanelBody('feedback', FeedbackPanel);
+registerPanelBody('routers', RoutersPanel);
 registerPanelBody('resolved_map', ResolvedMapPanel);
 registerPanelBody('disease_reports', DiseaseReportsPanel);
 

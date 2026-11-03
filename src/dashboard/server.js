@@ -28,6 +28,7 @@ import { registerContacts } from './routes/contacts.js'
 import { registerPersons } from './routes/persons.js'
 import { registerExternalLinks } from './routes/external-links.js'
 import { registerSyncApi } from './routes/sync-api.js'
+import { registerPortal } from './routes/portal.js'
 import { registerMap } from './routes/map.js'
 import { registerReports } from './routes/reports.js'
 import { registerReportsMap } from './routes/reports-map.js'
@@ -396,6 +397,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   registerPersons(app, deps)
   registerExternalLinks(app, deps)
   registerSyncApi(app, deps)
+  registerPortal(app, deps)
   registerMap(app, deps)
   registerReports(app, deps)
   registerReportsMap(app, deps)

@@ -11,6 +11,7 @@ import { cmdRoles } from './casey-roles-command.js'
 import { cmdSyncImport } from './casey-sync-import-command.js'
 import { cmdSyncCorrelate } from './casey-sync-correlate-command.js'
 import { cmdSyncApiKey } from './casey-sync-apikey-command.js'
+import { cmdRouter } from './casey-router-command.js'
 
 let [, , cmd, ...rest] = process.argv
 if (cmd === '--version' || cmd === '-v') { cmd = 'version' }
@@ -49,6 +50,7 @@ const COMMANDS = {
   'sync-import': cmdSyncImport,
   'sync-correlate': cmdSyncCorrelate,
   'sync-apikey': cmdSyncApiKey,
+  router: cmdRouter,
 }
 
 async function main() {

@@ -103,6 +103,8 @@ ${bold('usage:')}
                                                  provision a machine credential for /api/sync/* (printed once)
   casey sync-apikey list                        list sync API keys (never prints the key itself)
   casey sync-apikey revoke <id>                 revoke a sync API key without deleting its history
+  casey router create --name <label> [--id <router_id>]  register a field router and print its token once
+  casey router list                             list routers with their last_seen time
 
 ${bold('flags:')} --help / -h on any command, --version / -v
 
@@ -275,6 +277,11 @@ casey operators enable <username>
   the admin password is lost, and the scripted-provisioning path. Without
   --password a random one is generated and printed once. Password hashes are
   never printed.`,
+  router: `casey router create --name <label> [--id <router_id>]
+casey router list
+  Field routers that POST heartbeats and events to /api/router/events and
+  check guest status on /api/router/status. Each router gets a bearer token
+  printed exactly once on create; only its SHA-256 hash is stored.`,
   'sync-apikey': `casey sync-apikey create --label <name> --scope read:cases,read:links,write:links,import:records
 casey sync-apikey list
 casey sync-apikey revoke <id>

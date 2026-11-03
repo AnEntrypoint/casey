@@ -109,6 +109,7 @@ export const ADMIN_ONLY_ROUTES = [
   ['PUT', /^\/api\/areas$/], ['DELETE', /^\/api\/areas\/[^/]+$/],
   ['POST', /^\/api\/sync\/(import|external-links)$/],
   ['POST', /^\/api\/field-values\/canonicalize$/],
+  ['GET', /^\/api\/routers$/],
   ['GET', /^\/api\/audit\.csv$/], ['GET', /^\/api\/runtime$/], ['GET', /^\/api\/health\/provider$/], ['GET', /^\/api\/turns\/degraded$/],
   ['POST', /^\/api\/roles\/import$/], ['DELETE', /^\/api\/role-invites\/[^/]+$/],
   ['POST', /^\/api\/contacts\/[^/]+\/erase$/], ['POST', /^\/api\/contacts\/[^/]+\/persons\/erase$/],

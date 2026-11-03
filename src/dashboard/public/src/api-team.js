@@ -30,3 +30,4 @@ export const postFeedback = (text) => send('POST', '/api/feedback', { text });
 
 export const fetchTeamMembers = () => json('/api/team-members');
 export const fetchOperatorNames = () => json('/api/operators');
+export const fetchRouters = () => json('/api/routers');
