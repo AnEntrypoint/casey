@@ -130,6 +130,10 @@ function parseDetail(json) {
   try { return JSON.parse(json || '{}') } catch { return {} }
 }
 
+export async function listRouters(store) {
+  return store.t.list(TABLE.routers, {}, { limit: 500, sort: [{ field: 'created_at', dir: 'ASC' }] })
+}
+
 export async function routerOverview(store, now = Date.now()) {
   const routers = await store.t.list(TABLE.routers, {}, { limit: 500, sort: [{ field: 'created_at', dir: 'ASC' }] })
   const since = new Date(now - DAY_MS).toISOString()
