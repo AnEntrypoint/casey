@@ -5,6 +5,7 @@ import { ASSET_NAMES, renderAsset } from '../../portal/portal-render.js'
 import { HEARTBEAT_BYTES_MAX, parseHealth, recordHealth, healthRows, latestHealth } from '../../portal/portal-health.js'
 import { DAY_MS, BUCKETS, USAGE_SAMPLES_MAX, parseUsageSamples, ingestUsage, parseWindow, parseUsageFilter, usageReport, registeredPhone } from '../../portal/portal-usage.js'
 import { purgeIfDue } from '../../portal/portal-retention.js'
+import { createWaPrefixSource, waPrefixesText } from '../../portal/portal-wa-prefixes.js'
 
 const BAD_MAC = 'mac must be AA:BB:CC:DD:EE:FF'
 const RATE_WINDOW_MS = 60e3
@@ -253,12 +254,31 @@ export function getPortalHealth({ store, authed }) {
   }
 }
 
+const defaultWaPrefixSource = createWaPrefixSource()
+
+export function getRouterWaPrefixes({ store, waPrefixSource = defaultWaPrefixSource }) {
+  return async (req, res) => {
+    const router = await routerFromBearer(store, req, res)
+    if (!router) return
+    const settings = await portalSettings.effectiveSettings(store, router.router_id)
+    try {
+      const prefixes = await waPrefixSource(settings.wa_asn)
+      res.set('Content-Type', 'text/plain; charset=utf-8')
+      res.set('Cache-Control', 'no-store')
+      res.status(200).send(waPrefixesText(prefixes))
+    } catch {
+      res.status(503).json({ error: 'WhatsApp prefix list is unavailable' })
+    }
+  }
+}
+
 const ROUTES = [
   ['options', '/api/portal/register', preflightPortalRegister, { raw: true }],
   ['post', '/api/portal/register', postPortalRegister],
   ['get', '/api/router/status', getRouterStatus],
   ['get', '/api/router/config', getRouterConfig],
   ['get', '/api/router/assets/:name', getRouterAsset],
+  ['get', '/api/router/wa-prefixes', getRouterWaPrefixes],
   ['post', '/api/router/heartbeat', postRouterHeartbeat],
   ['post', '/api/router/usage', postRouterUsage],
   ['post', '/api/router/events', postRouterEvents],
