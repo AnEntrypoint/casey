@@ -3,7 +3,6 @@ import crypto from 'node:crypto'
 export const TABLE = Object.freeze({
   routers: 'routers',
   registrations: 'portal_registrations',
-  pending: 'portal_pending',
   contacts: 'portal_contacts',
   events: 'router_events',
   settings: 'router_settings',

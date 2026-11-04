@@ -1,7 +1,6 @@
 
 
 import { recordInboundContact } from './portal/portal-store.js'
-import { acceptPendingInbound } from './portal/portal-pending.js'
 
 function channelRegistry(deps) {
   return {
@@ -122,6 +121,5 @@ async function makeWhatsappAdapter({ markInbound, store, log } = {}) {
 
   if (typeof markInbound === 'function') a.on('message', () => { try { markInbound('whatsapp') } catch {  } })
   if (store) a.on('message', (ev) => { recordInboundContact(store, ev).catch(e => log?.warn?.('[portal] inbound contact not recorded', { error: e?.message || String(e) })) })
-  if (store) a.on('message', (ev) => { acceptPendingInbound(store, ev).catch(e => log?.warn?.('[portal] pending code not accepted', { error: e?.message || String(e) })) })
   return a
 }
