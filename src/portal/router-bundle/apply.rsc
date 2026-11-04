@@ -97,14 +97,15 @@
 
 :foreach s in={"uhh-gate";"uhh-usage";"uhh-sync";"uhh-wa-refresh"} do={
   :local src [/file get [find name=($s . ".rsc")] contents]
-  :if ([:len [/system script find name=$s]] = 0) do={ /system script add name=$s owner=admin policy=ftp,read,write,policy,test source="" }
-  /system script set [find name=$s] source=$src
+  :if ([:len [/system script find name=$s]] = 0) do={ /system script add name=$s owner=admin policy=ftp,read,write,policy,test,sensitive source="" }
+  /system script set [find name=$s] source=$src policy=ftp,read,write,policy,test,sensitive
 }
 
-:if ([:len [/system scheduler find name=uhh-wa-refresh]] = 0) do={ /system scheduler add name=uhh-wa-refresh interval=1d start-time=03:17:00 on-event="/system script run uhh-wa-refresh" policy=ftp,read,write,policy,test }
-:if ([:len [/system scheduler find name=uhh-gate]] = 0) do={ /system scheduler add name=uhh-gate interval=1m start-time=startup on-event="/system script run uhh-gate" policy=ftp,read,write,policy,test }
-:if ([:len [/system scheduler find name=uhh-sync]] = 0) do={ /system scheduler add name=uhh-sync interval=5m start-time=startup on-event="/system script run uhh-sync" policy=ftp,read,write,policy,test }
-:if ([:len [/system scheduler find name=uhh-usage]] = 0) do={ /system scheduler add name=uhh-usage interval=($uhhUsageIntervalS . "s") start-time=startup on-event="/system script run uhh-usage" policy=ftp,read,write,policy,test }
+:if ([:len [/system scheduler find name=uhh-wa-refresh]] = 0) do={ /system scheduler add name=uhh-wa-refresh interval=1d start-time=03:17:00 on-event="/system script run uhh-wa-refresh" policy=ftp,read,write,policy,test,sensitive }
+:if ([:len [/system scheduler find name=uhh-gate]] = 0) do={ /system scheduler add name=uhh-gate interval=1m start-time=startup on-event="/system script run uhh-gate" policy=ftp,read,write,policy,test,sensitive }
+:if ([:len [/system scheduler find name=uhh-sync]] = 0) do={ /system scheduler add name=uhh-sync interval=5m start-time=startup on-event="/system script run uhh-sync" policy=ftp,read,write,policy,test,sensitive }
+:if ([:len [/system scheduler find name=uhh-usage]] = 0) do={ /system scheduler add name=uhh-usage interval=($uhhUsageIntervalS . "s") start-time=startup on-event="/system script run uhh-usage" policy=ftp,read,write,policy,test,sensitive }
+:foreach sc in={"uhh-gate";"uhh-usage";"uhh-sync";"uhh-wa-refresh"} do={ /system scheduler set [find name=$sc] policy=ftp,read,write,policy,test,sensitive }
 
 :if ([:len [/interface bridge port find bridge=guest interface=ether2]] = 0) do={ :error "uhh-portal: guest port missing" }
 :if ([:len [/interface wifi datapath find name=uhh-guest-dp]] = 0) do={ :error "uhh-portal: guest datapath missing" }
