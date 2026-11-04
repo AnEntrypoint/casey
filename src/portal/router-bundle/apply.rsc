@@ -2,6 +2,7 @@
 :global uhhToken
 :global uhhRouterId
 :global uhhHost
+:global uhhPortalHost
 :global uhhTls
 :global uhhGuestSsid
 :global uhhWalledGarden
@@ -12,6 +13,7 @@
 :if ([:typeof $uhhWalledGarden] != "array") do={ :global uhhWalledGarden {"whatsapp.com";"*.whatsapp.com";"whatsapp.net";"*.whatsapp.net";"wa.me";"*.wa.me"} }
 :if ([:typeof $uhhUsageIntervalS] != "num") do={ :global uhhUsageIntervalS 300 }
 :if ([:typeof $uhhHost] != "str") do={ :global uhhHost "ubuntudashboard.co.za" }
+:if ([:typeof $uhhPortalHost] != "str") do={ :global uhhPortalHost "portal.ubuntudashboard.co.za" }
 :if ([:typeof $uhhTls] != "str") do={ :global uhhTls "yes-without-crl" }
 
 /system clock set time-zone-autodetect=no time-zone-name=Africa/Johannesburg
@@ -46,9 +48,12 @@
 :if ([:len [/ip dhcp-server find name=guest-dhcp]] = 0) do={ /ip dhcp-server add name=guest-dhcp interface=guest address-pool=guest-pool disabled=no }
 :if ([:len [/ip dhcp-server network find address="10.10.10.0/24"]] = 0) do={ /ip dhcp-server network add address=10.10.10.0/24 gateway=10.10.10.1 dns-server=10.10.10.1 comment=uhh-guest }
 /ip dns set allow-remote-requests=yes
+:if ([:len [/ip dns static find name=$uhhPortalHost comment=uhh-portal]] = 0) do={ /ip dns static add name=$uhhPortalHost address=10.10.10.1 comment=uhh-portal }
 
 :if ([:len [/ip hotspot profile find name=uhh-portal]] = 0) do={ /ip hotspot profile add name=uhh-portal }
-/ip hotspot profile set [find name=uhh-portal] html-directory=hotspot login-by=cookie use-radius=no
+:local hsCert "uhh-hs"
+:if ([:len [/certificate find name=uhh-portal]] > 0) do={ :set hsCert "uhh-portal" }
+/ip hotspot profile set [find name=uhh-portal] html-directory=hotspot login-by=cookie,https ssl-certificate=$hsCert dns-name=$uhhPortalHost use-radius=no
 :if ([:len [/ip hotspot find name=uhh-hotspot]] = 0) do={ /ip hotspot add name=uhh-hotspot interface=guest profile=uhh-portal disabled=no }
 /ip hotspot set [find name=uhh-hotspot] interface=guest profile=uhh-portal disabled=no
 /ip hotspot walled-garden remove [find comment=uhh-portal]
@@ -93,9 +98,10 @@
 /ip firewall filter add chain=forward in-interface=guest protocol=tcp dst-address-list=wa-ranges dst-port=443,5222,5223,4244 action=accept comment=uhh:f-wa-t place-before=$fwA
 /ip firewall filter add chain=forward in-interface=guest protocol=udp dst-address-list=wa-ranges dst-port=443,3478-3481 action=accept comment=uhh:f-wa-u place-before=$fwA
 /ip firewall filter add chain=forward in-interface=guest action=drop comment=uhh:f-drop place-before=$fwA
+:if ([:len [/ip firewall nat find comment=uhh:n-passed-http]] = 0) do={ /ip firewall nat add chain=dstnat in-interface=guest protocol=tcp dst-port=80 hotspot=auth dst-address=!10.10.10.1 action=dst-nat to-addresses=10.10.10.1 to-ports=80 comment=uhh:n-passed-http }
 
 
-:foreach s in={"uhh-gate";"uhh-usage";"uhh-sync";"uhh-wa-refresh"} do={
+:foreach s in={"uhh-gate";"uhh-usage";"uhh-sync";"uhh-wa-refresh";"uhh-tls"} do={
   :local src [/file get [find name=($s . ".rsc")] contents]
   :if ([:len [/system script find name=$s]] = 0) do={ /system script add name=$s owner=admin policy=ftp,read,write,policy,test,sensitive source="" }
   /system script set [find name=$s] source=$src policy=ftp,read,write,policy,test,sensitive
@@ -105,10 +111,12 @@
 :if ([:len [/system scheduler find name=uhh-gate]] = 0) do={ /system scheduler add name=uhh-gate interval=1m start-time=startup on-event="/system script run uhh-gate" policy=ftp,read,write,policy,test,sensitive }
 :if ([:len [/system scheduler find name=uhh-sync]] = 0) do={ /system scheduler add name=uhh-sync interval=5m start-time=startup on-event="/system script run uhh-sync" policy=ftp,read,write,policy,test,sensitive }
 :if ([:len [/system scheduler find name=uhh-usage]] = 0) do={ /system scheduler add name=uhh-usage interval=($uhhUsageIntervalS . "s") start-time=startup on-event="/system script run uhh-usage" policy=ftp,read,write,policy,test,sensitive }
-:foreach sc in={"uhh-gate";"uhh-usage";"uhh-sync";"uhh-wa-refresh"} do={ /system scheduler set [find name=$sc] policy=ftp,read,write,policy,test,sensitive }
+:if ([:len [/system scheduler find name=uhh-tls]] = 0) do={ /system scheduler add name=uhh-tls interval=1d start-time=04:11:00 on-event="/system script run uhh-tls" policy=ftp,read,write,policy,test,sensitive }
+:foreach sc in={"uhh-gate";"uhh-usage";"uhh-sync";"uhh-wa-refresh";"uhh-tls"} do={ /system scheduler set [find name=$sc] policy=ftp,read,write,policy,test,sensitive }
 
 :if ([:len [/interface bridge port find bridge=guest interface=ether2]] = 0) do={ :error "uhh-portal: guest port missing" }
 :if ([:len [/interface wifi datapath find name=uhh-guest-dp]] = 0) do={ :error "uhh-portal: guest datapath missing" }
 :if ([:len [/ip hotspot find name=uhh-hotspot]] = 0) do={ :error "uhh-portal: hotspot missing" }
 /system script run uhh-sync
+/system script run uhh-tls
 :log info "uhh-portal: applied"

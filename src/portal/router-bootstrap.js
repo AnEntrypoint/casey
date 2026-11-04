@@ -3,7 +3,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const BUNDLE_DIR = fileURLToPath(new URL('./router-bundle/', import.meta.url))
-export const ROUTER_SCRIPTS = Object.freeze(['apply.rsc', 'uhh-sync.rsc', 'uhh-gate.rsc', 'uhh-usage.rsc', 'uhh-wa-refresh.rsc'])
+export const ROUTER_SCRIPTS = Object.freeze(['apply.rsc', 'uhh-sync.rsc', 'uhh-gate.rsc', 'uhh-usage.rsc', 'uhh-wa-refresh.rsc', 'uhh-tls.rsc'])
+export const TLS_FILES = Object.freeze(['portal-cert.pem', 'portal-key.pem'])
 export const ISRG_CERT = 'isrg-root-x2.pem'
 export const SEED = 'seed.rsc'
 export const ISRG_ROOT_X2_SHA256 = '69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470'
@@ -14,7 +15,11 @@ const TLS_MODE = 'yes-without-crl'
 
 export const rosString = (value) => `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/\n/g, '\\n')}"`
 
-export function bundleText(name) {
+export function bundleText(name, { tlsDir } = {}) {
+  if (TLS_FILES.includes(name)) {
+    const file = tlsDir ? path.join(tlsDir, name) : null
+    return file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null
+  }
   if (name !== ISRG_CERT && !ROUTER_SCRIPTS.includes(name)) return null
   return fs.readFileSync(path.join(BUNDLE_DIR, name), 'utf8')
 }

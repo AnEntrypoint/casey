@@ -338,7 +338,7 @@ export function getRouterBundle({ store }) {
     if (!isPublic && !router) return
     const text = name === bootstrap.SEED
       ? bootstrap.seedScript({ base: portalSettings.publicBase(), token: bearer(req), routerId: router.router_id })
-      : bootstrap.bundleText(name)
+      : bootstrap.bundleText(name, { tlsDir: process.env.CASEY_PORTAL_TLS_DIR })
     if (text === null) return res.status(404).json({ error: 'not found' })
     res.set('Content-Type', 'text/plain; charset=utf-8')
     res.set('Cache-Control', 'no-store')
