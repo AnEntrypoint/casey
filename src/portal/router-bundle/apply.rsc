@@ -9,7 +9,7 @@
 /system script run uhh-config
 :if ([:typeof $uhhGuestSsid] != "str") do={ :global uhhGuestSsid "Ubuntu Herd Health" }
 :if ([:len $uhhGuestSsid] = 0) do={ :global uhhGuestSsid "Ubuntu Herd Health" }
-:if ([:typeof $uhhWalledGarden] != "array") do={ :global uhhWalledGarden {"ubuntudashboard.co.za";"*.ubuntudashboard.co.za";"whatsapp.com";"*.whatsapp.com";"whatsapp.net";"*.whatsapp.net";"wa.me";"*.wa.me"} }
+:if ([:typeof $uhhWalledGarden] != "array") do={ :global uhhWalledGarden {"whatsapp.com";"*.whatsapp.com";"whatsapp.net";"*.whatsapp.net";"wa.me";"*.wa.me"} }
 :if ([:typeof $uhhUsageIntervalS] != "num") do={ :global uhhUsageIntervalS 300 }
 :if ([:typeof $uhhHost] != "str") do={ :global uhhHost "ubuntudashboard.co.za" }
 :if ([:typeof $uhhTls] != "str") do={ :global uhhTls "yes-without-crl" }
@@ -90,15 +90,10 @@
 /ip firewall filter add chain=input in-interface=guest protocol=tcp dst-port=53 action=accept comment=uhh:i-dns-t place-before=$inA
 /ip firewall filter add chain=input in-interface=guest protocol=tcp dst-port=64872-64875 action=accept comment=uhh:i-hs place-before=$inA
 /ip firewall filter add chain=input in-interface=guest action=drop comment=uhh:i-drop place-before=$inA
-/ip firewall filter add chain=forward in-interface=guest protocol=udp dst-port=53 action=accept comment=uhh:f-dns-u place-before=$fwA
-/ip firewall filter add chain=forward in-interface=guest protocol=tcp dst-port=53 action=accept comment=uhh:f-dns-t place-before=$fwA
-/ip firewall filter add chain=forward in-interface=guest protocol=tcp dst-address-list=uhh-host dst-port=443 action=accept comment=uhh:f-uhh place-before=$fwA
 /ip firewall filter add chain=forward in-interface=guest protocol=tcp dst-address-list=wa-ranges dst-port=443,5222,5223,4244 action=accept comment=uhh:f-wa-t place-before=$fwA
 /ip firewall filter add chain=forward in-interface=guest protocol=udp dst-address-list=wa-ranges dst-port=443,3478-3481 action=accept comment=uhh:f-wa-u place-before=$fwA
 /ip firewall filter add chain=forward in-interface=guest action=drop comment=uhh:f-drop place-before=$fwA
 
-/ip firewall address-list remove [find list=uhh-host dynamic=no]
-/ip firewall address-list add list=uhh-host address=$uhhHost comment=uhh-portal
 
 :foreach s in={"uhh-gate";"uhh-usage";"uhh-sync";"uhh-wa-refresh"} do={
   :local src [/file get [find name=($s . ".rsc")] contents]

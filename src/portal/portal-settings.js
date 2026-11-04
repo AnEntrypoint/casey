@@ -21,7 +21,6 @@ const ASN = /^AS\d{1,10}$/
 const DOMAIN_MAX_CHARS = 253
 
 const DEFAULT_WALLED_GARDEN = Object.freeze([
-  'ubuntudashboard.co.za', '*.ubuntudashboard.co.za',
   'whatsapp.com', '*.whatsapp.com',
   'whatsapp.net', '*.whatsapp.net',
   'wa.me', '*.wa.me',
