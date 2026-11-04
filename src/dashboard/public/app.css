@@ -839,3 +839,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .ds-map-chrome > .ds-map-legend { max-height: 22vh; left: var(--space-2); right: var(--space-2); bottom: var(--space-2); max-width: none; }
   .ds-alert { flex-wrap: wrap; }
 }
+@media (max-width: 700px) {
+  .ds-appbar { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: var(--space-2); }
+  .ds-appbar > * { flex: 0 0 auto; }
+}
