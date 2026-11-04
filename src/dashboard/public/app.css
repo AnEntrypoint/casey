@@ -834,3 +834,8 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 /* The skip link is visually hidden until it takes keyboard focus, on every width. */
 .skip-link:not(:focus) { position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .skip-link:focus { position: fixed; top: 8px; left: 8px; width: auto; height: auto; margin: 0; clip: auto; transform: none; z-index: var(--z-top); outline: 2px solid currentColor; }
+
+@media (max-width: 700px) {
+  .ds-map-chrome > .ds-map-legend { max-height: 22vh; left: var(--space-2); right: var(--space-2); bottom: var(--space-2); max-width: none; }
+  .ds-alert { flex-wrap: wrap; }
+}
