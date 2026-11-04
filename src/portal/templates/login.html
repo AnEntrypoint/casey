@@ -43,6 +43,8 @@ button:disabled{opacity:.6}
 (function(){
 var UHH="{{api_base}}",ROUTER_ID="{{router_id}}",MAC="$(mac)";
 var f=document.getElementById("f"),phone=document.getElementById("phone"),tc=document.getElementById("tc"),msg=document.getElementById("msg"),go=document.getElementById("go");
+var KEY="uhhPhone",saved="";try{saved=localStorage.getItem(KEY)||""}catch(e){}
+if(saved)phone.value=saved;
 function norm(v){var s=v.replace(/[\s\-()]/g,"");if(/^0\d{9}$/.test(s))s="+27"+s.slice(1);return /^\+\d{8,15}$/.test(s)?s:null}
 f.addEventListener("submit",function(e){
 e.preventDefault();
@@ -55,6 +57,7 @@ fetch(UHH+"/api/portal/register",{method:"POST",headers:{"Content-Type":"applica
 .then(function(r){
 if(r.status===403){location.replace("blocked.html");return}
 if(!r.ok)throw new Error("register");
+try{localStorage.setItem(KEY,p)}catch(e){}
 document.getElementById("form").hidden=true;
 document.getElementById("done").hidden=false;
 })

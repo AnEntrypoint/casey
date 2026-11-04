@@ -192,8 +192,10 @@ const sortKeysDeep = (value) => {
   return value
 }
 
+export const ASSET_REVISION = 'remember-phone-1'
+
 export function configVersion(settings) {
-  return crypto.createHash('sha256').update(JSON.stringify(sortKeysDeep(settings))).digest('hex').slice(0, 16)
+  return crypto.createHash('sha256').update(JSON.stringify(sortKeysDeep({ settings, assets: ASSET_REVISION }))).digest('hex').slice(0, 16)
 }
 
 export const publicBase = (env = process.env) => String(env.PUBLIC_BASE || DEFAULT_PUBLIC_BASE).replace(/\/+$/, '')
