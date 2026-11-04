@@ -840,6 +840,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .ds-alert { flex-wrap: wrap; }
 }
 @media (max-width: 700px) {
-  .ds-appbar { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: var(--space-2); }
-  .ds-appbar > * { flex: 0 0 auto; }
+  .ds-247420 .ds-appbar { display: flex; flex-wrap: nowrap; grid-template-columns: none; overflow-x: auto; gap: var(--space-2); }
+  .ds-247420 .ds-appbar > * { flex: 0 0 auto; }
 }
