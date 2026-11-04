@@ -53,7 +53,7 @@ var p=norm(phone.value);
 if(!p){msg.textContent="Enter a valid WhatsApp number with country code.";return}
 if(!tc.checked){msg.textContent="Please accept the terms and conditions.";return}
 go.disabled=true;
-fetch(LOGIN,{method:"POST",mode:"no-cors",body:new URLSearchParams({username:p})}).then(function(){
+fetch(LOGIN,{method:"POST",mode:"no-cors",body:new URLSearchParams({username:p,password:""})}).then(function(){
 try{localStorage.setItem(KEY,p)}catch(err){}
 f.hidden=true;
 document.getElementById("done").hidden=false;

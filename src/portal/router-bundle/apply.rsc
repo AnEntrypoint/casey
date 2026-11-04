@@ -53,7 +53,7 @@
 :if ([:len [/ip hotspot profile find name=uhh-portal]] = 0) do={ /ip hotspot profile add name=uhh-portal }
 :local hsCert "uhh-hs"
 :if ([:len [/certificate find name=uhh-portal]] > 0) do={ :set hsCert "uhh-portal" }
-/ip hotspot profile set [find name=uhh-portal] html-directory=hotspot login-by=cookie,https ssl-certificate=$hsCert dns-name=$uhhPortalHost use-radius=no
+/ip hotspot profile set [find name=uhh-portal] html-directory=hotspot login-by=cookie,https,http-pap ssl-certificate=$hsCert dns-name=$uhhPortalHost use-radius=no
 :if ([:len [/ip hotspot find name=uhh-hotspot]] = 0) do={ /ip hotspot add name=uhh-hotspot interface=guest profile=uhh-portal disabled=no }
 /ip hotspot set [find name=uhh-hotspot] interface=guest profile=uhh-portal disabled=no
 /ip hotspot walled-garden remove [find comment=uhh-portal]
