@@ -42,6 +42,13 @@ export function e164FromWhatsapp(from) {
   return isE164(phone) ? phone : null
 }
 
+export function normalisePhone(v) {
+  if (typeof v !== 'string') return null
+  const s = v.replace(/[\s\-()]/g, '')
+  const e164 = /^0\d{9}$/.test(s) ? '+27' + s.slice(1) : s
+  return isE164(e164) ? e164 : null
+}
+
 export function waTimestampIso(raw) {
   const seconds = Number(raw)
   return Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000).toISOString() : null

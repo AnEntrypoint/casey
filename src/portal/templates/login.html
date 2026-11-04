@@ -41,7 +41,7 @@ button:disabled{opacity:.6}
 </main>
 <script>
 (function(){
-var UHH="{{api_base}}",ROUTER_ID="{{router_id}}",MAC="$(mac)";
+var LOGIN="$(link-login-only)";
 var f=document.getElementById("f"),phone=document.getElementById("phone"),tc=document.getElementById("tc"),msg=document.getElementById("msg"),go=document.getElementById("go");
 var KEY="uhhPhone",saved="";try{saved=localStorage.getItem(KEY)||""}catch(e){}
 if(saved)phone.value=saved;
@@ -53,15 +53,11 @@ var p=norm(phone.value);
 if(!p){msg.textContent="Enter a valid WhatsApp number with country code.";return}
 if(!tc.checked){msg.textContent="Please accept the terms and conditions.";return}
 go.disabled=true;
-fetch(UHH+"/api/portal/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:p,mac:MAC,router_id:ROUTER_ID,tc_accepted:true})})
-.then(function(r){
-if(r.status===403){location.replace("blocked.html");return}
-if(!r.ok)throw new Error("register");
-try{localStorage.setItem(KEY,p)}catch(e){}
-document.getElementById("form").hidden=true;
+fetch(LOGIN,{method:"POST",mode:"no-cors",body:new URLSearchParams({username:p})}).then(function(){
+try{localStorage.setItem(KEY,p)}catch(err){}
+f.hidden=true;
 document.getElementById("done").hidden=false;
-})
-.catch(function(){go.disabled=false;msg.textContent="Could not register your number. Please try again."});
+}).catch(function(){go.disabled=false;msg.textContent="Could not connect. Please try again."});
 });
 })();
 </script>

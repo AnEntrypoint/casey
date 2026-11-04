@@ -64,7 +64,7 @@ const DEFAULTS = Object.freeze({
   login_intro: 'Enter your WhatsApp number, then accept the terms.',
   login_checkbox: 'I have read and accept the Terms and Conditions, and I agree that my phone number may be used as described.',
   done_title: 'You are registered',
-  done_text: 'Access starts within a minute. Open WhatsApp and message the bot on {{bot_number}} within {{contact_minutes}} minutes to keep it.',
+  done_text: 'Access starts within a minute. Send any WhatsApp message to the bot on {{bot_number}} within {{contact_minutes}} minutes, or your access stops.',
   blocked_title: 'Access paused',
   blocked_text: 'Your access ended because the WhatsApp bot did not receive a message from your number within {{contact_minutes}} minutes. This device cannot connect again for {{block_hours}} hours.',
   tc_title: 'Terms and Conditions: Ubuntu Herd Health',

@@ -685,7 +685,7 @@ export function authGate() {
     if (req.path.startsWith('/src/')) return next()
     if (req.path === '/icon.svg' || req.path === '/manifest.json' || req.path === '/sw.js' || req.path === '/offline.html') return next()
     if (req.path.startsWith('/api/sync/')) return next()
-    if (req.path.startsWith('/api/router/') || req.path === '/api/portal/register') return next()
+    if (req.path.startsWith('/api/router/')) return next()
     if (!req.caseyAccount) return res.status(401).json({ error: 'unauthorized' })
     if (req.caseyAccount.must_change_password === '1' && req.path !== '/api/change-password') {
       return res.status(403).json({ error: 'must change password before continuing', code: 'must_change_password' })

@@ -27,13 +27,6 @@ export function makeRateLimit(max, windowMs = RATE_WINDOW_MS) {
   }
 }
 
-const setCors = (res) => {
-  res.set('Access-Control-Allow-Origin', '*')
-  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS')
-  res.set('Access-Control-Allow-Headers', 'Content-Type')
-  res.set('Access-Control-Max-Age', '600')
-}
-
 const bearer = (req) => {
   const m = /^Bearer\s+(.+)$/i.exec(String(req.get('authorization') || '').trim())
   return m ? m[1].trim() : ''
@@ -53,34 +46,23 @@ function adminDenied(req, res, authed) {
 
 const finiteOrNull = (value) => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
 
-export function preflightPortalRegister() {
-  return (req, res) => {
-    setCors(res)
-    res.status(204).end()
-  }
-}
-
-export function postPortalRegister({ store }) {
-  const ipLimit = makeRateLimit(Number(process.env.CASEY_PORTAL_RATE_IP) || 120)
-  const macLimit = makeRateLimit(Number(process.env.CASEY_PORTAL_RATE_MAC) || 5)
+export function postRouterRegistration({ store }) {
+  const macLimit = makeRateLimit(Number(process.env.CASEY_PORTAL_RATE_MAC) || 10)
   return async (req, res) => {
-    setCors(res)
-    const ipRetry = ipLimit(String(req.ip || req.socket?.remoteAddress || 'unknown'))
-    if (ipRetry) { res.set('Retry-After', String(ipRetry)); return res.status(429).json({ error: 'rate limited', retry_after_s: ipRetry }) }
+    const router = await routerFromBearer(store, req, res)
+    if (!router) return
     const b = req.body || {}
+    if (b.router_id !== router.router_id) return res.status(403).json({ error: 'router_id does not match the token' })
     const mac = portal.normaliseMac(b.mac)
-    if (!portal.isE164(b.phone)) return res.status(400).json({ error: 'phone must be E.164, for example +27821234567' })
-    if (!mac) return res.status(400).json({ error: BAD_MAC })
-    if (!portal.validRouterId(b.router_id)) return res.status(400).json({ error: 'router_id is required' })
-    if (b.tc_accepted !== true) return res.status(400).json({ error: 'tc_accepted must be true' })
+    if (!mac) return res.status(400).json({ error: BAD_MAC, field: 'mac' })
+    const phone = portal.normalisePhone(b.phone)
+    if (!phone) return res.status(400).json({ error: 'phone must be a South African or E.164 number', field: 'phone' })
     const macRetry = macLimit(mac)
     if (macRetry) { res.set('Retry-After', String(macRetry)); return res.status(429).json({ error: 'rate limited', retry_after_s: macRetry }) }
-    const router = await portal.findRouter(store, b.router_id)
-    if (!router) return res.status(400).json({ error: 'unknown router_id' })
     const effective = await portalSettings.effectiveSettings(store, router.router_id)
     if (!effective.registration_enabled) return res.status(503).json({ error: REGISTRATION_CLOSED })
-    await portal.recordRegistration(store, { routerId: b.router_id, mac, phone: b.phone })
-    res.json({ ok: true })
+    await portal.recordRegistration(store, { routerId: router.router_id, mac, phone })
+    res.status(202).json({ ok: true })
   }
 }
 
@@ -347,8 +329,7 @@ export function getRouterBundle({ store }) {
 }
 
 const ROUTES = [
-  ['options', '/api/portal/register', preflightPortalRegister, { raw: true }],
-  ['post', '/api/portal/register', postPortalRegister],
+  ['post', '/api/router/registration', postRouterRegistration],
   ['get', '/api/router/status', getRouterStatus],
   ['get', '/api/router/config', getRouterConfig],
   ['get', '/api/router/assets/:name', getRouterAsset],
