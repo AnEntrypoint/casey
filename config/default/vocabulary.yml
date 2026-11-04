@@ -1523,7 +1523,7 @@ ui:
   routers_status_quiet: "Quiet"
   routers_status_offline: "Offline"
   routers_status_never: "Never connected"
-  routers_summary: "{online} of {total} routers online, {clients} clients connected now."
+  routers_summary: "{online} of {total} routers online. Connected devices now: {clients}."
   router_setup_title: "Add a router"
   router_setup_lede: "Enter the router's name and the Wi-Fi it will use to reach this server. You get a script to paste into the router's terminal. The router fetches its settings and pages from here, and keeps them in step every five minutes. Start from a factory-reset router."
   router_setup_name: "Router name"
