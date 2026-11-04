@@ -7,6 +7,7 @@ import { DAY_MS, BUCKETS, USAGE_SAMPLES_MAX, parseUsageSamples, ingestUsage, par
 import { purgeIfDue } from '../../portal/portal-retention.js'
 import { createWaPrefixSource, waPrefixesText } from '../../portal/portal-wa-prefixes.js'
 import { decodeBody, parseCycle, applyCycle, parseStatusBatch, statusBatch } from '../../portal/portal-cycle.js'
+import * as bootstrap from '../../portal/router-bootstrap.js'
 import express from 'express'
 
 const BAD_MAC = 'mac must be AA:BB:CC:DD:EE:FF'
@@ -305,12 +306,54 @@ export function postRouterStatusBatch({ store }) {
   }
 }
 
+export function postPortalRouter({ store, authed }) {
+  return async (req, res) => {
+    if (adminDenied(req, res, authed)) return
+    const checked = bootstrap.checkRouterInput(req.body || {}, portal.validRouterId)
+    if (checked.error) return res.status(400).json({ error: checked.error, field: checked.field })
+    const { name, routerId, uplinkSsid, uplinkPassphrase } = checked.value
+    let created
+    try {
+      created = await portal.createRouter(store, { name, routerId })
+    } catch (e) {
+      const status = /already exists/.test(e.message) ? 409 : 400
+      return res.status(status).json({ error: e.message })
+    }
+    const { row, token } = created
+    res.set('Cache-Control', 'no-store')
+    res.status(201).json({
+      router_id: row.router_id,
+      name: row.name,
+      token,
+      bootstrap: bootstrap.bootstrapScript({ base: portalSettings.publicBase(), token, routerId: row.router_id, uplinkSsid, uplinkPassphrase }),
+    })
+  }
+}
+
+export function getRouterBundle({ store }) {
+  return async (req, res) => {
+    const name = String(req.params?.name ?? '')
+    const isPublic = name === bootstrap.ISRG_CERT
+    const router = isPublic ? null : await routerFromBearer(store, req, res)
+    if (!isPublic && !router) return
+    const text = name === bootstrap.SEED
+      ? bootstrap.seedScript({ base: portalSettings.publicBase(), token: bearer(req), routerId: router.router_id })
+      : bootstrap.bundleText(name)
+    if (text === null) return res.status(404).json({ error: 'not found' })
+    res.set('Content-Type', 'text/plain; charset=utf-8')
+    res.set('Cache-Control', 'no-store')
+    res.status(200).send(text)
+  }
+}
+
 const ROUTES = [
   ['options', '/api/portal/register', preflightPortalRegister, { raw: true }],
   ['post', '/api/portal/register', postPortalRegister],
   ['get', '/api/router/status', getRouterStatus],
   ['get', '/api/router/config', getRouterConfig],
   ['get', '/api/router/assets/:name', getRouterAsset],
+  ['get', '/api/router/bundle/:name', getRouterBundle],
+  ['post', '/api/portal/routers', postPortalRouter],
   ['get', '/api/router/wa-prefixes', getRouterWaPrefixes],
   ['post', '/api/router/heartbeat', postRouterHeartbeat],
   ['post', '/api/router/usage', postRouterUsage],

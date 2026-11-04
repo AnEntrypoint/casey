@@ -14,6 +14,7 @@ import { formatBytes, hoursAgoIso } from './portal-format.js';
 import { RouterHealth } from './portal-router-health.js';
 import { UsageSection, reloadUsage } from './portal-usage-section.js';
 import { PortalConfigEditor } from './portal-config-panel.js';
+import { RouterSetupSection } from './portal-router-setup-panel.js';
 
 const h = webjsx.createElement;
 
@@ -104,6 +105,7 @@ export function RoutersPanel() {
     loader.slot(() => h('div', { key: 'routers' },
       routers.length ? routers.map(RouterCard) : h('p', { key: 'none', class: 'casey-hint' }, word('ui.routers_panel_none')))),
     UsageSection({ routers }),
+    RouterSetupSection(),
     PortalConfigEditor(),
     h('div', { key: 'actions', class: 'ds-contact-actions' }, Btn({
       variant: 'ghost',

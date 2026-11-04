@@ -19,6 +19,7 @@ function query(params) {
   return s ? '?' + s : '';
 }
 
+export const createPortalRouter = (body) => send('POST', '/api/portal/routers', body);
 export const fetchPortalConfig = () => json('/api/portal/config');
 export const putPortalConfig = (settings) => send('PUT', '/api/portal/config', { settings });
 export const putPortalRouterConfig = (routerId, settings) => send('PUT', '/api/portal/config/' + seg(routerId), { settings });
