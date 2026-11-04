@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import { publicBase } from './portal-settings.js'
 
-export const ASSET_NAMES = Object.freeze(['login.html', 'blocked.html', 'tc.html'])
+export const ASSET_NAMES = Object.freeze(['login.html', 'blocked.html', 'tc.html', 'redirect.html'])
 
 const TEMPLATE_DIR = new URL('./templates/', import.meta.url)
 const PLACEHOLDER = /\{\{(\w+)\}\}/g
