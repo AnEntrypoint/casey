@@ -96,8 +96,8 @@
 /ip firewall filter add chain=input in-interface=guest protocol=tcp dst-port=53 action=accept comment=uhh:i-dns-t place-before=$inA
 /ip firewall filter add chain=input in-interface=guest protocol=tcp dst-port=64872-64875 action=accept comment=uhh:i-hs place-before=$inA
 /ip firewall filter add chain=input in-interface=guest action=drop comment=uhh:i-drop place-before=$inA
-/ip firewall filter add chain=input in-interface=uhh-admin action=accept comment=uhh:i-wg place-before=$inA
 :if ([:len [/interface wireguard find name=uhh-admin]] = 0) do={ /interface wireguard add name=uhh-admin listen-port=13231 disabled=yes comment=uhh-admin }
+/ip firewall filter add chain=input in-interface=uhh-admin action=accept comment=uhh:i-wg place-before=$inA
 /ip firewall filter add chain=forward in-interface=guest protocol=tcp dst-address-list=wa-ranges dst-port=443,5222,5223,4244 action=accept comment=uhh:f-wa-t place-before=$fwA
 /ip firewall filter add chain=forward in-interface=guest protocol=udp dst-address-list=wa-ranges dst-port=443,3478-3481 action=accept comment=uhh:f-wa-u place-before=$fwA
 /ip firewall filter add chain=forward in-interface=guest action=drop comment=uhh:f-drop place-before=$fwA
