@@ -250,6 +250,7 @@ function compressResponses(req, res, next) {
   const begin = () => {
     if (started) return
     started = true
+    if (res.headersSent) return
     res.setHeader('Vary', 'Accept-Encoding')
     if (!eligible()) return
     res.setHeader('Content-Encoding', encoding)
