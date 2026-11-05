@@ -8,6 +8,8 @@ export const TABLE = Object.freeze({
   settings: 'router_settings',
   health: 'router_health',
   usage: 'router_usage',
+  admin: 'router_admin',
+  adminLog: 'router_admin_log',
 })
 
 export const EVENT_TYPES = Object.freeze(['login', 'check_pass', 'cutoff', 'block', 'heartbeat', 'other'])

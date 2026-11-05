@@ -1,4 +1,5 @@
 import { mountRoutes } from './register.js'
+import { registerPortalAdmin } from './portal-admin.js'
 import * as portal from '../../portal/portal-store.js'
 import * as portalSettings from '../../portal/portal-settings.js'
 import { ASSET_NAMES, renderAsset } from '../../portal/portal-render.js'
@@ -351,4 +352,5 @@ const ROUTES = [
 
 export function registerPortal(app, deps) {
   mountRoutes(app, deps, ROUTES)
+  registerPortalAdmin(app, deps)
 }

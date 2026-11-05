@@ -80,13 +80,13 @@
 /ip service set ftp disabled=yes
 /ip service set telnet disabled=yes
 /ip service set ssh address=192.168.88.0/24
-/ip service set www address=192.168.88.0/24
-/ip service set winbox address=192.168.88.0/24
+/ip service set www address=192.168.88.0/24,10.200.0.0/16
+/ip service set winbox address=192.168.88.0/24,10.200.0.0/16
 /ip service set api address=192.168.88.0/24
 /ip service set api-ssl address=192.168.88.0/24
 /ip service set www-ssl address=192.168.88.0/24 certificate=uhh-hs
 
-:foreach c in={"uhh:f-dns-u";"uhh:f-dns-t";"uhh:f-uhh";"uhh:f-wa-t";"uhh:f-wa-u";"uhh:f-drop";"uhh:i-dns-dhcp";"uhh:i-dns-t";"uhh:i-hs";"uhh:i-drop"} do={
+:foreach c in={"uhh:f-dns-u";"uhh:f-dns-t";"uhh:f-uhh";"uhh:f-wa-t";"uhh:f-wa-u";"uhh:f-drop";"uhh:i-dns-dhcp";"uhh:i-dns-t";"uhh:i-hs";"uhh:i-drop";"uhh:i-wg"} do={
   /ip firewall filter remove [find comment=$c]
 }
 :local inA [/ip firewall filter find comment="defconf: drop all not coming from LAN"]
@@ -96,13 +96,15 @@
 /ip firewall filter add chain=input in-interface=guest protocol=tcp dst-port=53 action=accept comment=uhh:i-dns-t place-before=$inA
 /ip firewall filter add chain=input in-interface=guest protocol=tcp dst-port=64872-64875 action=accept comment=uhh:i-hs place-before=$inA
 /ip firewall filter add chain=input in-interface=guest action=drop comment=uhh:i-drop place-before=$inA
+/ip firewall filter add chain=input in-interface=uhh-admin action=accept comment=uhh:i-wg place-before=$inA
+:if ([:len [/interface wireguard find name=uhh-admin]] = 0) do={ /interface wireguard add name=uhh-admin listen-port=13231 disabled=yes comment=uhh-admin }
 /ip firewall filter add chain=forward in-interface=guest protocol=tcp dst-address-list=wa-ranges dst-port=443,5222,5223,4244 action=accept comment=uhh:f-wa-t place-before=$fwA
 /ip firewall filter add chain=forward in-interface=guest protocol=udp dst-address-list=wa-ranges dst-port=443,3478-3481 action=accept comment=uhh:f-wa-u place-before=$fwA
 /ip firewall filter add chain=forward in-interface=guest action=drop comment=uhh:f-drop place-before=$fwA
 :if ([:len [/ip firewall nat find comment=uhh:n-passed-http]] = 0) do={ /ip firewall nat add chain=dstnat in-interface=guest protocol=tcp dst-port=80 hotspot=auth dst-address=!10.10.10.1 action=dst-nat to-addresses=10.10.10.1 to-ports=80 comment=uhh:n-passed-http }
 
 
-:foreach s in={"uhh-gate";"uhh-usage";"uhh-sync";"uhh-wa-refresh";"uhh-tls";"uhh-register"} do={
+:foreach s in={"uhh-gate";"uhh-usage";"uhh-sync";"uhh-wa-refresh";"uhh-tls";"uhh-register";"uhh-admin"} do={
   :local src [/file get [find name=($s . ".rsc")] contents]
   :if ([:len [/system script find name=$s]] = 0) do={ /system script add name=$s owner=admin policy=ftp,read,write,policy,test,sensitive source="" }
   /system script set [find name=$s] source=$src policy=ftp,read,write,policy,test,sensitive
@@ -114,7 +116,8 @@
 :if ([:len [/system scheduler find name=uhh-usage]] = 0) do={ /system scheduler add name=uhh-usage interval=($uhhUsageIntervalS . "s") start-time=startup on-event="/system script run uhh-usage" policy=ftp,read,write,policy,test,sensitive }
 :if ([:len [/system scheduler find name=uhh-tls]] = 0) do={ /system scheduler add name=uhh-tls interval=1d start-time=04:11:00 on-event="/system script run uhh-tls" policy=ftp,read,write,policy,test,sensitive }
 :if ([:len [/system scheduler find name=uhh-register]] = 0) do={ /system scheduler add name=uhh-register interval=1m start-time=startup on-event="/system script run uhh-register" policy=ftp,read,write,policy,test,sensitive }
-:foreach sc in={"uhh-gate";"uhh-usage";"uhh-sync";"uhh-wa-refresh";"uhh-tls";"uhh-register"} do={ /system scheduler set [find name=$sc] policy=ftp,read,write,policy,test,sensitive }
+:if ([:len [/system scheduler find name=uhh-admin]] = 0) do={ /system scheduler add name=uhh-admin interval=1m start-time=startup on-event="/system script run uhh-admin" policy=ftp,read,write,policy,test,sensitive }
+:foreach sc in={"uhh-gate";"uhh-usage";"uhh-sync";"uhh-wa-refresh";"uhh-tls";"uhh-register";"uhh-admin"} do={ /system scheduler set [find name=$sc] policy=ftp,read,write,policy,test,sensitive }
 
 :if ([:len [/interface bridge port find bridge=guest interface=ether2]] = 0) do={ :error "uhh-portal: guest port missing" }
 :if ([:len [/interface wifi datapath find name=uhh-guest-dp]] = 0) do={ :error "uhh-portal: guest datapath missing" }

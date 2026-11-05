@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const BUNDLE_DIR = fileURLToPath(new URL('./router-bundle/', import.meta.url))
-export const ROUTER_SCRIPTS = Object.freeze(['apply.rsc', 'uhh-sync.rsc', 'uhh-gate.rsc', 'uhh-usage.rsc', 'uhh-wa-refresh.rsc', 'uhh-tls.rsc', 'uhh-register.rsc'])
+export const ROUTER_SCRIPTS = Object.freeze(['apply.rsc', 'uhh-sync.rsc', 'uhh-gate.rsc', 'uhh-usage.rsc', 'uhh-wa-refresh.rsc', 'uhh-tls.rsc', 'uhh-register.rsc', 'uhh-admin.rsc'])
 export const TLS_FILES = Object.freeze(['portal-cert.pem', 'portal-key.pem'])
 export const ISRG_CERT = 'isrg-root-x2.pem'
 export const SEED = 'seed.rsc'
