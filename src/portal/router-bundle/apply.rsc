@@ -13,7 +13,7 @@
 :if ([:typeof $uhhWalledGarden] != "array") do={ :global uhhWalledGarden {"whatsapp.com";"*.whatsapp.com";"whatsapp.net";"*.whatsapp.net";"wa.me";"*.wa.me"} }
 :if ([:typeof $uhhUsageIntervalS] != "num") do={ :global uhhUsageIntervalS 300 }
 :if ([:typeof $uhhHost] != "str") do={ :global uhhHost "ubuntudashboard.co.za" }
-:if ([:typeof $uhhPortalHost] != "str") do={ :global uhhPortalHost "portal.ubuntudashboard.co.za" }
+:if ([:typeof $uhhPortalHost] != "str") do={ :global uhhPortalHost "www.ubuntudashboard.co.za" }
 :if ([:typeof $uhhTls] != "str") do={ :global uhhTls "yes-without-crl" }
 
 /system clock set time-zone-autodetect=no time-zone-name=Africa/Johannesburg
@@ -48,6 +48,7 @@
 :if ([:len [/ip dhcp-server find name=guest-dhcp]] = 0) do={ /ip dhcp-server add name=guest-dhcp interface=guest address-pool=guest-pool disabled=no }
 :if ([:len [/ip dhcp-server network find address="10.10.10.0/24"]] = 0) do={ /ip dhcp-server network add address=10.10.10.0/24 gateway=10.10.10.1 dns-server=10.10.10.1 comment=uhh-guest }
 /ip dns set allow-remote-requests=yes
+/ip dns static remove [find comment=uhh-portal name!=$uhhPortalHost]
 :if ([:len [/ip dns static find name=$uhhPortalHost comment=uhh-portal]] = 0) do={ /ip dns static add name=$uhhPortalHost address=10.10.10.1 comment=uhh-portal }
 
 :if ([:len [/ip hotspot profile find name=uhh-portal]] = 0) do={ /ip hotspot profile add name=uhh-portal }
