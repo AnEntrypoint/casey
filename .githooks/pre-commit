@@ -1,0 +1,9 @@
+#!/bin/sh
+# Blocks a commit that stages a secret. Install once per clone: npm run install-hooks
+# Needs gitleaks (https://github.com/gitleaks/gitleaks); set GITLEAKS=/path/to/gitleaks if it is not on PATH.
+G="${GITLEAKS:-gitleaks}"
+if ! command -v "$G" >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks not found; install it or set GITLEAKS=/path (commit refused: it cannot be checked)" >&2
+  exit 1
+fi
+exec "$G" git --pre-commit --staged --redact --no-banner -v

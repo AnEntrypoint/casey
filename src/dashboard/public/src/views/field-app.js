@@ -1,0 +1,346 @@
+import * as webjsx from '/design/vendor/webjsx/index.js';
+import { AppShell, Topbar, Side, Crumb, Status, Icon, Btn } from '/design/src/components/shell.js';
+import { Skeleton, Alert, Panel, Row as KitRow, SearchInput } from '/design/src/components/content.js';
+import { state, schedule, closeModal } from '../state.js';
+import { AccountMenu, LogoutEverywhereConfirmDialog } from '../components/account-menu.js';
+import { ConnectionBanner } from '../components/connection-banner.js';
+import { FeedbackDialog } from '../components/feedback-dialog.js';
+import { ToastTray } from '../components/toast-tray.js';
+import { Dialog, confirmDialog } from '../components/dialog-shell.js';
+import { MapPanel } from '../panels/map-panel.js';
+import { PillButton } from '../components/filter-chip.js';
+import { toast, failMsg } from '../toasts.js';
+import { createCase } from '../api.js';
+import { fetchFieldCases, pollFieldCases, isTechnician, roleName } from '../api-roles.js';
+import { pushHash } from '../route.js';
+import { setActiveId } from '../state.js';
+import { stageLabel, headline, rel } from '../format.js';
+import { brandName, entityLabel, entityLabelPlural, countOf } from '../vocabulary.js';
+import { word } from '../words.js';
+import { ViewTitle, VIEW_TITLE_ID } from './view-title.js';
+import { FieldCaseView, resetFieldCase } from './field-case.js';
+import { MyDay, refreshMyDay } from './my-day.js';
+import { holderName } from './field-names.js';
+const h = webjsx.createElement;
+
+const CLOSED_PAGE = 20;
+const SEARCH_DEBOUNCE_MS = 300;
+const HOLD_PILLS = ['open', 'claimed', 'closed'];
+const ATTR_PILLS = ['sent-back', 'complete', 'incomplete', 'no-photo'];
+const PILL_WORD = { open: 'ui.field_pill_open', claimed: 'ui.field_pill_claimed', closed: 'ui.field_pill_closed', 'sent-back': 'ui.field_pill_sent_back', complete: 'ui.field_pill_complete', incomplete: 'ui.field_pill_incomplete', 'no-photo': 'ui.field_pill_no_photo' };
+const EXCLUSIVE = { complete: 'incomplete', incomplete: 'complete' };
+
+const fs = { view: 'home', mine: [], signoff: [], mineTotal: 0, openTotal: 0, closed: [], closedTotal: 0, closedBusy: false, q: '', pills: new Set(), gen: 0, loaded: false, loading: false, error: '' };
+
+let searchTimer = null;
+
+
+const wantsClosed = () => isTechnician() || fs.pills.has('closed');
+
+
+export async function refreshFieldLists() {
+  const gen = ++fs.gen;
+  fs.loading = true;
+  const q = fs.q.trim();
+  let changed = true;
+  try {
+    const [mine, signoff, closed] = await Promise.all([
+      pollFieldCases('mine', { q, state: 'open' }),
+      isTechnician() ? pollFieldCases('signoff', { q }) : Promise.resolve({ body: { cases: [] }, unchanged: true }),
+      wantsClosed() ? pollFieldCases('mine', { q, state: 'closed', limit: CLOSED_PAGE }) : Promise.resolve(null),
+    ]);
+    if (gen !== fs.gen) return;
+    changed = !fs.loaded || !mine.unchanged || !signoff.unchanged || !!(closed && !closed.unchanged);
+    const m = mine.body, s = signoff.body, c = closed && closed.body;
+    fs.mine = (m && m.cases) || [];
+    fs.mineTotal = (m && typeof m.total === 'number') ? m.total : fs.mine.length;
+    if (!q) fs.openTotal = fs.mineTotal;
+    fs.signoff = (s && s.cases) || [];
+    if (c && (!closed.unchanged || fs.closedQ !== q)) {
+      fs.closed = c.cases || [];
+      fs.closedTotal = typeof c.total === 'number' ? c.total : fs.closed.length;
+      fs.closedQ = q;
+      changed = true;
+    }
+    if (fs.error) changed = true;
+    fs.error = '';
+  } catch (e) { if (gen === fs.gen) fs.error = word('ui.load_list_failed'); }
+  if (gen !== fs.gen) return;
+  fs.loading = false; fs.loaded = true;
+  if (changed) schedule();
+  refreshMyDay();
+}
+
+
+function setQuery(value) {
+  fs.q = value;
+  schedule();
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(refreshFieldLists, SEARCH_DEBOUNCE_MS);
+}
+
+function togglePill(key) {
+  const next = new Set(fs.pills);
+  if (next.has(key)) next.delete(key);
+  else { next.add(key); if (EXCLUSIVE[key]) next.delete(EXCLUSIVE[key]); }
+  fs.pills = next;
+  schedule();
+  if (key === 'closed' && next.has(key) && !isTechnician()) refreshFieldLists();
+}
+
+function clearFilters() {
+  clearTimeout(searchTimer);
+  const hadQuery = fs.q.trim() !== '';
+  fs.q = ''; fs.pills = new Set();
+  schedule();
+  if (hadQuery) refreshFieldLists();
+}
+
+async function showMoreClosed() {
+  if (fs.closedBusy) return;
+  const gen = fs.gen;
+  fs.closedBusy = true; schedule();
+  try {
+    const j = await fetchFieldCases('mine', { q: fs.q.trim(), state: 'closed', offset: fs.closed.length, limit: CLOSED_PAGE });
+    if (gen === fs.gen) {
+      const have = new Set(fs.closed.map((c) => c.id));
+      fs.closed = fs.closed.concat(((j && j.cases) || []).filter((c) => !have.has(c.id)));
+      if (j && typeof j.total === 'number') fs.closedTotal = j.total;
+    }
+  } catch (e) { toast(word('ui.field_more_failed'), 'err'); }
+  fs.closedBusy = false; schedule();
+}
+
+
+function parseReport(raw) { try { return raw ? JSON.parse(raw) : {}; } catch { return {}; } }
+const has = (r, k) => r[k] != null && String(r[k]).trim() !== '';
+const mandatory = () => ((state.config || {}).mandatory_minimum || {}).fields || [];
+let doneCache = { cfg: undefined, set: null };
+const doneSet = () => {
+  if (doneCache.cfg !== state.config) doneCache = { cfg: state.config, set: new Set(['resolved', 'closed', ...((((state.config || {}).mandatory_minimum) || {}).blocks_transition_to || [])]) };
+  return doneCache.set;
+};
+const isOpen = (c) => !doneSet().has(c.status);
+const missingCache = new WeakMap();
+const missingOf = (c) => {
+  const hit = missingCache.get(c);
+  if (hit && hit.cfg === state.config) return hit.missing;
+  const r = parseReport(c.report);
+  const missing = mandatory().filter((f) => !has(r, f.key));
+  missingCache.set(c, { cfg: state.config, missing });
+  return missing;
+};
+const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
+const tagsOf = (c) => String(c.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
+
+function worstFirst(list) {
+  const key = (c) => [tagsOf(c).includes('sent-back') ? 0 : 1, PRIORITY_RANK[c.priority] ?? 2, -missingOf(c).length, Date.parse(c.last_event_at) || 0];
+  return list.map((c) => [key(c), c]).sort((a, b) => { const x = a[0], y = b[0]; for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; }).map(([, c]) => c);
+}
+
+const VIEW_FOCUS_WINDOW_MS = 1500;
+let viewFocus = null;
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+function requestViewFocus(selector) { viewFocus = { selector, until: Date.now() + VIEW_FOCUS_WINDOW_MS, fresh: true }; }
+function settleViewFocus() {
+  if (!viewFocus) return;
+  if (Date.now() > viewFocus.until) { viewFocus = null; return; }
+  const active = document.activeElement;
+  if (!viewFocus.fresh && active && active !== document.body) return;
+  const el = document.querySelector('.field-app ' + viewFocus.selector);
+  if (!el) return;
+  viewFocus.fresh = false;
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ block: 'nearest', behavior: reduceMotion() ? 'auto' : 'smooth' });
+}
+function openReport(id) { requestViewFocus('.casey-back-btn'); pushHash({ caseId: id }); setActiveId(id); }
+function openRef(ref) { const hit = [...fs.mine, ...fs.signoff, ...fs.closed].find((c) => c.ref === ref); if (hit) openReport(hit.id); }
+function closeReport() { requestViewFocus('#ds-view-title'); pushHash({ caseId: null }); setActiveId(null); resetFieldCase(); refreshFieldLists(); }
+
+const HOLD_KEY = { Closed: 'ui.field_app_hold_closed', Claimed: 'ui.field_app_hold_claimed', Open: 'ui.field_app_hold_open' };
+function holdState(c) {
+  if (!isOpen(c)) return 'Closed';
+  const holder = String(c.assignee || '').trim();
+  return holder && holder !== 'agent' ? 'Claimed' : 'Open';
+}
+
+function handedNote(c) {
+  if (!tagsOf(c).includes('handed-off')) return '';
+  if (isTechnician()) { const from = holderName(c.assignee); return from ? word('ui.field_app_sent_by', { name: from }) : word('ui.field_app_sent_by_ranger'); }
+  return word('ui.field_app_with_technician');
+}
+
+function Row(c, { showMissing = true } = {}) {
+  const r = parseReport(c.report);
+  const missing = missingOf(c);
+  const what = [has(r, 'species') ? String(r.species) : '', has(r, 'location') ? word('ui.field_app_in_location', { location: String(r.location) }) : ''].filter(Boolean).join(' ');
+  const sentBack = tagsOf(c).includes('sent-back');
+  const need = showMissing && mandatory().length ? (missing.length ? word('ui.field_app_still_needed', { list: missing.map((f) => f.label).join(word('ui.field_app_sep_comma')) }) : word('ui.field_app_all_recorded')) : '';
+  return KitRow({
+    key: c.id, title: what || headline(c.subject || word('ui.field_app_no_details')),
+    sub: [c.ref, (c.last_event_at ? word('ui.field_app_stage_since', { stage: stageLabel(c.status), when: rel(c.last_event_at) }) : stageLabel(c.status)), has(r, 'photos') ? word('ui.field_app_photo_attached') : word('ui.field_app_no_photo'), sentBack ? word('ui.field_app_sent_back_hint') : '', handedNote(c), need].filter(Boolean).join(word('ui.field_app_sep_sentence')),
+    meta: word(HOLD_KEY[holdState(c)]),
+    rail: sentBack ? 'flame' : (mandatory().length && !missing.length ? 'green' : undefined),
+    onClick: () => openReport(c.id),
+  });
+}
+
+function List(title, rows, empty, opts) {
+  return Panel({ title, count: rows.length || undefined, children: rows.length ? rows.map((c) => Row(c, opts)) : (fs.error ? [] : h('p', { class: 'casey-hint' }, empty)) });
+}
+
+async function addReport() {
+  const subject = ((await confirmDialog({ title: word('ui.field_app_new_title', { entity: entityLabel() }), inputLabel: word('ui.field_app_subject_label') })) || '').trim();
+  if (!subject) return;
+  try {
+    const created = await createCase({ subject });
+    toast(word('ui.field_app_started', { ref: created && created.ref ? created.ref : word('ui.field_app_a_new', { entity: entityLabel() }) }), 'ok');
+    await refreshFieldLists();
+    if (created && created.id) openReport(created.id);
+  } catch (e) { toast(await failMsg(e, word('ui.field_app_not_started', { entity: entityLabel() })), 'err'); }
+}
+
+function passesAttributes(c) {
+  const on = (k) => fs.pills.has(k);
+  if (on('sent-back') && !tagsOf(c).includes('sent-back')) return false;
+  if (on('complete') && !(mandatory().length && !missingOf(c).length)) return false;
+  if (on('incomplete') && !missingOf(c).length) return false;
+  if (on('no-photo') && has(parseReport(c.report), 'photos')) return false;
+  return true;
+}
+
+function passesHold(c) {
+  const held = HOLD_PILLS.filter((k) => k !== 'closed' && fs.pills.has(k));
+  if (!held.length && !fs.pills.has('closed')) return true;
+  return fs.pills.has('open') || (fs.pills.has('claimed') && holdState(c) === 'Claimed');
+}
+
+function derive() {
+  const tech = isTechnician();
+  const closedOn = fs.pills.has('closed');
+  const open = worstFirst(fs.mine.filter((c) => isOpen(c) && passesHold(c) && passesAttributes(c)));
+  const closedSource = closedOn ? fs.closed : (tech ? fs.closed.slice(0, 10) : []);
+  const closed = closedSource.filter(passesAttributes);
+  let ready = [], rest = [];
+  if (tech) {
+    const ids = new Set();
+    const signoff = fs.signoff.filter((c) => passesHold(c) && passesAttributes(c));
+    ready = worstFirst([...signoff, ...open.filter((c) => !missingOf(c).length)].filter((c) => (ids.has(c.id) ? false : (ids.add(c.id), true))));
+    rest = open.filter((c) => missingOf(c).length);
+  }
+  const shownIds = new Set([...(tech ? [...ready, ...rest] : open), ...closed].map((c) => c.id));
+  const loadedIds = new Set([...fs.mine, ...(tech ? fs.signoff : [])].filter(passesHold).concat(closedSource).map((c) => c.id));
+  return { tech, closedOn, open, closed, ready, rest, shown: shownIds.size, loaded: loadedIds.size, unloaded: Math.max(0, fs.mineTotal - fs.mine.length) };
+}
+
+const filtersActive = () => fs.q.trim() !== '' || fs.pills.size > 0;
+
+export function fieldMapShown() {
+  if (fs.view === 'map') return true;
+  return fs.view === 'home' && fs.loaded && !isTechnician() && derive().open.length > 0;
+}
+
+function Filters(d) {
+  const showing = d ? word('ui.field_showing', { shown: d.shown, loaded: d.loaded }) + (d.unloaded ? word('ui.field_app_sep_sentence') + word('ui.field_unloaded', { n: d.unloaded }) : '') : '';
+  return h('div', { key: 'filters', class: 'field-filters', role: 'search', hidden: !d },
+    h('div', { key: 'search', class: 'field-search' }, SearchInput({
+      value: fs.q, label: word('ui.field_search_label'), placeholder: word('ui.field_search_placeholder'), onInput: setQuery,
+    })),
+    h('div', { key: 'pills', class: 'ds-filter-pills field-pills', role: 'group', 'aria-label': word('ui.field_filter_label') },
+      ...[...HOLD_PILLS, ...ATTR_PILLS].map((k) => PillButton({ key: k, active: fs.pills.has(k), onClick: () => togglePill(k), children: word(PILL_WORD[k]) })),
+      Btn({ key: 'clear', variant: 'link', size: 'sm', class: 'field-clear', disabled: !filtersActive(), children: word('ui.field_clear'), onClick: clearFilters })),
+    h('p', { key: 'count', class: 'casey-hint field-count', role: 'status', 'aria-live': 'polite' }, showing));
+}
+
+function ClosedList(d) {
+  const title = word('ui.field_closed_title');
+  const more = d.closedOn && fs.closed.length < fs.closedTotal
+    ? [Btn({ key: 'more', variant: 'ghost', size: 'sm', class: 'ds-queue-more', disabled: fs.closedBusy, onClick: showMoreClosed, children: word('ui.field_show_more') })] : [];
+  const rows = d.closed.map((c) => Row(c, { showMissing: false }));
+  return Panel({ title, count: d.closed.length || undefined, children: [rows.length ? h('div', { key: 'rows' }, ...rows) : (fs.error ? null : h('p', { key: 'empty', class: 'casey-hint' }, d.closedOn ? word('ui.field_closed_empty') : word('ui.field_app_nothing_closed'))), ...more].filter(Boolean) });
+}
+
+function Home(d) {
+  if (!fs.loaded) { if (!fs.loading) refreshFieldLists(); return h('div', { key: 'home', class: 'field-home' }, Skeleton({ count: 5, height: '1.6em' })); }
+  const body = [];
+  if (fs.error) body.push(Alert({ kind: 'warn', children: h('div', {}, fs.error + ' ', Btn({ size: 'sm', variant: 'ghost', children: word('ui.field_app_try_again'), onClick: refreshFieldLists })) }));
+  if (d.tech) {
+    body.push(List(word('ui.field_app_ready_sign_off'), d.ready, word('ui.field_app_nothing_waiting'), { showMissing: false }));
+    body.push(List(word('ui.field_app_your_other', { entity_plural: entityLabelPlural() }), d.rest, word('ui.field_app_no_other_open', { entity_plural: entityLabelPlural() })));
+    body.push(ClosedList(d));
+    body.push(MyDay({ onOpenRef: openRef, tech: true }));
+    body.push(MyDay({ onOpenRef: openRef, tech: true, part: 'after' }));
+  } else {
+    body.push(MyDay({ onOpenRef: openRef }));
+    body.push(List(word('ui.field_app_my_entity', { entity_plural: entityLabelPlural() }), d.open, word('ui.field_app_no_assigned', { entity: entityLabel() })));
+    if (d.closedOn) body.push(ClosedList(d));
+    body.push(MyDay({ onOpenRef: openRef, part: 'after' }));
+    if (d.open.length) body.push(Panel({ title: word('ui.field_app_where_mine'), children: h('div', { class: 'field-map-small' }, MapPanel()) }));
+  }
+  return h('div', { key: 'home', class: 'field-home' }, ...body.filter(Boolean));
+}
+
+
+function MapView() {
+  return h('div', { key: 'map', class: 'field-map-full' }, MapPanel());
+}
+
+function nav() {
+  const tech = isTechnician();
+  const go = (v) => (e) => { if (e && e.preventDefault) e.preventDefault(); if (state.activeId) closeReport(); requestViewFocus('#ds-view-title'); fs.view = v; schedule(); };
+  const home = tech ? word('ui.field_app_ready_sign_off') : word('ui.field_app_my_entity', { entity_plural: entityLabelPlural() });
+  return Side({
+    sections: [{
+      group: word('ui.field_app_group_work'),
+      items: [
+        { key: 'home', glyph: Icon(tech ? 'check' : 'rows', { size: 15 }), label: home, onClick: go('home'), active: fs.view === 'home' && !state.activeId },
+        { key: 'map', glyph: Icon('globe', { size: 15 }), label: word('ui.field_app_map'), onClick: go('map'), active: fs.view === 'map' && !state.activeId },
+      ],
+    }],
+  });
+}
+
+function FieldHelp() {
+  const tech = isTechnician();
+  return Dialog({
+    open: state.activeModal === 'help', title: word('ui.field_app_help_title'), onClose: closeModal,
+    children: [
+      h('p', { key: 'a' }, word(tech ? 'ui.field_app_only_see_tech' : 'ui.field_app_only_see', { entity_plural: entityLabelPlural() })),
+      h('p', { key: 'b' }, word('ui.field_app_help_open')),
+      tech ? h('p', { key: 'c' }, word('ui.field_app_help_signoff')) : null,
+      h('p', { key: 'd' }, word('ui.field_app_help_missing', { entity: entityLabel() })),
+    ].filter(Boolean),
+  });
+}
+
+export function FieldApp() {
+  const brand = brandName();
+  const tech = isTechnician();
+  const open = state.activeId != null;
+  const derived = open || fs.view !== 'home' ? null : derive();
+  const title = open ? word('ui.field_app_one_entity', { entity: entityLabel() }) : (fs.view === 'map' ? word('ui.field_app_map') : (tech ? word('ui.field_app_ready_sign_off') : word('ui.field_app_my_entity', { entity_plural: entityLabelPlural() })));
+  const main = open
+    ? FieldCaseView({ id: state.activeId, onBack: closeReport })
+    : h('div', { class: 'field-main' },
+      ViewTitle(title),
+      h('div', { class: 'casey-timeline-actions' },
+        Btn({ variant: 'primary', children: [Icon('plus', { size: 15 }), word('ui.field_app_new_button', { entity: entityLabel() })], onClick: addReport, 'aria-label': word('ui.field_app_start_new_aria', { entity: entityLabel() }) }),
+        Btn({ variant: 'ghost', disabled: fs.loading, children: word('ui.field_app_refresh'), onClick: refreshFieldLists })),
+      Filters(fs.view === 'home' && fs.loaded ? derived : null),
+      fs.view === 'map' ? MapView() : Home(derived));
+  const crumb = Crumb({ trail: [brand], leaf: roleName(), right: [h('div', { key: 'appbar', class: 'ds-appbar' }, AccountMenu())] });
+  setTimeout(settleViewFocus, 0);
+  return h('div', { class: 'ds-app-root field-app' },
+    ConnectionBanner(),
+    AppShell({
+      topbar: Topbar({ brand, leaf: roleName(), items: [], themeToggle: false }), crumb, side: nav(),
+      status: Status({ left: [h('span', { key: 'c' }, !fs.loaded ? word('ui.field_app_loading_reports') : (fs.error ? word('ui.field_app_count_unavailable') : word('ui.field_app_you_have', { count: countOf(fs.openTotal) })))], right: [h('span', { key: 'n' }, state.connLost ? word('ui.field_app_not_connected') : word('ui.field_app_connected'))], ariaLabel: word('ui.field_app_status_aria') }),
+      main: [main], bannerLabel: word('ui.field_app_top_bar'),
+      mainLabelledby: open ? undefined : VIEW_TITLE_ID,
+      mainLabel: open ? word('ui.field_case_header_label', { entity: entityLabel() }) : undefined,
+    }),
+    FieldHelp(),
+    FeedbackDialog(),
+    LogoutEverywhereConfirmDialog(),
+    ToastTray());
+}

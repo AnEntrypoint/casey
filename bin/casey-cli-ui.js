@@ -1,0 +1,305 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import net from 'node:net'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+export const ROOT = path.resolve(__dirname, '..')
+
+const COLOR = process.stdout.isTTY && !process.env.NO_COLOR
+const c = (code) => (s) => COLOR ? `\x1b[${code}m${s}\x1b[0m` : String(s)
+export const bold = c('1'), dim = c('2'), green = c('32'), red = c('31'), yellow = c('33'), cyan = c('36')
+export const ok = (s) => `${green('[ok]')} ${s}`
+export const bad = (s) => `${red('[x]')} ${s}`
+export const warn = (s) => `${yellow('!')} ${s}`
+
+export const say = (s) => console.error(s)
+
+export function pkgVersion() {
+  try { return JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version } catch { return '?' }
+}
+
+export function parseFlags(args) {
+  const f = {}
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith('--')) {
+      const k = args[i].slice(2)
+      const v = args[i + 1] && !args[i + 1].startsWith('--') ? args[(i++, i)] : true
+      f[k] = v
+    } else if (args[i] === '-h') f.help = true
+    else if (args[i] === '-v') f.version = true
+  }
+  return f
+}
+
+export function hasCreds(ch) {
+  if (ch === 'discord') return !!process.env.DISCORD_BOT_TOKEN
+  if (ch === 'whatsapp') return !!(process.env.WHATSAPP_API_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID)
+  return false
+}
+export function partialCreds(ch) {
+  if (ch === 'whatsapp') {
+    const a = !!process.env.WHATSAPP_API_TOKEN, b = !!process.env.WHATSAPP_PHONE_NUMBER_ID
+    return (a || b) && !(a && b)
+  }
+  return false
+}
+
+export function portFree(port) {
+  return new Promise((resolve) => {
+    const s = net.createServer()
+    s.once('error', () => { s.close?.(); resolve(false) })
+    s.once('listening', () => s.close(() => resolve(true)))
+    s.listen(port, '127.0.0.1')
+  })
+}
+
+export const HELP = `${bold('casey')} ${dim('v' + pkgVersion())}  --  agentic case tracking over WhatsApp/Discord
+
+${bold('usage:')}
+  casey init                                    scaffold a .env you can fill in
+  casey doctor                                  preflight: what's ready, what's missing
+  casey up [--channels discord,whatsapp] [--port 4000]   start gateway + dashboard
+  casey dashboard [--port 4000]                 start only the observe/edit dashboard
+  casey cases [--status <stage>] [--channel <channel>]   list cases
+  casey show <ref|id>                           show a case + timeline
+  casey attention [--limit N --offset N --json] worst-first inbox: who needs a person now, and why
+  casey handover [--json] / handover start      shift digest: what to pick up; 'start' stamps a new shift
+  casey report [--days N] [--json]              management briefing: SLA compliance, response + closure rates
+  casey health [--json]                         read-only guardrail summary (no changes written)
+  casey alerts [--limit N] [--json] [--quiet]   system alerts that fired: what is standing, what cleared
+                                                 exits 1 while anything is standing, so cron can page on it
+  casey sweep [--json]                          run the health-guardrail sweep once now (writes tags/observations)
+  casey transition <ref|id> <stage> [--reason]  move a case to a stage (legality-checked)
+  casey erase-contact <contact|ref> --yes [--reason]  right-to-erasure: irreversibly scrub one person's PII (POPIA/GDPR)
+  casey erase-contact --check                   list erasures that started and never finished
+  casey erase-contact <contact> --persons       list the people recorded behind a shared phone (names, never the number)
+  casey erase-contact <contact> --person <name|id> --yes   erase ONE person on a shared phone; the phone and the others stay
+  casey retention [--days N] [--yes] [--json]   age-based retention. OFF unless configured; DRY RUN unless --yes
+  casey backup [--out <dir>] [--json]           consistent copy of every store, including the ones outside data/
+  casey report-digest [--month YYYY-MM] [--out file.csv | --out-dir <dir>] [--post]  monthly aggregate disease CSV and text summary (k-floored)
+  casey restore <backup-dir> --yes              put a backup back (stop casey first; the live data dir is moved aside)
+  casey operators add <username> [--password ...] [--name ...] [--role admin|operator|eco_ranger|animal_health_technician|viewer]
+                                                 create a dashboard login account (break-glass/scripted provisioning)
+  casey operators list                          list dashboard login accounts (never prints password hashes)
+  casey operators disable <username>            disable a login without deleting its history
+  casey operators enable <username>             re-enable a disabled login
+  casey roles list [--json]                     the team: WhatsApp members by rung, and dashboard logins
+  casey roles assign <phone> <tier> [--name ..] register a number in a role (reporter/field_worker/animal_health_technician/operator)
+  casey roles demote <phone|id>                 back to reporter; the reports they held return to the queue
+  casey roles invite <tier> [--label ..] [--ttl-hours N] [--uses N]   mint a one-time WhatsApp code (printed once)
+  casey roles import <file.csv> [--dry-run] [--yes]   register a whole team from a spreadsheet (preview first)
+  casey roles roster [--json]                   rollout table per association: total, smartphones, registered, first message, first case
+  casey roles invites | revoke <id> | release <holder> | link <username> <phone>
+                                                 invite log, revoke a code, free a holder's reports, link a login to a number
+  casey sync-import <file> --kind field_visit|farmer|association|follow_up
+                                                 read a manually-exported external-system file into the cross-app
+                                                 correlation engine's normalized shape (no live adapter needed)
+  casey sync-correlate [--kind field_visit|farmer|association|follow_up]
+                                                 score cached sync-import file(s) against real cases/contacts and
+                                                 write proposed external_link rows for operator review (all kinds
+                                                 with a cached file if --kind is omitted)
+  casey sync-apikey create --label <name> --scope read:cases,read:links,write:links,import:records
+                                                 provision a machine credential for /api/sync/* (printed once)
+  casey sync-apikey list                        list sync API keys (never prints the key itself)
+  casey sync-apikey revoke <id>                 revoke a sync API key without deleting its history
+  casey router create --name <label> [--id <router_id>]  register a field router and print its token once
+  casey router list                             list routers with their last_seen time
+
+${bold('flags:')} --help / -h on any command, --version / -v
+
+${bold('channels (set in .env or the environment):')}
+  DISCORD_BOT_TOKEN                             enable discord
+  WHATSAPP_API_TOKEN, WHATSAPP_PHONE_NUMBER_ID  enable whatsapp
+
+${bold('dashboard login:')} the dashboard now uses per-operator username/password
+  login (not a shared token) -- a fresh deployment auto-creates a bootstrap
+  admin account on first ${cyan('casey up')} / ${cyan('casey dashboard')} and writes its
+  password to a root-only file in the data directory, printing only the path.
+  Use ${cyan('casey operators')} for break-glass recovery if that is lost.
+
+${dim('new here? run')} ${cyan('casey init')} ${dim('then')} ${cyan('casey doctor')} ${dim('then')} ${cyan('casey up')}`
+
+export const USAGE = {
+  roles: `casey roles <subcommand>
+  The team model from a terminal, calling the same store methods the dashboard does.
+    list [--json]                            WhatsApp team members by rung, and dashboard logins
+    assign <phone> <tier> [--name "..."]     register a number (works before it has ever messaged)
+    demote <phone|contact-id>                back to reporter; open reports they held go back to the queue
+    invite <tier> [--label ..] [--ttl-hours 72] [--uses 1]   one-time code, printed once
+    invites [--json]                         the invite log: active, used, expired, revoked
+    revoke <invite-id>                       kill an unused code
+    release <phone|contact-id|username>      unassign every open report a holder has
+    link <username> <phone>                  link a dashboard login to its WhatsApp contact
+    import <file.csv> [--dry-run] [--yes]    bulk registration; columns name, phone, role, association, smartphone (max 500 rows).
+                                             Prints a per-row preview (create/update/skip/error); writes only with --yes.
+                                             People without a smartphone go on the training roster, not WhatsApp.
+    roster [--json] [--forget <phone>]       the training roster and rollout table per association
+  tiers: field_worker, animal_health_technician, operator (and reporter to demote).
+  Acts with admin authority (it needs a shell on the box) and records itself as cli-operator.
+  Nothing here sends a WhatsApp message.`,
+  init: `casey init
+  Scaffold a .env in casey's own repo root for you to fill in. Never overwrites
+  an existing one. A deployer package that ships its own .env (uhh, serpent)
+  does not use this -- edit that package's .env instead.`,
+  doctor: `casey doctor [--port 4000] [--no-network]
+  Preflight: Node version, .env, dependency resolution, supply-chain scan,
+  submodule health, timeout coordination, channel credentials, config validity
+  and drift, data dir, and whether --port is free. With WhatsApp configured it
+  also asks Meta (read-only GETs) whether the API token is valid and unexpired,
+  whether the app's webhook has the "messages" field subscribed and the right
+  callback URL, whether the phone number is connected, and whether the public
+  callback URL answers Meta's verification challenge; then it checks the role
+  model (an admin exists, a team is registered, no report is held by someone who
+  cannot act on it). --no-network skips the Meta and public-URL rows.
+  Exits 1 if anything is red.`,
+  up: `casey up [--channels discord,whatsapp] [--port 4000] [--no-reload] [--no-supervise] [--no-auto-update]
+  Start the gateway (all configured channels) and the dashboard.
+  Supervised by default: the worker auto-restarts on a source change (live reload) or a crash,
+  reopening the same case store so nothing is lost. AUTO-UPDATE is on by default -- it fetches
+  from origin on an interval and fast-forwards (git fetch + merge --ff-only, safe: it never
+  clobbers local edits and refuses to move a diverged tree) so a pushed fix deploys with no
+  manual restart. --no-reload disables the file watcher; --no-auto-update
+  (or CASEY_AUTO_UPDATE=0) disables the origin pull; --no-supervise runs the legacy single-process
+  path for debugging.`,
+  dashboard: `casey dashboard [--port 4000]
+  Start only the observe/edit dashboard against the existing store. Reads and
+  edits cases; it is not attached to a running agent, so replying to a contact,
+  AI-helper status and Sweep now are unavailable in this mode.`,
+  cases: `casey cases [--status <stage>] [--channel <channel>]
+  List every case, newest activity first: ref, stage, priority, channel,
+  contact, subject, opened-at. --status and --channel each accept one value and
+  are checked against what this store actually holds.`,
+  show: `casey show <ref|id>
+  Show one case: header, report fields (visit-critical ones first, including the
+  blanks), and the full append-only timeline. Takes the CASE-... ref printed by
+  casey cases, or the internal id.`,
+  attention: `casey attention [--limit N] [--offset N] [--json]
+  The worst-first queue: who needs a person now, and the plain reason why. Same
+  ranking the dashboard inbox uses. --json emits the machine shape.`,
+  handover: `casey handover [--json]
+  casey handover start
+  Shift digest: what needs attention, open handoffs, unsent drafts, and what was
+  touched since the last shift marker. 'start' stamps a new shift so the next
+  digest scopes "since now". --json emits the machine shape.`,
+  report: `casey report [--days N] [--json]
+  Management briefing: SLA compliance by case type, and response/closure rates
+  by case type and by intake channel. --days N restricts it to cases opened in
+  the last N days (default 30). --json emits the machine shape.`,
+  health: `casey health [--json]
+  Read-only guardrail summary: how many open cases are breaching, and which
+  guardrails. Writes nothing -- use casey sweep to record the breaches.`,
+  alerts: `casey alerts [--limit N] [--json] [--quiet]
+  What casey has raised about ITSELF: a deaf channel, a dead provider with
+  messages queuing behind it, a guardrail sweep that has stopped running, plus
+  per-case breaches and team coverage gaps. Read off the local alert log
+  (data/alerts/alerts.jsonl), which is the delivery channel used when no
+  CASEY_ALERT_WEBHOOK / CASEY_HANDOFF_WEBHOOK is set -- with one of those set,
+  alerts go there instead and this log is not written.
+  Opens no database, so it still answers when the store itself is the problem.
+  --limit N shows the last N entries (default 20); --json emits the machine
+  shape; --quiet prints nothing and speaks only through its exit code.
+  Exit codes: 0 nothing standing, 1 something standing, 2 unreadable.`,
+  sweep: `casey sweep [--json]
+  Run the health-guardrail sweep once, now. This WRITES: it appends observation
+  events and health:* tags for newly-entered breaches and clears cleared ones.`,
+  transition: `casey transition <ref|id> <stage> [--reason "..."]
+  Move one case to a stage. The move is checked against the workflow first and
+  refused with the legal options if it is not allowed from where the case is.
+  --reason is recorded on the timeline beside the change.`,
+  'erase-contact': `casey erase-contact <contact-id|external-id|case-ref> --yes [--reason "..."]
+casey erase-contact --check
+casey erase-contact <contact> --persons
+casey erase-contact <contact> --person <name|id> --yes [--reason "..."]
+  IRREVERSIBLE. Scrubs one contact's personal details for a right-to-erasure
+  request (POPIA/GDPR). --yes is required: there is nothing to undo it with.
+  Accepts the contact id, the contact's channel identifier, or the ref of any
+  case that contact opened.
+  This is about a PERSON ASKING; casey retention is about AGE. They stay separate.
+  --check takes no contact and writes nothing: it lists erasures that started and
+  never completed. An erasure touches four stores (contact + case rows, the
+  provenance raw log, and the conversation transcripts outside data/) with no
+  transaction available across them, so it is not atomic -- it writes a durable
+  plan before its first change and a completion marker after its last, and a plan
+  with no completion is what --check reports. Erasure is idempotent: re-running
+  the command named in that report finishes the job.
+  --persons / --person: several people can share one phone (a family, neighbours).
+  --persons lists the people recorded behind the phone by name, never the number.
+  --person <name|id> erases only that person: their name, the identifying fields
+  of the reports they gave and their stored conversations. The phone contact, its
+  routing key and every other person on it are left as they were, and the phone
+  stays as opted in or out as it was (the bot can only ever answer the number).`,
+  retention: `casey retention [--days N] [--action archive|erase] [--out <dir>] [--yes] [--json]
+  Age-based retention over CLOSED cases. Two safeties, both structural:
+  OFF unless configured -- with no CASEY_RETENTION_DAYS and no --days this
+  command reads nothing and changes nothing. Nothing here is on a timer; it runs
+  only when you type it.
+  DRY RUN unless --yes -- with no --yes it reports what the policy would do,
+  naming every case it would touch and, for every case it would not, the reason.
+  A case is never expired while it is open, carries an unresolved health:*
+  guardrail breach, is tagged needs-human or draft-pending, has had any event
+  inside the window, or has timestamps that cannot be read.
+  --action archive (the default) writes the whole case to a JSON file and takes
+  it out of the live read paths; it destroys nothing. --action erase does that
+  and then scrubs the identifying fields and removes the stored conversation.
+  Neither frees bytes in data/db.sqlite -- thatcher soft-deletes.`,
+  backup: `casey backup [--out <dir>] [--json]
+  A consistent, restorable copy of every store: data/db.sqlite (snapshotted with
+  sqlite's own VACUUM INTO, safe against a running casey), everything else under
+  data/ -- the provenance raw log, the media files, the runtime-event sidecar --
+  and the freddie conversation transcripts, which live OUTSIDE data/ and which a
+  data/-scoped backup misses entirely.
+  Any store it cannot copy is named and the command exits 1: a backup that
+  quietly missed one is worse than no backup. The .env and the config package are
+  never copied, on purpose, and the manifest says so.
+  Defaults to backups/casey-<timestamp>.`,
+  'report-digest': `casey report-digest [--month YYYY-MM] [--out file.csv | --out-dir <dir>] [--post]
+  The monthly official digest: the aggregate disease CSV plus a short text summary
+  (period, resolved total, top diseases, trend against the prior month, advice given,
+  closed without a diagnosis). Only already-aggregated figures are used, every group
+  below the k-anonymity floor is combined, and no case or personal data is included.
+  Defaults to the last completed month (SAST) and to casey-digest-<month>.csv, with
+  the summary beside it as .txt. --out-dir <dir> writes both files into that directory
+      (created if missing; the console lists <data dir>/digests) and cannot be combined
+      with --out. Files are written atomically. --post sends the summary text to CASEY_ALERT_WEBHOOK,
+  an operator-configured endpoint; it is never a message to a contact and fails if the
+  variable is unset. Read-only on the store.`,
+  restore: `casey restore <backup-dir> --yes
+  Put a backup back. Stop casey first. The live data directory is MOVED aside as
+  data.pre-restore-<timestamp> rather than overwritten, so restoring the wrong
+  backup is itself recoverable, and any stale sqlite -wal/-shm sidecar is removed
+  so the restored database cannot have an old write-ahead log replayed over it.`,
+  operators: `casey operators add <username> [--password ...] [--name ...] [--role admin|operator|eco_ranger|animal_health_technician|viewer]
+casey operators list
+casey operators disable <username>
+casey operators enable <username>
+  Dashboard login accounts, from the command line -- the break-glass path when
+  the admin password is lost, and the scripted-provisioning path. Without
+  --password a random one is generated and printed once. Password hashes are
+  never printed.`,
+  router: `casey router create --name <label> [--id <router_id>]
+casey router list
+  Field routers that POST heartbeats and events to /api/router/events and
+  check guest status on /api/router/status. Each router gets a bearer token
+  printed exactly once on create; only its SHA-256 hash is stored.`,
+  'sync-apikey': `casey sync-apikey create --label <name> --scope read:cases,read:links,write:links,import:records
+casey sync-apikey list
+casey sync-apikey revoke <id>
+  Machine credentials for the /api/sync/* API (see EXTERNAL-SYNC.md) -- a
+  SEPARATE credential class from dashboard operator logins, scoped to that one
+  route prefix only. The raw key is printed exactly once on create and is
+  never stored or shown again; only its hash and a display-safe prefix are
+  kept. Revoke sets disabled without deleting the row's history.`,
+  'sync-correlate': `casey sync-correlate [--kind field_visit|farmer|association|follow_up]
+  Scores the cached sync-import file(s) under data/sync-import/ (written by
+  \`casey sync-import\` or POST /api/sync/import) against every real open
+  case/contact, and writes proposed external_link rows for anything at or
+  above the confidence floor. Never confirms a link -- review and confirm in
+  the dashboard cross-link panel. Omit --kind to run every kind that has a
+  cached file.`,
+}
+
+export async function closeAndExit(store, code) {
+  try { await store?.close?.() } catch (e) { console.error('[casey] store close error:', e.message) }
+  process.exit(code)
+}

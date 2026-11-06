@@ -1,0 +1,308 @@
+
+
+import { observation } from './case-writes.js'
+import {
+  checkAdmission, openCaseForInbound, applyInboundSideEffects,
+  applyPreTurnControls, llmDownQueueGate,
+} from './case-intake.js'
+import { carriesArtifact } from './media-intake.js'
+import { detectContactIntent, stripChannelMarkup } from './heuristics.js'
+import { isRealReplyFor } from './reply-key.js'
+import { runAgentTurn } from './turn-attempts.js'
+import {
+  recordDegradedOutcome, correctOutboundRef, clearAiOffline, tagAiOffline,
+  holdReplyForHuman, advanceIntake,
+} from './turn-outcome.js'
+import { resolveAdapter, sendGuaranteedFallback, sendAgentReply } from './delivery.js'
+import { makeTypingIndicator } from './typing.js'
+import { normaliseReply } from './plain-text.js'
+import { decideNotice, composeNotice, recordNoticeShown } from '../first-contact-notice.js'
+import { renderFormProgress, formLabelsFor } from '../progress-line.js'
+import { staffProgressLine } from '../team-focus.js'
+import { caseDeliveryTarget } from './handler.js'
+import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
+import { tryRegisterByCode } from './role-registration.js'
+import { parseReport, tagList } from '../timestamp.js'
+import { controlRegistered, offeredChoices } from './turn-results.js'
+import { speakerState, noteAsked } from '../phone-persons.js'
+import { consentManaged, consentState } from '../phone-consent.js'
+import { noteReturn } from '../return-clarify.js'
+import { areaAskOwed, areaAskValue } from '../area-ask.js'
+import { buildPromptContext, otherFieldsOwed } from './prompt-context.js'
+import { pendingNoticesFor, pendingNoticeNote, markNoticesDelivered } from './pending-notices.js'
+
+const BURST_SETTLE_MS = Math.max(0, Number(process.env.CASEY_BURST_SETTLE_MS ?? 2500) || 0)
+
+const startBurstSettle = (msg) => (carriesArtifact(msg) && BURST_SETTLE_MS
+  ? new Promise(r => setTimeout(r, BURST_SETTLE_MS))
+  : Promise.resolve())
+
+const isControlWord = (msg) => detectContactIntent(stripChannelMarkup(msg.text || '')) !== null
+
+async function intakeOne(receiver, deps, ctx, msg) {
+  const { store, log, admission } = deps
+  const { adapter, channel, external_id, replyTo, platform } = ctx
+  const denied = checkAdmission({ admission, store, log, msg, channel, external_id, replyTo, platform })
+  if (denied) return { done: denied }
+
+  const registered = await tryRegisterByCode({ store, log, adapter, msg, channel, external_id, replyTo, platform })
+  if (registered) return { done: registered }
+
+  const opened = await openCaseForInbound({ store, log, msg, channel, external_id, replyTo, platform, callLLM: deps.callLLM })
+  if (opened.done) return { done: opened.done }
+  const side = (await applyInboundSideEffects({ store, log, caseRow: opened.caseRow, created: opened.created, msg, channel, inboundText: opened.inboundText, media: opened.media })) || {}
+  return { ...opened, ...side }
+}
+
+async function absorbBurst(receiver, deps, ctx, first, msg, settled) {
+  const { admission, store, log } = deps
+  const group = {
+    ids: [first.msgId], inboundText: first.inboundText, typedText: first.typedText, media: first.media,
+    promptNote: first.promptNote || '', ingressRecorded: !!first.ingressRecorded, inboundChoices: first.inboundChoices || null,
+  }
+  if (isControlWord(msg)) return group
+  await settled
+  for (let batch = admission.takeBufferedWhile(ctx.external_id, m => !isControlWord(m)); batch.length; batch = admission.takeBufferedWhile(ctx.external_id, m => !isControlWord(m))) {
+    for (const next of batch) {
+      const got = await intakeOne(receiver, deps, ctx, next)
+      if (got.done) continue
+      group.ids.push(got.msgId)
+      group.inboundText = [group.inboundText, got.inboundText].filter(Boolean).join('\n')
+      group.typedText = [group.typedText, got.typedText].filter(Boolean).join('\n')
+      group.media = [group.media, got.media].filter(Boolean).join(', ')
+      group.promptNote += got.promptNote || ''
+      group.ingressRecorded = group.ingressRecorded || !!got.ingressRecorded
+      group.inboundChoices = got.inboundChoices || group.inboundChoices
+    }
+  }
+  if (group.ids.length > 1) {
+    await store.appendEvent(first.caseRow.id, observation(`BURST-GROUPED: ${group.ids.length} messages (${group.media || 'text'}) were answered in one turn`, { grouped: group.ids })).catch((e) => log.warn?.('[casey] burst group marker failed', { caseId: first.caseRow.id, error: e.message }))
+  }
+  return group
+}
+
+export async function runInboundTurn(receiver, deps, { platform, msg, channel, external_id, replyTo }) {
+  const { store, log, autoRespond, llmStatus, notifyHandoff } = deps
+  const adapter = resolveAdapter(receiver, platform)
+  const ctx = { adapter, channel, external_id, replyTo, platform }
+
+  const settled = startBurstSettle(msg)
+  const first = await intakeOne(receiver, deps, ctx, msg)
+  if (first.done) return first.done
+  const caseRow = first.caseRow
+  const group = await absorbBurst(receiver, deps, ctx, first, msg, settled)
+  const { inboundText, typedText, media, ids: groupIds, promptNote = '', ingressRecorded = false, inboundChoices = null } = group
+  const msgId = first.msgId
+  if (!autoRespond) return { to: replyTo, text: '', platform, caseId: caseRow.id }
+
+  let fresh
+  try { fresh = await store.getCase(caseRow.id) }
+  catch (e) {
+    log.warn?.('[casey] getCase(fresh) failed; continuing with the pre-turn case snapshot', { caseId: caseRow.id, error: e.message })
+    fresh = caseRow
+  }
+
+  const controlled = await applyPreTurnControls({ store, log, llmStatus, notifyHandoff, fresh, typedText, channel, msg, replyTo, platform })
+  if (controlled) return controlled
+  fresh = await store.getCase(fresh.id)
+
+  const contact = fresh.contact_id ? await store.getContact(fresh.contact_id).catch(() => null) : null
+  const events = await store.listEvents(fresh.id)
+  if (events.some(isRealReplyFor(groupIds))) {
+    log.info?.('[casey] these messages already have their reply; nothing sent', { caseId: fresh.id, msgId })
+    return { to: replyTo, text: '', platform, caseId: fresh.id, duplicate: true }
+  }
+  const isVoice = media && /audio|voice/i.test(media)
+  const basePrompt = inboundText || (isVoice
+    ? 'The contact sent a voice note that could not be turned into text. It is saved with their report for the team to listen to. Do not guess what it said and record nothing from it: tell them kindly, in their language, that it is saved and that you cannot hear it yourself, and ask them to type the important facts (or say them again in a short voice note).'
+    : media ? `The contact sent ${media} with no text. Acknowledge and ask how you can help.` : 'The contact sent an empty message. Acknowledge politely.')
+  const prompt = basePrompt + promptNote
+
+  const queued = await llmDownQueueGate({ store, log, llmStatus, fresh, events, msg, msgId, replyTo, platform })
+  if (queued) return queued
+
+  if (msg.burstReplay) {
+    await store.appendEvent(fresh.id, observation('concurrent turn skipped: prior LLM turn still in-flight for this contact; buffered for replay'))
+  }
+
+  const staffSend = typeof receiver?.sendReply === 'function'
+    ? {
+      sendReply: (caseRow, text) => receiver.sendReply(caseRow, text),
+      canSend: (ch) => !!resolveAdapter(receiver, ch)?.send,
+      sendImage: (caseRow, image) => resolveAdapter(receiver, caseRow.channel).sendImage({ to: caseDeliveryTarget(caseRow), ...image }),
+      canSendImage: (ch) => typeof resolveAdapter(receiver, ch)?.sendImage === 'function',
+      sendLocation: (caseRow, location) => resolveAdapter(receiver, caseRow.channel).sendLocation({ to: caseDeliveryTarget(caseRow), ...location }),
+      canSendLocation: (ch) => typeof resolveAdapter(receiver, ch)?.sendLocation === 'function',
+    }
+    : null
+  return await driveAgentTurn(deps, {
+    adapter, fresh, contact, events, prompt, inboundText, typedText, media, groupIds,
+    msg, msgId, channel, external_id, replyTo, platform, staffSend, ingressRecorded, inboundChoices,
+  })
+}
+
+async function driveAgentTurn(deps, {
+  adapter, fresh, contact, events, prompt, inboundText, typedText, media, groupIds,
+  msg, msgId, channel, external_id, replyTo, platform, staffSend = null, ingressRecorded = false, inboundChoices = null,
+}) {
+  const { store, log, callLLM, notifyHandoff } = deps
+
+  try { await store.appendEvent(fresh.id, observation(`TURN-START:${msgId}`)) }
+  catch (e) { log.warn?.('[casey] turn-start marker failed', { caseId: fresh.id, error: e.message }) }
+
+  const isBackgroundRedrive = !!(msg.resume || msg.queuedRedrive)
+  const stopTyping = makeTypingIndicator({ adapter, replyTo, log, caseId: fresh.id, enabled: !isBackgroundRedrive })
+
+  const turnStartedAt = Date.now()
+
+  const isPublic = !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && !!contact?.id
+  const speakerNow = () => (isPublic ? speakerState(store, contact.id).catch(() => null) : Promise.resolve(null))
+  const speakerBefore = await speakerNow()
+  const noticeFor = (caseRow, speaker) => decideNotice(store, { fresh: caseRow, events, contact, speaker })
+    .then(async (n) => (n ? { notice: n, body: await composeNotice(callLLM, n, { inboundText }).catch(() => null) } : null))
+    .catch(() => null)
+  const noticeReady = isBackgroundRedrive ? Promise.resolve(null) : noticeFor(fresh, speakerBefore)
+
+  if (isPublic && !isBackgroundRedrive) await noteReturn(store, { caseRow: fresh, events, contact, msgId }).catch(() => {})
+
+  let askedArea = false
+  if (isPublic && !isBackgroundRedrive && areaAskOwed(fresh)) {
+    const pc = buildPromptContext(fresh, events)
+    askedArea = !otherFieldsOwed(pc)
+      && !(consentManaged() && await consentState(store, contact.id, { caseId: fresh.id }) !== 'agreed')
+  }
+  const owed = await pendingNoticesFor(store, fresh).catch(() => [])
+  const turnPrompt = owed.length ? prompt + pendingNoticeNote(owed) : prompt
+  const turn = await runAgentTurn({
+    store, log, callLLM, msg, fresh, events, contact, inboundText, typedText, prompt: turnPrompt,
+    channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend, ingressRecorded,
+  })
+  const { result, errored, jargonReasons, falseConfirmReasons, adviceReasons, degradedReason } = turn
+
+  if (askedArea && String(turn.text || '').trim()) await store.updateCaseChecked(fresh.id, { pin_ask: areaAskValue(fresh) }).catch(() => {})
+  let text = turn.text
+
+  const endedOnId = turn.activeCase?.id || fresh.id
+
+  const startedOnId = fresh.id
+
+  const wasFlagged = tagList(fresh).includes('needs-human')
+  const handoffAsked = controlRegistered(result, 'case_handoff')
+  const preTurnCase = fresh
+  fresh = await store.getCase(endedOnId).catch(() => null) || await store.getCase(fresh.id).catch(() => fresh)
+
+  if (handoffAsked && !wasFlagged && notifyHandoff) {
+    try { await notifyHandoff({ case: preTurnCase, channel, from: msg.from }) }
+    catch (e) { log.warn?.('[casey] handoff notify failed', { caseId: preTurnCase.id, error: e.message }) }
+  }
+
+  const isFallback = !text
+  if (isFallback) await recordDegradedOutcome({ store, log, fresh, result, errored, degradedReason, contactId: contact?.id, turnStartedAt, channel })
+
+  const degraded = errored || isFallback
+
+  text = await correctOutboundRef({ store, fresh, text, result, inboundText, contact })
+
+  if (text && channel === 'whatsapp') {
+    const plain = normaliseReply(text, { keepLists: atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) })
+    if (plain.changed) {
+      text = plain.text
+      try { await store.appendEvent(fresh.id, observation('REPLY-FORMAT-NORMALISED: markdown syntax rewritten for WhatsApp')) }
+      catch (e) { log.warn?.('[casey] format-normalised marker failed', { caseId: fresh.id, error: e.message }) }
+    }
+  }
+  if (!degraded) await clearAiOffline({ store, log, fresh })
+
+  const held = await holdReplyForHuman({
+    store, log, fresh, notifyHandoff, msg, channel, replyTo, platform,
+    text, isFallback, jargonReasons, falseConfirmReasons, adviceReasons, groupIds,
+  })
+  if (held) { stopTyping(); return held }
+
+  await advanceIntake({ store, log, fresh, inboundText, media, reportLanded: !!fresh?.report, replySending: !isFallback })
+
+  if (startedOnId && startedOnId !== fresh?.id) {
+
+    try { await store.appendEvent(startedOnId, observation(`TURN-HANDED-OFF:${msgId} continued on ${fresh?.ref || fresh?.id}`)) }
+    catch (e) { log.warn?.('[casey] turn hand-off marker failed', { caseId: startedOnId, error: e.message }) }
+    const departed = await store.getCase(startedOnId).catch(() => null)
+    if (departed?.report) {
+      await advanceIntake({ store, log, fresh: departed, inboundText, media, reportLanded: true, replySending: false })
+    }
+  }
+  if (degraded) await tagAiOffline({ store, log, fresh })
+
+  if (msg.queuedRedrive && degraded) {
+    await store.appendEvent(fresh.id, observation('degraded re-drive; still degraded, nothing sent'))
+    return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true }
+  }
+
+  if (isFallback) {
+    if (owed.length) await holdOwedNotices(store, fresh, owed, msgId)
+
+    if (isBackgroundRedrive) {
+      stopTyping()
+      return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true }
+    }
+    return await sendGuaranteedFallback({
+      store, log, adapter, fresh, channel, replyTo, platform,
+      turnStartedAt, stopTyping, groupIds, startedOnId,
+    })
+  }
+
+  let notice = null
+  if (!degraded && !isFallback && text) {
+    let early = await noticeReady
+    if (!isBackgroundRedrive && isPublic) {
+      const after = await speakerNow()
+      if ((after?.current?.id || null) !== (speakerBefore?.current?.id || null)) early = await noticeFor(fresh, after)
+    }
+    notice = early ? early.notice : null
+    const wantsForm = !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && !tagList(fresh).includes('opted-out')
+
+      && !(consentManaged() && isPublic && await consentState(store, contact.id, { caseId: fresh.id }) !== 'agreed')
+    let merged = ''
+    if (wantsForm) {
+
+      const labels = await formLabelsFor(callLLM, parseReport(fresh).language_detected).catch(() => undefined)
+      merged = renderFormProgress(fresh, labels)
+
+      if (merged) text = `${merged}\n\n${text}`
+    }
+    if (atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && contact?.id) {
+      try {
+        const working = await staffProgressLine(store, contact)
+        if (working) text = `${working}\n\n${text}`
+      } catch (e) { log.warn?.('[casey] staff progress line failed; reply sent without it', { caseId: fresh.id, error: e.message }) }
+    }
+    if (notice) {
+      const body = early.body
+      if (body) text = `${text}\n\n${body}`
+      else { notice = null; await store.appendEvent(fresh.id, observation('NOTICE-NOT-COMPOSED: the first-contact notice could not be composed; it is still owed')).catch(() => {}) }
+    }
+  }
+  const staffTier = atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)
+  const offered = staffTier ? (offeredChoices(result) || turn.preChoices || inboundChoices) : null
+  const { reply, delivered } = await sendAgentReply({ store, log, adapter, fresh, channel, replyTo, platform, text, isFallback, degraded, offered, groupIds, startedOnId })
+  if (owed.length) {
+    if (delivered && text && !isFallback) await markNoticesDelivered(store, owed, { msgId }).catch(e => log.warn?.('[casey] notice delivery record failed', { caseId: fresh.id, error: e.message }))
+    else await holdOwedNotices(store, fresh, owed, msgId)
+  }
+
+  if (delivered && notice) {
+    try { await recordNoticeShown(store, fresh.id, notice) }
+    catch (e) { log.warn?.('[casey] notice_shown record failed', { caseId: fresh.id, error: e.message }) }
+  }
+
+  if (delivered && !isBackgroundRedrive && isPublic && turn.speakerAtStart?.needs_ask) {
+    try { const now = await speakerNow(); if (now && !now.current) await noteAsked(store, contact.id) }
+    catch (e) { log.warn?.('[casey] asked-who marker failed', { caseId: fresh.id, error: e.message }) }
+  }
+
+  stopTyping()
+  return reply
+}
+
+async function holdOwedNotices(store, fresh, owed, msgId) {
+  await store.appendEvent(fresh.id, observation(`NOTICE-HELD: ${owed.length} queued notice(s) kept for the next reply; no reply carried them in this turn`, { notice_held: owed.map(i => i.id), in_reply_to: msgId })).catch(() => {})
+}
