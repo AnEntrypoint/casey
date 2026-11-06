@@ -1,0 +1,21 @@
+#!/bin/sh
+here="$(cd "$(dirname "$0")/.." && pwd)"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "[casey hook] pre-push: node not found, skipping lint (cannot verify)"
+  exit 0
+fi
+if [ ! -f "$here/scripts/lint.mjs" ]; then
+  echo "[casey hook] pre-push: scripts/lint.mjs missing, skipping lint (cannot verify)"
+  exit 0
+fi
+
+echo "[casey hook] pre-push: running lint gate..."
+if node "$here/scripts/lint.mjs"; then
+  exit 0
+fi
+
+echo ""
+echo "[casey hook] PUSH BLOCKED -- lint failed above."
+echo "[casey hook] Fix it, or push anyway with: git push --no-verify"
+exit 1

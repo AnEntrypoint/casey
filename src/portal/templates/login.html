@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{login_title}}</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f3f5f7;font-family:system-ui,sans-serif;color:#1d2330}
+main{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.08);padding:24px;width:min(92vw,380px);box-sizing:border-box}
+h1{font-size:1.3rem;margin:0 0 8px}
+p{font-size:.92rem;line-height:1.45;margin:0 0 12px}
+label.f{display:block;font-size:.85rem;margin:14px 0 6px}
+input[type=tel]{width:100%;box-sizing:border-box;padding:10px;font-size:1rem;border:1px solid #c5ccd6;border-radius:8px}
+.tc{display:flex;gap:8px;align-items:flex-start;font-size:.85rem;line-height:1.4;margin-top:14px}
+.tc input{margin-top:3px}
+a{color:#0b6b3a}
+button{width:100%;margin-top:18px;padding:12px;font-size:1rem;border:0;border-radius:8px;background:#128c4a;color:#fff}
+button:disabled{opacity:.6}
+#msg{color:#b3261e;font-size:.88rem;min-height:1.2em;margin-top:10px}
+</style>
+</head>
+<body>
+<main>
+<div id="form">
+<h1>{{login_title}}</h1>
+<p>{{login_intro}}</p>
+<form id="f" autocomplete="off">
+<label class="f" for="phone">WhatsApp number</label>
+<input id="phone" type="tel" inputmode="tel" placeholder="+27 82 123 4567" required>
+<p class="f"><a href="tc.html">Read the Terms and Conditions</a></p>
+<label class="tc"><input id="tc" type="checkbox"><span>{{login_checkbox}}</span></label>
+<button id="go" type="submit">Connect</button>
+<div id="msg" role="alert"></div>
+</form>
+</div>
+<div id="done" hidden>
+<h1>{{done_title}}</h1>
+<p>{{done_text}}</p>
+<p><a href="{{bot_wa_url}}">Open the WhatsApp bot</a></p>
+</div>
+</main>
+<script>
+(function(){
+var LOGIN="$(link-login-only)";
+var f=document.getElementById("f"),phone=document.getElementById("phone"),tc=document.getElementById("tc"),msg=document.getElementById("msg"),go=document.getElementById("go");
+var KEY="uhhPhone",saved="";try{saved=localStorage.getItem(KEY)||""}catch(e){}
+if(saved)phone.value=saved;
+function norm(v){var s=v.replace(/[\s\-()]/g,"");if(/^0\d{9}$/.test(s))s="+27"+s.slice(1);return /^\+\d{8,15}$/.test(s)?s:null}
+f.addEventListener("submit",function(e){
+e.preventDefault();
+msg.textContent="";
+var p=norm(phone.value);
+if(!p){msg.textContent="Enter a valid WhatsApp number with country code.";return}
+if(!tc.checked){msg.textContent="Please accept the terms and conditions.";return}
+go.disabled=true;
+fetch(LOGIN,{method:"POST",mode:"no-cors",body:new URLSearchParams({username:p,password:""})}).then(function(){
+try{localStorage.setItem(KEY,p)}catch(err){}
+f.hidden=true;
+document.getElementById("done").hidden=false;
+}).catch(function(){go.disabled=false;msg.textContent="Could not connect. Please try again."});
+});
+})();
+</script>
+</body>
+</html>
