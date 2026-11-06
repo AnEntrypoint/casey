@@ -6,6 +6,8 @@ import { mountRoutes } from './register.js'
 const PROXY_DROP = new Set(['cookie', 'authorization', 'host', 'connection', 'origin', 'referer', 'accept-encoding', 'keep-alive', 'upgrade', 'proxy-authorization'])
 const PROXY_TIMEOUT_MS = 30e3
 const ROUTER_PAGE_MAX = 500
+const ROUTER_COOKIE = 'uhh_admin_router'
+const ROUTER_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 const bearer = (req) => {
   const m = /^Bearer\s+(.+)$/i.exec(String(req.get('authorization') || '').trim())
@@ -33,6 +35,32 @@ function rewriteLocation(location, ip, prefix) {
 
 function rewriteCookie(cookie, prefix) {
   return cookie.replace(/;\s*Domain=[^;]*/i, '').replace(/;\s*Path=[^;]*/i, '') + `; Path=${prefix}/`
+}
+
+function routerFromCookie(req) {
+  const m = new RegExp(`(?:^|;\\s*)${ROUTER_COOKIE}=([^;]+)`).exec(String(req.headers.cookie || ''))
+  return m && ROUTER_ID.test(m[1]) ? m[1] : ''
+}
+
+function forwardToRouter(req, res, row, routerId, rest) {
+  const prefix = proxyPrefix(routerId)
+  const headers = {}
+  for (const [k, v] of Object.entries(req.headers)) if (!PROXY_DROP.has(k)) headers[k] = v
+  headers.host = row.tunnel_ip
+  const upstream = http.request({ host: row.tunnel_ip, port: 80, path: rest, method: req.method, headers, timeout: PROXY_TIMEOUT_MS }, (up) => {
+    const out = { ...up.headers }
+    if (out.location) out.location = rewriteLocation(String(out.location), row.tunnel_ip, prefix)
+    out['set-cookie'] = [].concat(out['set-cookie'] || []).map(c => rewriteCookie(c, prefix))
+      .concat(`${ROUTER_COOKIE}=${routerId}; Path=/; HttpOnly; SameSite=Strict${req.secure ? '; Secure' : ''}`)
+    res.writeHead(up.statusCode, out)
+    up.pipe(res)
+  })
+  upstream.on('timeout', () => upstream.destroy(new Error('router did not answer in time')))
+  upstream.on('error', () => {
+    if (!res.headersSent) res.status(502).json({ error: 'the router did not answer' })
+    else res.destroy()
+  })
+  req.pipe(upstream)
 }
 
 function getRouterAdmin({ store }) {
@@ -128,28 +156,23 @@ function proxyRouterAdmin({ store }) {
     const routerId = String(req.params.router_id || '')
     const row = await admin.adminRow(store, routerId)
     if (!row || admin.windowRemainingS(row) <= 0) return res.status(423).json({ error: 'admin window closed for this router' })
-    const prefix = proxyPrefix(routerId)
-    const rest = req.originalUrl.slice(prefix.length) || '/'
-    const headers = {}
-    for (const [k, v] of Object.entries(req.headers)) if (!PROXY_DROP.has(k)) headers[k] = v
-    headers.host = row.tunnel_ip
-    const upstream = http.request({ host: row.tunnel_ip, port: 80, path: rest, method: req.method, headers, timeout: PROXY_TIMEOUT_MS }, (up) => {
-      const out = { ...up.headers }
-      if (out.location) out.location = rewriteLocation(String(out.location), row.tunnel_ip, prefix)
-      if (out['set-cookie']) out['set-cookie'] = [].concat(out['set-cookie']).map(c => rewriteCookie(c, prefix))
-      res.writeHead(up.statusCode, out)
-      up.pipe(res)
-    })
-    upstream.on('timeout', () => upstream.destroy(new Error('router did not answer in time')))
-    upstream.on('error', () => {
-      if (!res.headersSent) res.status(502).json({ error: 'the router did not answer' })
-      else res.destroy()
-    })
-    req.pipe(upstream)
+    const rest = req.originalUrl.slice(proxyPrefix(routerId).length) || '/'
+    forwardToRouter(req, res, row, routerId, rest)
   }
   return (req, res) => handle(req, res).catch(() => {
     if (!res.headersSent) res.status(500).json({ error: 'admin proxy failed' })
     else res.destroy()
+  })
+}
+
+export function registerRouterRootFallback(app, { store }) {
+  app.use((req, res, next) => {
+    const routerId = routerFromCookie(req)
+    if (!routerId || req.caseyAccount?.role !== 'admin') return next()
+    admin.adminRow(store, routerId).then((row) => {
+      if (!row || admin.windowRemainingS(row) <= 0) return next()
+      forwardToRouter(req, res, row, routerId, req.originalUrl)
+    }, next)
   })
 }
 

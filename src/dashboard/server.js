@@ -29,6 +29,7 @@ import { registerPersons } from './routes/persons.js'
 import { registerExternalLinks } from './routes/external-links.js'
 import { registerSyncApi } from './routes/sync-api.js'
 import { registerPortal } from './routes/portal.js'
+import { registerRouterRootFallback } from './routes/portal-admin.js'
 import { registerMap } from './routes/map.js'
 import { registerReports } from './routes/reports.js'
 import { registerReportsMap } from './routes/reports-map.js'
@@ -630,6 +631,7 @@ a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};font-size:var(--fs-body);t
     index: 'index.html',
     setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache') },
   }))
+  registerRouterRootFallback(app, deps)
 
   app.use((err, req, res, next) => {
     if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'invalid request body' })
