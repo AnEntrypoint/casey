@@ -9,7 +9,8 @@ const h = webjsx.createElement;
 const TOAST_KIND = { err: 'error', warn: 'warn' };
 
 export function ToastTray() {
-  return h('div', { id: 'toasts', class: 'ds-toast-tray', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'false' },
+  const urgent = state.toasts.some((t) => t.kind === 'err');
+  return h('div', { id: 'toasts', class: 'ds-toast-tray', role: 'status', 'aria-live': urgent ? 'assertive' : 'polite', 'aria-atomic': 'false' },
     ...state.toasts.map((t) => h('div', { key: t.id, class: 'ds-toast-item' },
       Alert({
         kind: TOAST_KIND[t.kind] || 'info',

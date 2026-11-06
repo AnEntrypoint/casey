@@ -123,6 +123,8 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .ds-247420 .app-side-toggle, .ds-247420 .app-status-toggle { padding: 0; }
   .ds-247420 .ds-dialog-x, .ds-247420 .ds-dialog-close, .ds-247420 .ds-icon-btn { min-height: 44px; min-width: 44px; }
   .ds-247420 .ds-ho-ref, .ds-247420 .ds-map-unresolved-row { min-height: 44px; }
+  .ds-247420 .case-row-cbwrap { min-width: 44px; min-height: 44px; }
+  .ds-247420 .ds-filter-pill, #casey-preview-bar button { min-height: 44px; }
 }
 
 @media (pointer: coarse), (max-width: 700px) {
