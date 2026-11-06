@@ -35,7 +35,7 @@ export async function loadCaseDetail(id) {
         setCaseDetail(data);
         loadDuplicateSuggestions(id);
         loadSiteHistory(id);
-        fetchRunConfig(id).then((cfg) => { if (state.activeId === id) setRunConfig(cfg); });
+        fetchRunConfig(id).then((cfg) => { if (state.activeId === id) setRunConfig(cfg); }).catch(() => {});
         for (const f of knownValueFields()) loadKnownValues(f).then(schedule);
     } catch (e) {
         setCaseDetailError((e && e.status === 404)
