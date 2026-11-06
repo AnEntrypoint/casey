@@ -9,11 +9,12 @@ import { word } from '../../words.js';
 const h = webjsx.createElement;
 
 export function loadSiteHistory(caseId) {
-    fetchSiteHistory(caseId).then(j => setSiteHistory((j && j.visits) || [])).catch(() => setSiteHistory([]));
+    fetchSiteHistory(caseId).then(j => setSiteHistory((j && j.visits) || [])).catch(() => setSiteHistory(false));
 }
 
 export function SiteHistoryPanel({ onOpenCase, key } = {}) {
     const visits = state.siteHistory;
+    if (visits === false) return h('div', { key, class: 'casey-site-history' }, h('p', { class: 'casey-hint' }, word('ui.site_history_error')));
     if (!visits || !visits.length) return null;
     const brand = brandName();
     const rows = visits.map(v => [

@@ -53,6 +53,11 @@
   .casey-detail-pane .ds-log-row{flex-wrap:wrap}
   .casey-detail-pane .ds-log-label{min-width:0}
 }
+@media (max-width: 700px){
+  .casey-detail-pane .ds-detail-label{width:auto}
+  .casey-detail-pane .ds-log-row{flex-wrap:wrap}
+  .casey-detail-pane .ds-log-label{min-width:0}
+}
 
 .casey-rep-editable{cursor:text;border-radius:var(--r-0);padding:var(--space-hair) var(--space-1);display:inline-flex;flex-wrap:wrap;align-items:center;min-width:0;gap:var(--space-1-75);transition:background var(--dur-snap) var(--ease)}
 

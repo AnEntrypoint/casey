@@ -97,7 +97,7 @@ export function MetricsPanel() {
         return h('div', {},
             overview ? summaryCards(overview) : Alert({ kind: 'warn', children: h('div', {}, word('ui.metrics_panel_load_failed') + ' ', Btn({ size: 'sm', variant: 'ghost', children: word('ui.panel_load_try_again'), onClick: () => loader.reload() })) }),
             risk ? atRiskByType(risk) : null,
-            report ? byTypeTable(report) : null);
+            report ? (byTypeTable(report) || h('p', { class: 'casey-hint' }, word('ui.metrics_panel_no_types'))) : null);
     });
     return Panel({ children: [exportLinks, body] });
 }
