@@ -18,6 +18,14 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .app-two-pane.has-active > .case-detail-pane { position: fixed; inset: 0; z-index: var(--z-raised); background: var(--bg); }
 }
 
+/* Plain media twins of the @container rules above, so the panes stack at narrow widths without container-type on an ancestor. */
+@media (max-width: 900px) {
+  .app-two-pane { flex-direction: column; }
+  .app-two-pane > .case-list-pane { flex: 1 1 auto; }
+  .app-two-pane.has-active > .case-list-pane { display: none; }
+  .app-two-pane.has-active > .case-detail-pane { position: fixed; inset: 0; z-index: var(--z-raised); background: var(--bg); }
+}
+
 .app-two-pane-map > .case-list-pane { overflow: hidden; display: flex; min-height: 0; flex: 1 1 0; }
 
 .app-two-pane-map > .case-detail-pane {
@@ -27,6 +35,14 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 }
 
 .app-two-pane-map > .ds-pane-toggle { display: none; }
+
+@media (max-width: 900px) {
+  .app-two-pane-map > .ds-pane-toggle {
+    display: flex; margin: var(--space-2) var(--space-3); align-self: flex-start; flex: 0 0 auto;
+  }
+  .app-two-pane-map > .case-list-pane,
+  .app-two-pane-map > .case-detail-pane { flex: 1 1 auto; min-height: 0; max-width: none; }
+}
 
 @container (max-width: 900px) {
   .app-two-pane-map > .ds-pane-toggle {
@@ -853,4 +869,9 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+}
+
+/* The app-bar control height is set on the same element as the base rule, so this comes after it and wins on touch screens. */
+@media (pointer: coarse) {
+  .ds-247420 .ds-appbar { --appbar-ctrl-h: 2.75rem; }
 }

@@ -22,5 +22,5 @@ export function holderName(assignee) {
   const s = String(assignee || '').trim();
   if (!s || s === 'agent') return '';
   if (names && names.has(s)) return names.get(s);
-  return s.startsWith('contact:') ? 'a team member' : s;
+  return 'a team member';
 }
