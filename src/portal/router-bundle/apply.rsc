@@ -43,6 +43,18 @@
 :if ([:len [/ip address find address="192.168.88.1/24"]] = 0) do={ /ip address add address=192.168.88.1/24 interface=mgmt network=192.168.88.0 comment=defconf }
 :if ([:len [/ip address find address="10.10.10.1/24"]] = 0) do={ /ip address add address=10.10.10.1/24 interface=guest network=10.10.10.0 comment=uhh-guest }
 :if ([:len [/ip dhcp-client find interface=wifi1]] = 0) do={ /ip dhcp-client add interface=wifi1 }
+:global uhhPrimaryUplink
+:if ([:typeof $uhhPrimaryUplink] != "str") do={ :global uhhPrimaryUplink "lte1" }
+:local lteD 2
+:local wifiD 1
+:if ($uhhPrimaryUplink = "lte1") do={ :set lteD 1; :set wifiD 2 }
+:if ([:len [/interface lte apn find name=default]] > 0) do={
+  :if ([/interface lte apn get [find name=default] default-route-distance] != $lteD) do={ /interface lte apn set [find name=default] default-route-distance=$lteD }
+}
+:if ([:len [/ip dhcp-client find interface=wifi1]] > 0) do={
+  :if ([/ip dhcp-client get [find interface=wifi1] default-route-distance] != $wifiD) do={ /ip dhcp-client set [find interface=wifi1] default-route-distance=$wifiD }
+}
+:log info ("uhh-uplink: primary " . $uhhPrimaryUplink)
 
 :if ([:len [/ip pool find name=guest-pool]] = 0) do={ /ip pool add name=guest-pool ranges=10.10.10.10-10.10.10.254 }
 :if ([:len [/ip dhcp-server find name=guest-dhcp]] = 0) do={ /ip dhcp-server add name=guest-dhcp interface=guest address-pool=guest-pool disabled=no }
@@ -86,7 +98,7 @@
 /ip service set api-ssl address=192.168.88.0/24
 /ip service set www-ssl address=192.168.88.0/24 certificate=uhh-hs
 
-:foreach c in={"uhh:f-dns-u";"uhh:f-dns-t";"uhh:f-uhh";"uhh:f-wa-t";"uhh:f-wa-u";"uhh:f-drop";"uhh:i-dns-dhcp";"uhh:i-dns-t";"uhh:i-hs";"uhh:i-drop";"uhh:i-wg"} do={
+:foreach c in={"uhh:f-dns-u";"uhh:f-dns-t";"uhh:f-uhh";"uhh:f-wa-t";"uhh:f-wa-u";"uhh:f-drop";"uhh:i-dns-dhcp";"uhh:i-dns-t";"uhh:i-hs";"uhh:i-drop";"uhh:i-wg";"uhh:i-wg-listen"} do={
   /ip firewall filter remove [find comment=$c]
 }
 :local inA [/ip firewall filter find comment="defconf: drop all not coming from LAN"]
@@ -98,6 +110,7 @@
 /ip firewall filter add chain=input in-interface=guest action=drop comment=uhh:i-drop place-before=$inA
 :if ([:len [/interface wireguard find name=uhh-admin]] = 0) do={ /interface wireguard add name=uhh-admin listen-port=13231 disabled=yes comment=uhh-admin }
 /ip firewall filter add chain=input in-interface=uhh-admin action=accept comment=uhh:i-wg place-before=$inA
+/ip firewall filter add chain=input protocol=udp dst-port=13231 action=accept comment=uhh:i-wg-listen place-before=$inA
 /ip firewall filter add chain=forward in-interface=guest protocol=tcp dst-address-list=wa-ranges dst-port=443,5222,5223,4244 action=accept comment=uhh:f-wa-t place-before=$fwA
 /ip firewall filter add chain=forward in-interface=guest protocol=udp dst-address-list=wa-ranges dst-port=443,3478-3481 action=accept comment=uhh:f-wa-u place-before=$fwA
 /ip firewall filter add chain=forward in-interface=guest action=drop comment=uhh:f-drop place-before=$fwA
