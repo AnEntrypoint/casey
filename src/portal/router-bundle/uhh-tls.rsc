@@ -1,6 +1,7 @@
 :global uhhBase
 :global uhhToken
 :global uhhPortalHost
+:if ([:typeof $uhhPortalHost] != "str") do={ :global uhhPortalHost "www.ubuntudashboard.co.za" }
 :local auth ("Authorization: Bearer " . $uhhToken)
 :local base ($uhhBase . "/api/router/bundle/")
 :local fetched 0
@@ -23,6 +24,7 @@
       /file set [find name=($f . ".new")] name=$f
     }
     :if ([:len [/certificate find name=uhh-portal]] > 0) do={ /certificate remove [find name=uhh-portal] }
+    /certificate remove [find name~"^portal-cert.pem_"]
     /certificate import file-name=portal-cert.pem passphrase=""
     /certificate import file-name=portal-key.pem passphrase=""
     /certificate set [find common-name=$uhhPortalHost] name=uhh-portal
