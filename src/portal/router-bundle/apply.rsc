@@ -125,7 +125,8 @@
 
 :if ([:len [/system scheduler find name=uhh-wa-refresh]] = 0) do={ /system scheduler add name=uhh-wa-refresh interval=1d start-time=03:17:00 on-event="/system script run uhh-wa-refresh" policy=ftp,read,write,policy,test,sensitive }
 :if ([:len [/system scheduler find name=uhh-gate]] = 0) do={ /system scheduler add name=uhh-gate interval=1m start-time=startup on-event="/system script run uhh-gate" policy=ftp,read,write,policy,test,sensitive }
-:if ([:len [/system scheduler find name=uhh-sync]] = 0) do={ /system scheduler add name=uhh-sync interval=5m start-time=startup on-event="/system script run uhh-sync" policy=ftp,read,write,policy,test,sensitive }
+:if ([:len [/system scheduler find name=uhh-sync]] = 0) do={ /system scheduler add name=uhh-sync interval=15m start-time=startup on-event="/system script run uhh-sync" policy=ftp,read,write,policy,test,sensitive }
+/system scheduler set [find name=uhh-sync] interval=15m
 :if ([:len [/system scheduler find name=uhh-usage]] = 0) do={ /system scheduler add name=uhh-usage interval=($uhhUsageIntervalS . "s") start-time=startup on-event="/system script run uhh-usage" policy=ftp,read,write,policy,test,sensitive }
 :if ([:len [/system scheduler find name=uhh-tls]] = 0) do={ /system scheduler add name=uhh-tls interval=1d start-time=04:11:00 on-event="/system script run uhh-tls" policy=ftp,read,write,policy,test,sensitive }
 :if ([:len [/system scheduler find name=uhh-register]] = 0) do={ /system scheduler add name=uhh-register interval=1m start-time=startup on-event="/system script run uhh-register" policy=ftp,read,write,policy,test,sensitive }
