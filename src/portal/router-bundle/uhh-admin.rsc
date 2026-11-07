@@ -2,7 +2,9 @@
 :global uhhToken
 :global uhhTls
 :global uhhAdminUntil
+:global uhhAdminNext
 :if ([:typeof $uhhAdminUntil] != "num") do={ :global uhhAdminUntil 0 }
+:if ([:typeof $uhhAdminNext] != "num") do={ :global uhhAdminNext 0 }
 :local epochOf do={
   :local yy [:tonum [:pick $1 0 4]]
   :local mm [:tonum [:pick $1 5 7]]
@@ -24,14 +26,17 @@
 :local ep ""
 :local hubPub ""
 :local tip ""
-:do {
-  :local r [/tool/fetch url=($uhhBase . "/api/router/admin?pub=" . $pub) http-method=get http-header-field=("authorization:Bearer " . $uhhToken) output=user as-value check-certificate=$uhhTls]
-  :local d [:deserialize from=json value=[:tostr ($r->"data")]]
-  :set ttl [:tonum ($d->"ttl_s")]
-  :set ep [:tostr ($d->"endpoint")]
-  :set hubPub [:tostr ($d->"hub_pub")]
-  :set tip [:tostr ($d->"tunnel_ip")]
-} on-error={ :set ttl -1 }
+:if ((([/interface wireguard get $ifc disabled]) = false) || ($nowE >= $uhhAdminNext)) do={
+  :set uhhAdminNext ($nowE + 300)
+  :do {
+    :local r [/tool/fetch url=($uhhBase . "/api/router/admin?pub=" . $pub) http-method=get http-header-field=("authorization:Bearer " . $uhhToken) output=user as-value check-certificate=$uhhTls]
+    :local d [:deserialize from=json value=[:tostr ($r->"data")]]
+    :set ttl [:tonum ($d->"ttl_s")]
+    :set ep [:tostr ($d->"endpoint")]
+    :set hubPub [:tostr ($d->"hub_pub")]
+    :set tip [:tostr ($d->"tunnel_ip")]
+  } on-error={ :set ttl -1 }
+}
 :if ($ttl = 0) do={ :set uhhAdminUntil 0 }
 :local colon [:find $ep ":"]
 :if (($ttl > 0) && ($hubPub != "") && ($tip != "") && ([:typeof $colon] = "num")) do={

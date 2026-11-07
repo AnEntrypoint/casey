@@ -6,8 +6,10 @@
 :global uhhUsageIntervalS
 :global uhhHeartbeatIntervalS
 :global uhhUsageTick
+:global uhhUsageLastBody
 /system script run uhh-config
 :if ([:typeof $uhhUsageTick] != "num") do={ :global uhhUsageTick 0 }
+:if ([:typeof $uhhUsageLastBody] != "str") do={ :global uhhUsageLastBody "" }
 :set uhhUsageTick ($uhhUsageTick + 1)
 :local addressOfMac do={
   :local ip ""
@@ -58,7 +60,11 @@
 }
 :local usageAccepted true
 :if ([:len $samples] > 0) do={
-  :set usageAccepted [$postJson "/api/router/usage" [:serialize to=json value={"router_id"=$uhhRouterId; "samples"=$samples}]]
+  :local usageBody [:serialize to=json value={"router_id"=$uhhRouterId; "samples"=$samples}]
+  :if ($usageBody != $uhhUsageLastBody) do={
+    :set usageAccepted [$postJson "/api/router/usage" $usageBody]
+    :if ($usageAccepted = true) do={ :global uhhUsageLastBody $usageBody }
+  }
 }
 :local retainMacs $instanceMacs
 :if ($usageAccepted = true) do={
