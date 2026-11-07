@@ -49,7 +49,7 @@
 :local wifiD 1
 :if ($uhhPrimaryUplink = "lte1") do={ :set lteD 1; :set wifiD 2 }
 :if ([:len [/interface lte apn find name=default]] > 0) do={
-  :if ([/interface lte apn get [find name=default] default-route-distance] != $lteD) do={ /interface lte apn set [find name=default] default-route-distance=$lteD }
+  :if ([/interface lte apn get [find name=default] default-route-distance] != $lteD) do={ /interface lte apn set [find name=default] default-route-distance=$lteD; /interface lte set lte1 disabled=yes; /interface lte set lte1 disabled=no }
 }
 :if ([:len [/ip dhcp-client find interface=wifi1]] > 0) do={
   :if ([/ip dhcp-client get [find interface=wifi1] default-route-distance] != $wifiD) do={ /ip dhcp-client set [find interface=wifi1] default-route-distance=$wifiD }
