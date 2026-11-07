@@ -437,53 +437,12 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     res.send(`
 const VERSION = '${SHELL_BUILD_ID}'
 const CACHE = 'casey-shell-' + VERSION
-// Derived at boot from index.html's own stylesheet/preload/script tags and its
-// resolved module graph, not written out by hand -- the hand-written copy had
-// already drifted from the page.
-//
-// THE MODULE GRAPH IS IN HERE, and it has to be. It used to be left out, on the
-// argument that a module joins this cache the first time it is asked for. What
-// actually asked for it on a first visit was the unconditional reload that
-// index.html fired when the worker claimed the page -- and that reload is gone,
-// because on a first visit nothing has been superseded and reloading cost a
-// second parse and execute of the whole graph. Witnessed after removing it,
-// server killed following one online visit: the reload served the cached shell
-// (title, boot notice, DOMContentLoaded 218 ms) while #app had 0 children and no
-// header rendered, because Cache Storage held 16 entries and not one module. An
-// operator whose first visit is their only online moment had a shell and no app.
-//
-// Precaching the graph was ruled out before because install fetched with
-// cache: 'reload', which made it a second full download of everything. The
-// install fetch is a default one now (see the handler below), so these are
-// conditional requests against the entries the page has just filled: the
-// operator pays request headers and a 304, not a body. That is what makes the
-// offline guarantee affordable rather than theoretical.
 const PRECACHE = ${JSON.stringify([
       SHELL_ENTRY, '/offline.html', '/icon.svg', '/manifest.json',
       ...SHELL_ASSET_URLS, ...SHELL_MODULE_URLS,
     ])}
+const SHELL_URLS = new Set(PRECACHE)
 
-// A DEFAULT fetch, deliberately NOT cache: 'reload'.
-//
-// This used to force one, and it doubled every first load on the wire.
-// The install runs while the page that registered the worker is still up, so
-// every URL below is one the browser fetched seconds ago; cache: 'reload'
-// bypasses the HTTP cache entirely and pulls a second full copy of the whole
-// shell. Measured cold at the socket, 290 requests: 1,328,304 bytes, with 142 of
-// the 148 shell URLs downloaded exactly twice -- 247420.css alone arrived as
-// 415,814 bytes instead of 207,908. On the metered rural link this deployment
-// targets that is the difference between about 39 s and about 71 s of transfer
-// at 150 kbps, for no new bytes.
-//
-// The hazard it was guarding -- a NEW build's precache filled from the browser's
-// HTTP cache entry for the OLD one -- is already closed by the response headers
-// every one of these URLs carries: no-cache or max-age=0, each with an ETag or
-// Last-Modified. Both directives mean the browser MUST revalidate before reuse,
-// so a default fetch either gets a 304 that the server has just asserted is the
-// current build's bytes, or it gets the new body. There is no path by which it
-// silently returns stale content, which is why the version-scoping scheme
-// survives the change. If a future route ever serves a shell asset with a real
-// max-age, that route -- not this fetch -- is the thing to fix.
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => Promise.all(PRECACHE.map((u) =>
     fetch(u)
@@ -495,15 +454,9 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys()
     .then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-    // A worker that used to cache /report leaves those entries behind under a
-    // cache name this build may still be using, and version-scoping alone does
-    // not reach them: the id is derived from public/ and the linked bundles, so
-    // a change to the fetch rule here does not rename the cache. The handler
-    // below no longer reads them, but a report's contents sitting on a shared
-    // handset is the point, so they are deleted rather than orphaned.
     .then(() => caches.open(CACHE))
     .then((c) => c.keys().then((rs) => Promise.all(rs
-      .filter((r) => { const p = new URL(r.url).pathname; return p === '/report' || p.toLowerCase().startsWith('/media/') })
+      .filter((r) => !SHELL_URLS.has(new URL(r.url).pathname))
       .map((r) => c.delete(r)))))
     .then(() => self.clients.claim()))
 })
@@ -513,41 +466,18 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return
   const url = new URL(req.url)
   if (url.origin !== self.location.origin) return
-  // A range request is a partial body; storing or replaying one is wrong.
   if (req.headers.has('range')) return
-  // Never cached, ever: this is the live case data.
   if (url.pathname.startsWith('/api/')) {
     e.respondWith(fetch(req).catch(() => new Response(
       JSON.stringify({ error: 'offline' }),
       { status: 503, headers: { 'content-type': 'application/json' } })))
     return
   }
-  // The update check must reach the network or the worker can never be replaced.
-  if (url.pathname === '/sw.js') return
-  if (url.pathname === '/site' || url.pathname.startsWith('/site/')) return
   if (${JSON.stringify(!!PUBLIC_SITE_ROOT)} && url.pathname === '/') {
     e.respondWith(fetch(req).catch(() => caches.open(CACHE).then((c) => c.match(${JSON.stringify(SHELL_ENTRY)})).then((hit) => hit || offlineFallback(req))))
     return
   }
-  // Basemap tiles: straight to the network, never into this cache. The bounded
-  // cache is the server's; see the note above the /sw.js route. Left entirely
-  // to the browser's own HTTP cache, which honours the Cache-Control the tile
-  // route passes through from upstream and is bounded by the browser itself.
-  if (url.pathname.startsWith('/tiles/')) return
-  // Photo and voice-note bytes are case data behind a session. Cached here they would be
-  // handed to the next person on a shared handset with no login at all (cache-first, no
-  // network, no cookie), so they go to the network like /api/ and are never stored.
-  if (url.pathname.toLowerCase().startsWith('/media/')) return
-  // The public report form is live per-case data on an unauthenticated URL, so
-  // it belongs with /api/ above and not with the shell. Cached, it did two
-  // wrong things at once: a reporter who came back to their own reference was
-  // served the answers as they stood at their first visit, with no sign that
-  // anything had moved since, and a named person's whole report -- species,
-  // place, directions, owner name and number -- stayed readable on the handset
-  // from Cache Storage with no network and no session, which on a shared rural
-  // phone is the exact exposure the form's own sessionStorage draft rule
-  // already refuses to create.
-  if (url.pathname === '/report') {
+  if (!SHELL_URLS.has(url.pathname)) {
     e.respondWith(fetch(req).catch(() => offlineFallback(req)))
     return
   }
@@ -560,11 +490,6 @@ self.addEventListener('fetch', (e) => {
   })))
 })
 
-// A navigation that cannot reach the network gets the offline page; anything
-// else gets a network error. The cache lookup is guarded because respondWith
-// REJECTS on an undefined resolution -- an install whose /offline.html fetch
-// failed would otherwise turn every offline navigation into the browser's own
-// error page rather than this deployment's.
 function offlineFallback(req) {
   if (req.mode !== 'navigate') return Response.error()
   return caches.open(CACHE).then((c) => c.match('/offline.html')).then((hit) => hit || Response.error())
@@ -589,17 +514,8 @@ a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};font-size:var(--fs-body);t
 <script>
 (function () {
   var retry = document.getElementById('retry');
-  // location is the URL that was actually asked for -- the service worker
-  // answers the failed navigation with this document's bytes without changing
-  // the address -- so reloading returns the reader to their own page rather
-  // than to the dashboard root the static href names for the no-script case.
-  //
-  // Reached at its own address instead, this page is not standing in for
-  // anything and there is nothing to return to: retrying would reload the
-  // apology, and the recovery watch below would do it on a timer forever. So
-  // both are off in that case and the static link to the dashboard stands.
-  var standingIn = location.pathname !== '/offline.html';
-  if (!standingIn) return;
+  var reachedAsFallback = location.pathname !== '/offline.html';
+  if (!reachedAsFallback) return;
   retry.setAttribute('href', location.href);
   retry.addEventListener('click', function (e) { e.preventDefault(); location.reload(); });
   document.getElementById('watching').textContent = 'Checking for a connection every few seconds.';
