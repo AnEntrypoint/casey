@@ -2,6 +2,7 @@ import { unpack } from 'msgpackr'
 import { normaliseMac, parseEvents, recordEvents, routerStatus } from './portal-store.js'
 import { parseHealth, recordHealth, latestHealth } from './portal-health.js'
 import { parseUsageSamples, ingestUsage, USAGE_SAMPLES_MAX } from './portal-usage.js'
+import { validWgKey } from './portal-admin.js'
 
 export const CYCLE_EVENTS_MAX = 200
 export const STATUS_BATCH_MAX = 50
@@ -56,6 +57,11 @@ export function parseCycle(body) {
     if (shaped.error) return fail(shaped.error, shaped.field)
     health = shaped.health
   }
+  let pub
+  if (body.p !== undefined) {
+    if (!validWgKey(body.p)) return fail('p must be a WireGuard public key', 'p')
+    pub = body.p
+  }
   const eventRows = body.e === undefined ? [] : body.e
   if (!isArray(eventRows)) return fail('e must be an array', 'e')
   if (eventRows.length > CYCLE_EVENTS_MAX) return { ...fail(`at most ${CYCLE_EVENTS_MAX} events per request`, 'e'), tooLarge: true }
@@ -71,7 +77,7 @@ export function parseCycle(body) {
   }
   const checkedEvents = parseEvents(events)
   if (checkedEvents.error) return fail(checkedEvents.error, 'e')
-  return { cycle: { cv, samples: usage.samples, health, events: checkedEvents.events } }
+  return { cycle: { cv, samples: usage.samples, health, events: checkedEvents.events, pub } }
 }
 
 export async function applyCycle(store, router, cycle, now = new Date().toISOString()) {

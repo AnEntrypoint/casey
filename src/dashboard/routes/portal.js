@@ -9,6 +9,7 @@ import { purgeIfDue } from '../../portal/portal-retention.js'
 import { createWaPrefixSource, waPrefixesText } from '../../portal/portal-wa-prefixes.js'
 import { decodeBody, parseCycle, applyCycle, parseStatusBatch, statusBatch } from '../../portal/portal-cycle.js'
 import * as bootstrap from '../../portal/router-provisioning.js'
+import * as admin from '../../portal/portal-admin.js'
 import express from 'express'
 
 const BAD_MAC = 'mac must be AA:BB:CC:DD:EE:FF'
@@ -283,14 +284,21 @@ export function postRouterCycle({ store }) {
     const counts = await applyCycle(store, router, parsed.cycle)
     const effective = await portalSettings.effectiveSettings(store, router.router_id)
     const caps = await dailyCaps(store, { routerId: router.router_id, capBytesFor: async () => capBytesFromMb(effective.daily_cap_mb) })
-    res.status(202).json({
+    const answer = {
       ok: true,
       usage: counts.usage,
       events: counts.events,
       heartbeat: counts.heartbeat,
       cv: portalSettings.configVersion(effective),
       caps: caps.map(({ mac, used_bytes, cap_bytes }) => ({ mac, used_bytes, cap_bytes })),
-    })
+    }
+    if (parsed.cycle.pub) {
+      answer.admin = await admin.adminPoll(store, router.router_id, parsed.cycle.pub, {
+        endpoint: process.env.CASEY_ADMIN_HUB_ENDPOINT,
+        hubPub: process.env.CASEY_ADMIN_HUB_PUBKEY,
+      })
+    }
+    res.status(202).json(answer)
   }
 }
 
