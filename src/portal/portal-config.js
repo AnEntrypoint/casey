@@ -29,6 +29,7 @@ const SCHEMA = Object.freeze({
   idle_usage_interval_s: { type: 'int', min: 60, max: 86400, label: 'Idle usage interval (seconds)', help: 'How often a router reports counters while no client is connected. Equal to the usage interval changes nothing.' },
   idle_heartbeat_interval_s: { type: 'int', min: 60, max: 86400, label: 'Idle heartbeat interval (seconds)', help: 'How often a router reports health while no client is connected. Equal to the heartbeat interval changes nothing.' },
   idle_sync_interval_s: { type: 'int', min: 60, max: 86400, label: 'Idle sync interval (seconds)', help: 'How often a router on the fallback protocol fetches settings while no client is connected. Equal to the usage interval changes nothing.' },
+  daily_cap_mb: { type: 'int', min: 1, max: 1000, serverOnly: true, label: 'Daily data cap (MB)', help: 'Data one guest device may use per day, up and down together, in MB of 1,048,576 bytes. The day resets at midnight in Johannesburg, and the cap is enforced while the device is in use.' },
   guest_ssid: { type: 'ssid', maxBytes: 32, label: 'Guest Wi-Fi name', help: 'The network name guests see, up to 32 bytes.' },
   walled_garden: { type: 'domains', maxItems: 100, label: 'Walled garden', help: 'Domains reachable before registration, one per line. Wildcards such as *.example.com are allowed.' },
   wa_asn: { type: 'asn', label: 'WhatsApp ASN', help: 'Autonomous system number that carries WhatsApp traffic, for example AS32934.' },
@@ -64,7 +65,7 @@ export function loadDefaults(env = process.env) {
 }
 
 const SETTING_KEYS = Object.freeze(Object.keys(SCHEMA))
-const ROUTER_KEYS = Object.freeze(SETTING_KEYS.filter(key => SCHEMA[key].type !== 'text'))
+const ROUTER_KEYS = Object.freeze(SETTING_KEYS.filter(key => SCHEMA[key].type !== 'text' && !SCHEMA[key].serverOnly))
 
 const describe = (spec) => {
   if (spec.type === 'int') return `a whole number from ${spec.min} to ${spec.max}`

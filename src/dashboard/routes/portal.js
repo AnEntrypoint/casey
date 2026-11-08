@@ -4,7 +4,7 @@ import * as portal from '../../portal/portal-store.js'
 import * as portalSettings from '../../portal/portal-config.js'
 import { ASSET_NAMES, renderAsset } from '../../portal/portal-render.js'
 import { HEARTBEAT_BYTES_MAX, parseHealth, recordHealth, healthRows, latestHealth } from '../../portal/portal-health.js'
-import { DAY_MS, BUCKETS, USAGE_SAMPLES_MAX, parseUsageSamples, ingestUsage, parseWindow, parseUsageFilter, usageReport, registeredPhone } from '../../portal/portal-usage.js'
+import { DAY_MS, BUCKETS, USAGE_SAMPLES_MAX, parseUsageSamples, ingestUsage, parseWindow, parseUsageFilter, usageReport, registeredPhone, dailyCaps, sastDayStart, capBytesFromMb } from '../../portal/portal-usage.js'
 import { purgeIfDue } from '../../portal/portal-retention.js'
 import { createWaPrefixSource, waPrefixesText } from '../../portal/portal-wa-prefixes.js'
 import { decodeBody, parseCycle, applyCycle, parseStatusBatch, statusBatch } from '../../portal/portal-cycle.js'
@@ -218,12 +218,22 @@ export function getPortalUsage({ store, authed }) {
     if (filter.error) return res.status(400).json({ error: filter.error, field: filter.field })
     const bucket = query.bucket === undefined || query.bucket === '' ? 'hour' : query.bucket
     if (!BUCKETS.includes(bucket)) return res.status(400).json({ error: 'bucket must be hour or day', field: 'bucket' })
+    const now = Date.now()
     const report = await usageReport(store, { ...filter, ...range, bucket })
     const devices = await Promise.all(report.devices.map(async (device) => ({
       ...device,
       phone_e164: await registeredPhone(store, device.router_id, device.mac),
     })))
-    res.json({ bucket, series: report.series, devices })
+    const caps = await dailyCaps(store, {
+      routerId: filter.routerId,
+      now,
+      capBytesFor: async (routerId) => capBytesFromMb((await portalSettings.effectiveSettings(store, routerId)).daily_cap_mb),
+    })
+    const today = await Promise.all(caps.filter((cap) => !filter.mac || cap.mac === filter.mac).map(async (cap) => ({
+      ...cap,
+      phone_e164: await registeredPhone(store, cap.router_id, cap.mac),
+    })))
+    res.json({ bucket, series: report.series, devices, daily: { day_start: sastDayStart(now), devices: today } })
   }
 }
 
@@ -272,7 +282,15 @@ export function postRouterCycle({ store }) {
     await purgeIfDue(store).catch(e => { console.error('[portal] retention purge failed', String(e?.message || e)); return 0 })
     const counts = await applyCycle(store, router, parsed.cycle)
     const effective = await portalSettings.effectiveSettings(store, router.router_id)
-    res.status(202).json({ ok: true, usage: counts.usage, events: counts.events, heartbeat: counts.heartbeat, cv: portalSettings.configVersion(effective) })
+    const caps = await dailyCaps(store, { routerId: router.router_id, capBytesFor: async () => capBytesFromMb(effective.daily_cap_mb) })
+    res.status(202).json({
+      ok: true,
+      usage: counts.usage,
+      events: counts.events,
+      heartbeat: counts.heartbeat,
+      cv: portalSettings.configVersion(effective),
+      caps: caps.map(({ mac, used_bytes, cap_bytes }) => ({ mac, used_bytes, cap_bytes })),
+    })
   }
 }
 

@@ -22,7 +22,7 @@ const RANGES = [
 let rangeId = RANGES[0].id;
 let routerId = '';
 let macFilter = '';
-let usage = { series: [], devices: [] };
+let usage = { series: [], devices: [], daily: [] };
 
 const activeRange = () => RANGES.find((r) => r.id === rangeId) || RANGES[0];
 const totalOf = (device) => (device.up_bytes || 0) + (device.down_bytes || 0);
@@ -36,7 +36,7 @@ const loader = createPanelLoader({
     const range = activeRange();
     return fetchPortalUsage({ router_id: routerId, mac: macFilter, since: hoursAgoIso(range.hours), bucket: range.bucket });
   },
-  apply: (j) => { usage = { series: j.series || [], devices: j.devices || [] }; },
+  apply: (j) => { usage = { series: j.series || [], devices: j.devices || [], daily: (j.daily && j.daily.devices) || [] }; },
 });
 
 function selectDevice(device) {
@@ -62,6 +62,33 @@ function deviceRow(d) {
     formatBytes(d.up_bytes),
     formatBytes(d.down_bytes),
   ];
+}
+
+function dailyRow(d) {
+  return [
+    d.mac,
+    d.phone_e164 ? fmtPhone(d.phone_e164) : '-',
+    formatBytes(d.used_bytes),
+    formatBytes(d.remaining_bytes),
+    d.cap_hit_at ? whenText(d.cap_hit_at) : '-',
+  ];
+}
+
+function DailyCaps() {
+  const daily = usage.daily;
+  return Section({
+    title: word('ui.portal_usage_daily_title'), headingLevel: 3, children: [
+      h('p', { class: 'casey-hint' }, word('ui.portal_usage_daily_hint')),
+      ...daily.filter((d) => d.capped).map((d) => h('p', { class: 'casey-hint', role: 'status' }, word('ui.portal_usage_cap_notice', { mac: d.mac }))),
+      h('div', { class: 'portal-device-table' }, Table({
+        headers: [
+          word('ui.routers_panel_h_mac'), word('ui.portal_usage_h_phone'), word('ui.portal_usage_h_used_today'),
+          word('ui.portal_usage_h_remaining_today'), word('ui.portal_usage_h_cap_reached'),
+        ],
+        rows: daily.map(dailyRow),
+        emptyText: word('ui.portal_usage_daily_empty'),
+      })),
+    ] });
 }
 
 function Controls(routers) {
@@ -92,6 +119,7 @@ function Body() {
       Btn({ variant: 'ghost', size: 'sm', children: word('ui.portal_usage_show_all'), onClick: clearDevice })) : null,
     UsageChart({ buckets, bucket: range.bucket }),
     h('p', { class: 'casey-hint' }, word('ui.portal_usage_totals', { down: formatBytes(down), up: formatBytes(up) })),
+    DailyCaps(),
     Section({
       title: word('ui.portal_usage_devices'), headingLevel: 3, children: [
         h('p', { class: 'casey-hint' }, word('ui.portal_usage_click_hint')),

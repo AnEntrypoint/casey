@@ -138,6 +138,59 @@ export async function usageReport(store, { routerId = null, mac = null, since, u
   return { series: bucketSeries(deltas, bucket), devices: deviceTotals(deltas) }
 }
 
+export const SAST_OFFSET_MS = 2 * 3600e3
+export const BYTES_PER_MB = 1024 * 1024
+
+export const capBytesFromMb = (mb) => mb * BYTES_PER_MB
+
+export const sastDayStart = (now) => new Date(Math.floor((now + SAST_OFFSET_MS) / DAY_MS) * DAY_MS - SAST_OFFSET_MS).toISOString()
+
+const safeJson = (text) => {
+  try { return JSON.parse(text) } catch { return null }
+}
+
+const eventDetail = (row) => {
+  const detail = typeof row.detail === 'string' ? safeJson(row.detail) : row.detail
+  return detail && typeof detail === 'object' ? detail : {}
+}
+
+export async function capHitTimes(store, { routerId = null, since, until }) {
+  const where = { type: 'cutoff', received_at: { $gte: since, $lte: until } }
+  if (routerId) where.router_id = routerId
+  const rows = await store.t.list(TABLE.events, where, { limit: USAGE_ROWS_MAX, sort: [{ field: 'received_at', dir: 'ASC' }] })
+  const hits = new Map()
+  for (const row of rows) {
+    if (!row.mac || eventDetail(row).reason !== 'daily_cap') continue
+    const key = `${row.router_id}|${row.mac}`
+    if (!hits.has(key)) hits.set(key, isoOrNull(row.ts) ?? isoOrNull(row.received_at))
+  }
+  return hits
+}
+
+export async function dailyCaps(store, { routerId = null, capBytesFor, now = Date.now() }) {
+  const since = sastDayStart(now)
+  const until = new Date(now).toISOString()
+  const totals = deviceTotals(await usageDeltas(store, { routerId, since, until }))
+  const hits = await capHitTimes(store, { routerId, since, until })
+  const capByRouter = new Map()
+  const out = []
+  for (const device of totals) {
+    if (!capByRouter.has(device.router_id)) capByRouter.set(device.router_id, await capBytesFor(device.router_id))
+    const cap = capByRouter.get(device.router_id)
+    const used = device.up_bytes + device.down_bytes
+    out.push({
+      router_id: device.router_id,
+      mac: device.mac,
+      used_bytes: used,
+      cap_bytes: cap,
+      remaining_bytes: Math.max(0, cap - used),
+      capped: used >= cap,
+      cap_hit_at: hits.get(`${device.router_id}|${device.mac}`) ?? null,
+    })
+  }
+  return out
+}
+
 export async function registeredPhone(store, routerId, mac) {
   const [registration] = await store.t.list(TABLE.registrations, { router_id: routerId, mac }, { limit: 1, sort: [{ field: 'registered_at', dir: 'DESC' }] })
   return registration?.phone_e164 || null
