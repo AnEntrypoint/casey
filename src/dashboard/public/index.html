@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en" class="ds-247420"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="casey">
+<meta name="theme-color" content="#3b6ea5">
+<meta name="casey-tile-url" content="/tiles/{z}/{x}/{y}.png">
+<link rel="manifest" href="/manifest.json">
+<link rel="preload" href="/vendor/ubuntu/ubuntu-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/vendor/ubuntu/ubuntu-700.woff2" as="font" type="font/woff2" crossorigin>
+<script>
+(function () {
+  var legacy = { paper: 'herd', light: 'herd', ink: 'herd-ink', dark: 'herd-ink' };
+  var saved = null;
+  try { saved = localStorage.casey_theme; } catch (e) {  }
+  var dark = false;
+  try { dark = matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) {  }
+  document.documentElement.dataset.caseyTheme =
+    (saved && (legacy[saved] || saved)) || (dark ? 'herd-ink' : 'herd');
+})();
+</script>
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<link rel="apple-touch-icon" href="/icon.svg">
+<title>casey</title>
+<link rel="stylesheet" href="/design/dist/247420.css">
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/vendor/leaflet.markercluster/MarkerCluster.css">
+<link rel="stylesheet" href="/vendor/leaflet.markercluster/MarkerCluster.Default.css">
+<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/src/views/case-detail.css">
+<link rel="stylesheet" href="/src/views/field.css">
+<link rel="stylesheet" href="/src/views/viewer.css">
+<script type="importmap">
+{ "imports": {
+  "webjsx": "/design/vendor/webjsx/index.js",
+  "webjsx/": "/design/vendor/webjsx/",
+  "ds/": "/design/src/"
+} }
+</script>
+</head>
+<body class="ds-247420">
+<div id="app" class="ds-247420 ds-app-surface"></div>
+<style>
+#ds-boot{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  min-height:60vh;gap:10px;font:500 15px/1.4 system-ui,sans-serif;text-align:center;padding:24px}
+#ds-boot #ds-boot-brand{font-size:20px;font-weight:600}
+#ds-boot span{opacity:.7;font-weight:400;font-size:13px;max-width:24em}
+#app:not(:empty) ~ #ds-boot{display:none}
+</style>
+<div id="ds-boot" role="status" aria-live="polite">
+  <b id="ds-boot-brand">casey</b>
+  <span>Still loading. On a slow connection this first load can take a while -- it is quicker next time.</span>
+</div>
+<script src="/vendor/leaflet/leaflet.js"></script>
+<script src="/vendor/leaflet.markercluster/leaflet.markercluster.js"></script>
+<script>
+(function () {
+  var t = document.documentElement.dataset.caseyTheme;
+  document.body.dataset.theme = t;
+  document.getElementById('app').dataset.theme = t;
+})();
+</script>
+<script type="module" src="/src/main.js"></script>
+<script>if('serviceWorker' in navigator) (function(){
+  var hadController = !!navigator.serviceWorker.controller;
+  function typing() {
+    var a = document.activeElement;
+    return !!a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'button' && a.type !== 'submit' && !!(a.value || a.isContentEditable);
+  }
+  function reloadWhenSafe() {
+    if (document.hidden || !typing()) { location.reload(); return; }
+    var timer = setInterval(function(){ if (document.hidden || !typing()) { clearInterval(timer); location.reload(); } }, 2000);
+    document.addEventListener('visibilitychange', function(){ if (document.hidden) { clearInterval(timer); location.reload(); } });
+  }
+  navigator.serviceWorker.register('/sw.js').then(function(reg){
+    var check = function(){ try { reg.update().catch(function(){}); } catch (e) {} };
+    document.addEventListener('visibilitychange', function(){ if (!document.hidden) check(); });
+    setInterval(check, 30 * 60 * 1000);
+    if (!hadController) return;
+    var reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function(){
+      if (reloaded) return;
+      reloaded = true;
+      reloadWhenSafe();
+    });
+  }).catch(function(){})
+})()</script>
+</body></html>

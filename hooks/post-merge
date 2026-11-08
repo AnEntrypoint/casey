@@ -1,0 +1,4 @@
+#!/bin/sh
+here="$(cd "$(dirname "$0")/.." && pwd)"
+touch "$here/src/casey.js" 2>/dev/null || true
+echo "[casey hook] post-merge: nudged src/casey.js so a running 'casey up' reloads on the pulled code"
