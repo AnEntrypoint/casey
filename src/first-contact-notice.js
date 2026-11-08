@@ -1,7 +1,7 @@
 
 
 import { loadDomainConfig } from './config-loader.js'
-import { atLeast, resolveTierValue, TIER_FIELD_WORKER } from './contact-tiers.js'
+import { atLeast, resolveTierValue, TIER } from './contact-tiers.js'
 import { tagList } from './timestamp.js'
 import { evData } from './safe.js'
 import { toPlainChat } from './hooks/plain-text.js'
@@ -12,7 +12,7 @@ const MAX_OTHER_CASES = 25
 const asText = (v) => (Array.isArray(v) ? v.join(' ') : String(v || '')).replace(/\s+/g, ' ').trim()
 
 export function noticeSettings(tier) {
-  const staff = atLeast(resolveTierValue(tier), TIER_FIELD_WORKER)
+  const staff = atLeast(resolveTierValue(tier), TIER.field)
   const text = asText(staff ? persona.staffNoticeText : persona.noticeText)
   const anchor = staff ? asText(persona.staffNoticeAnchor) : asText(persona.noticeAnchor)
   return { kind: staff ? 'staff' : 'public', version: String(persona.noticeVersion || '1'), text, anchor }

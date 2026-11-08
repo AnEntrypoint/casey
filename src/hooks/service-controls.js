@@ -5,9 +5,9 @@ import { mergeTag, dropTag, detectContactIntent, OPTED_OUT_TAG, STOP_PENDING_PRE
 import { stopPendingState, stopPendingTag, stopConfirmEvent } from './stop-pending.js'
 import { observation, raiseOperatorItem } from './case-writes.js'
 import { controlActor, forgetSpeakerAfterHelp } from '../phone-persons.js'
-import { resolveTierValue, TIER_REPORTER } from '../contact-tiers.js'
+import { resolveTierValue, TIER } from '../contact-tiers.js'
 
-const isPublicPhone = (caseRow) => !!caseRow?.contact_id && resolveTierValue(caseRow.reporter_tier) === TIER_REPORTER
+const isPublicPhone = (caseRow) => !!caseRow?.contact_id && resolveTierValue(caseRow.reporter_tier) === TIER.reporter
 
 export async function isLlmDown(llmStatus) {
   if (typeof llmStatus !== 'function') return false

@@ -15,7 +15,7 @@ import { appendReplyEvent, pendingDraft, releaseCase, STAFF_TEXT_MAX_LEN } from 
 import { draftFromInstruction } from '../../hooks/operator-instruction.js'
 import { clearFocusForCase } from '../../team-focus.js'
 import { assigneeKeyFor, isContactAssignee, contactIdOfAssignee, isOwnConversation } from '../../case-assignment.js'
-import { atLeast, TIER_FIELD_WORKER } from '../../contact-tiers.js'
+import { atLeast, TIER } from '../../contact-tiers.js'
 import { findAccountByUsername } from '../auth.js'
 import { isFieldAccount, caseAccess, isAssignedTo, inSignOffQueue, detailForAccess, missingFor, isDoneStatus } from '../roles.js'
 import { APPEND_FIELDS } from '../../store/report-shape.js'
@@ -390,7 +390,7 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
         if (isContactAssignee(target)) {
           contact = await store.getContact(contactIdOfAssignee(target))
           if (!contact) return res.status(400).json({ error: 'that team member is not registered' })
-          if (!atLeast(contact.tier, TIER_FIELD_WORKER)) return res.status(400).json({ error: 'that person is not on the team (they hold no team role), so a report cannot be assigned to them' })
+          if (!atLeast(contact.tier, TIER.field)) return res.status(400).json({ error: 'that person is not on the team (they hold no team role), so a report cannot be assigned to them' })
           if (isOwnConversation(prior, contact)) return res.status(400).json({ error: 'that is this team member\'s own chat with the assistant, not a report to assign to them' })
         } else if (target && !(await findAccountByUsername(store, target))) {
           return res.status(400).json({ error: 'no team member or login by that name' })

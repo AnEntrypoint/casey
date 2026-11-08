@@ -31,6 +31,7 @@ process.chdir(SCRATCH)
 const UHH_CONFIG = path.join(HERE, '..', '..', '..', 'config')
 if (!process.env.CASEY_CONFIG_DIR && existsSync(path.join(UHH_CONFIG, 'report-fields.yml'))) process.env.CASEY_CONFIG_DIR = UHH_CONFIG
 if (!process.env.CASEY_CONFIG_DIR) throw new Error('gui-check needs CASEY_CONFIG_DIR (see uhh/config)')
+const FX = JSON.parse(readFileSync(path.join(process.env.CASEY_CONFIG_DIR, 'gui-check', 'fixtures.json'), 'utf8'))
 process.env.CASEY_COOKIE_SECURE = '0'
 
 const { createCaseStore } = await import(path.join(SRC, 'case-store.js'))
@@ -57,31 +58,32 @@ const BULK = 130
 async function seed() {
   const mk = (suffix, role, displayName, extra = {}) =>
     createAccount(store, { username: USER + suffix, password: PW, displayName, role, mustChangePassword: false, ...extra })
-  await mk('', 'admin', 'GUI Check')
-  await mk('-rng', 'eco_ranger', 'GUI Ranger', { contactPhone: '082 111 2222' })
-  await mk('-aht', 'animal_health_technician', 'GUI Technician', { contactPhone: '083 333 4444' })
-  await mk('-rng2', 'eco_ranger', 'GUI Ranger Two')
-  await mk('-rng0', 'eco_ranger', 'GUI Nocases')
-  await mk('-vw', 'viewer', 'GUI Viewer')
-  await store.registerContact({ channel: 'whatsapp', external_id: '27821112222', display_name: 'GUI Ranger', tier: 'field_worker' })
-  const ac = await store.registerContact({ channel: 'whatsapp', external_id: '27833334444', display_name: 'GUI Technician', tier: 'animal_health_technician' })
-  await store.registerContact({ channel: 'whatsapp', external_id: '27790001111', display_name: 'Public Pete', tier: 'reporter' })
-  const full = { species: 'cattle', symptoms: 'limping', location: 'Musina' }
+  await mk('', 'admin', FX.people.admin)
+  await mk('-rng', 'eco_ranger', FX.people.ranger.name, { contactPhone: FX.people.ranger.phone })
+  await mk('-aht', 'animal_health_technician', FX.people.technician.name, { contactPhone: FX.people.technician.phone })
+  await mk('-rng2', 'eco_ranger', FX.people.rangerTwo)
+  await mk('-rng0', 'eco_ranger', FX.people.noCases)
+  await mk('-vw', 'viewer', FX.people.viewer)
+  await store.registerContact({ channel: 'whatsapp', external_id: FX.people.ranger.whatsapp, display_name: FX.people.ranger.name, tier: 'field_worker' })
+  const ac = await store.registerContact({ channel: 'whatsapp', external_id: FX.people.technician.whatsapp, display_name: FX.people.technician.name, tier: 'animal_health_technician' })
+  await store.registerContact({ channel: 'whatsapp', external_id: FX.people.publicReporter.whatsapp, display_name: FX.people.publicReporter.name, tier: 'reporter' })
+  const full = { species: FX.animals.cattle, symptoms: FX.seed.symptoms, location: FX.places.musina }
   const mkcase = async (ext, subject, report, assignee, extra = {}) => {
     const { case: c } = await store.findOrCreateCase({ channel: 'whatsapp', external_id: ext, contact: { name: 'Farmer ' + ext.slice(-3), phone: ext }, subject })
     if (report) await store.mergeReport(c.id, report, { id: 'seed', role: 'agent' })
     if (assignee || extra.lat != null) await store.updateCase(c.id, { ...(assignee ? { assignee } : {}), ...extra }, { id: 'casey-system', role: 'admin' })
     return (await store.getCase(c.id)).id
   }
-  const long = 'Very long subject line about a cow that has been limping near the river bend and the farmer says '.repeat(2).slice(0, 200)
-  ids.A = await mkcase('27800000001', 'A ranger case', { species: 'goats' }, USER + '-rng', { lat: -22.3, lon: 30.0 })
-  ids.L = await mkcase('27800000008', long, { species: 'cattle' }, USER + '-rng')
-  ids.C = await mkcase('27800000003', 'C ready unassigned', full, '', { lat: -22.9, lon: 30.5 })
-  ids.D = await mkcase('27800000004', 'D technician incomplete', { species: 'sheep' }, 'contact:' + ac.id)
-  ids.G = await mkcase('27800000007', 'G technician ready', full, USER + '-aht', { lat: -22.5, lon: 30.2 })
+  const long = FX.seed.longSubject.repeat(2).slice(0, 200)
+  const place = (k) => ({ lat: FX.seed.coords[k][0], lon: FX.seed.coords[k][1] })
+  ids.A = await mkcase('27800000001', 'A ranger case', { species: FX.animals.goats }, USER + '-rng', place('A'))
+  ids.L = await mkcase('27800000008', long, { species: FX.animals.cattle }, USER + '-rng')
+  ids.C = await mkcase('27800000003', 'C ready unassigned', full, '', place('C'))
+  ids.D = await mkcase('27800000004', 'D technician incomplete', { species: FX.animals.sheep }, 'contact:' + ac.id)
+  ids.G = await mkcase('27800000007', 'G technician ready', full, USER + '-aht', place('G'))
   ids.U = await mkcase('27800000009', '\u0645\u0631\u064a\u0636 \u0628\u0642\u0631\u0629 caf\u00e9 \u725b\u75c5', full, USER + '-rng2')
 
-  for (let i = 0; i < BULK; i++) await mkcase('2778' + String(100000 + i), 'Bulk case ' + i, { species: 'goats' }, '')
+  for (let i = 0; i < BULK; i++) await mkcase('2778' + String(100000 + i), 'Bulk case ' + i, { species: FX.animals.goats }, '')
 }
 
 try {
@@ -308,7 +310,7 @@ try {
   const hd = JSON.parse(await evalJs(`JSON.stringify({ n: document.querySelectorAll('.casey-case-header-top h2').length, txt: (document.querySelector('.casey-case-header-top h2') || {}).textContent })`))
   check(hd.n === 1 && !!(hd.txt || '').trim(), 'case detail has exactly one h2 (the subject) in its header', `${hd.n} h2, "${(hd.txt || '').slice(0, 30)}"`)
   const cd = JSON.parse(await evalJs(`JSON.stringify({ claimed: (document.querySelector('.casey-claimed') || {}).innerText, gaps: [...document.querySelectorAll('.casey-detail-pane .ds-section')].map((e) => parseFloat(getComputedStyle(e).marginTop) + parseFloat(getComputedStyle(e).marginBottom)) })`))
-  check(/^Claimed by GUI Ranger$/.test(cd.claimed || ''), 'the case header names the holder by their name, not their login', cd.claimed)
+  check(new RegExp('^Claimed by ' + FX.people.ranger.name + '$').test(cd.claimed || ''), 'the case header names the holder by their name, not their login', cd.claimed)
   check(cd.gaps.length > 0 && Math.max(...cd.gaps) === 0, 'sections inside a case carry no 96px page margins (the column gap sets the rhythm)', 'max ' + Math.max(0, ...cd.gaps) + 'px')
   await axeBoth('case detail (operator)')
   await evalJs(`localStorage.removeItem('casey_home_view'); 1`)
@@ -318,7 +320,7 @@ try {
   const opts = JSON.parse(await evalJs(`(() => { const s = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => /Nobody yet/.test(o.text))); return JSON.stringify(s ? { opts: [...s.options].map((o) => o.value), cur: s.value } : null) })()`))
   check(!!opts && opts.cur === '' && !opts.opts.includes('agent'), 'a report held by the assistant reads "Nobody yet" in the Assigned-to picker, not the raw word agent', opts && `current "${opts.cur}"`)
 
-  const rangerOpts = JSON.parse(await evalJs(`(() => { const s = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => /Nobody yet/.test(o.text))); return JSON.stringify([...s.options].filter((o) => /^GUI Ranger \\(/.test(o.text)).map((o) => o.value)) })()`))
+  const rangerOpts = JSON.parse(await evalJs(`(() => { const s = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => /Nobody yet/.test(o.text))); return JSON.stringify([...s.options].filter((o) => /^${FX.people.ranger.name} \\(/.test(o.text)).map((o) => o.value)) })()`))
   check(rangerOpts.length === 1 && rangerOpts[0].startsWith('contact:'), 'a ranger who is both a contact and a linked login is listed once, by the contact key', JSON.stringify(rangerOpts))
   await evalJs(`(() => { const s = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => /Nobody yet/.test(o.text))); s.value = ${JSON.stringify(rangerOpts[0] || '')}; s.dispatchEvent(new Event('change', { bubbles: true })); return 1 })()`)
   await sleep(300)
@@ -493,14 +495,14 @@ try {
   console.log('\neco ranger: one report, browser Back, stale tab, session end')
   await viewport('p')
   await asUser('-rng', '', 3500)
-  const openA = await evalJs(`(() => { const r = [...document.querySelectorAll('.row')].find((r) => /goats/.test(r.innerText)); if (!r) return false; r.click(); return true })()`)
+  const openA = await evalJs(`(() => { const r = [...document.querySelectorAll('.row')].find((r) => new RegExp(${JSON.stringify(FX.animals.goats)}).test(r.innerText)); if (!r) return false; r.click(); return true })()`)
   await sleep(1500)
   const cl = JSON.parse(await evalJs(`(() => {
     const list = document.querySelector('[role=group][aria-label*="needs before"]');
     return JSON.stringify({ hash: location.hash, checklist: list ? list.innerText : null, wa: !!document.querySelector('a[href^="https://wa.me"]') });
   })()`))
   check(openA && /^#case=/.test(cl.hash), 'opening a report puts it in the address', cl.hash)
-  check(!!cl.checklist && /Still needed/.test(cl.checklist) && /Recorded: goats/.test(cl.checklist), 'the checklist says in words what is recorded and what is still needed (not colour alone; the kit hides the code column on a phone)', cl.checklist && cl.checklist.replace(/\n+/g, ' / ').slice(0, 90))
+  check(!!cl.checklist && /Still needed/.test(cl.checklist) && new RegExp('Recorded: ' + FX.animals.goats).test(cl.checklist), 'the checklist says in words what is recorded and what is still needed (not colour alone; the kit hides the code column on a phone)', cl.checklist && cl.checklist.replace(/\n+/g, ' / ').slice(0, 90))
   check(cl.wa, 'the reporter message link is present on a report assigned to them')
   await axeBoth('eco ranger report')
   await evalJs('history.back()'); await sleep(1300)
@@ -509,7 +511,7 @@ try {
   await evalJs('history.forward()'); await sleep(1300)
   check(/Reach the reporter/.test(await bodyText()), 'browser Forward reopens the report')
 
-  await evalJs(`(() => { const t = [...document.querySelectorAll('textarea')].find((e) => /reporter told/i.test((e.labels && e.labels[0]) ? e.labels[0].innerText : '')); t.value = 'Farmer says 12 goats limping'; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+  await evalJs(`(() => { const t = [...document.querySelectorAll('textarea')].find((e) => /reporter told/i.test((e.labels && e.labels[0]) ? e.labels[0].innerText : '')); t.value = ${JSON.stringify(FX.seed.fieldNote)}; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
   await clickText('Save to'); await sleep(700)
   const conf = await evalJs(`(() => { const d = document.querySelector('[role=dialog]'); return d ? d.innerText.replace(/\\n+/g, ' / ').slice(0, 120) : 'none' })()`)
   check(/Record on CASE-/.test(conf), 'recording asks the ranger to confirm which report, by reference', conf)
@@ -561,7 +563,7 @@ try {
   await evalJs(`(() => { const b = [...document.querySelectorAll('[role=dialog] button')].find((x) => /^Sign off/.test(x.innerText)); b.click(); return 1 })()`)
 
   const asked = []
-  for (const answer of ['Foot-and-mouth disease suspected', 'suspected', 'Isolate the herd and call the state vet']) {
+  for (const answer of [FX.seed.signoff.disease, FX.seed.signoff.status, FX.seed.signoff.advice]) {
     await sleep(700)
     asked.push(await evalJs(`(() => { const d = document.querySelector('[role=dialog]'); if (!d) return 'none'; const i = d.querySelector('input, textarea, select'); if (i) { const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(i), 'value').set; set.call(i, ${JSON.stringify(answer)}); i.dispatchEvent(new Event('input', { bubbles: true })) } const b = [...d.querySelectorAll('button')].find((x) => /^Continue/.test(x.innerText)); if (b) b.click(); return d.querySelector('h1,h2,[class*=title]') ? d.querySelector('h1,h2,[class*=title]').innerText : 'dialog' })()`))
   }
@@ -570,7 +572,7 @@ try {
   const so = await api('GET', '/api/cases/' + ids.G)
   check(so.j && so.j.case.status === 'resolved', 'a complete report is signed off (double click: one transition)', so.j && so.j.case.status)
       const soReport = so.j && JSON.parse(so.j.case.report || '{}')
-      check(soReport && soReport.diagnosis_status === 'suspected' && /Foot-and-mouth/.test(soReport.identified_disease), 'the sign-off records the diagnosis status the technician picked', soReport && soReport.diagnosis_status)
+      check(soReport && soReport.diagnosis_status === FX.seed.signoff.status && new RegExp(FX.seed.signoff.diseaseMatch).test(soReport.identified_disease), 'the sign-off records the diagnosis status the technician picked', soReport && soReport.diagnosis_status)
   const after = JSON.parse(await evalJs(`JSON.stringify({ signed: /Signed off/.test(document.body.innerText), again: !![...document.querySelectorAll('button')].find((e) => /^Sign off CASE/.test(e.innerText)) })`))
   check(after.signed && !after.again, 'a signed-off report shows "Signed off" and no longer offers to be signed off again', JSON.stringify(after))
   await axeBoth('technician report (signed off)')
@@ -597,7 +599,7 @@ try {
 
   console.log('\nfield-team account menu')
   await asUser('-rng', '', 3500)
-  await clickText('GUI Ranger'); await sleep(600)
+  await clickText(FX.people.ranger.name); await sleep(600)
   await axeBoth('eco ranger account menu open (danger item)')
 
   if (process.env.GUI_CHECK_SKIP !== 'team') await runTeamChecks(teamCtx())

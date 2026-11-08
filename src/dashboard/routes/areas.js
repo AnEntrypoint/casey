@@ -1,7 +1,7 @@
 import { mountRoutes } from './register.js'
 import { isStaffAccount, isTechnician, resolveContact } from '../roles.js'
 import { isContactAssignee, contactIdOfAssignee } from '../../case-assignment.js'
-import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN } from '../../contact-tiers.js'
+import { TIER } from '../../contact-tiers.js'
 import { staffLabel } from '../../hooks/staff-outbound.js'
 import { handoffToTechnician, withdrawHandoff } from '../../signoff-desk.js'
 import { myDay, keysForContact } from '../../my-day.js'
@@ -159,7 +159,7 @@ export function getMyDay({ store, authed, findAccountByUsername }) {
       if (asked && asked !== acct.username && !(acct._contact && asked === `contact:${acct._contact.id}`)) return res.status(403).json({ error: 'You can see your own day only.', code: 'role_forbidden' })
       contact = acct._contact || await resolveContact(store, acct)
       keys = [acct.username, ...(contact ? await keysForContact(store, contact) : [])]
-      tier = contact?.tier || (isTechnician(acct) ? TIER_ANIMAL_HEALTH_TECHNICIAN : TIER_FIELD_WORKER)
+      tier = contact?.tier || (isTechnician(acct) ? TIER.specialist : TIER.field)
       name = acct.display_name || acct.username
     } else {
       const key = String(req.query.ranger || '').trim()
@@ -173,7 +173,7 @@ export function getMyDay({ store, authed, findAccountByUsername }) {
         if (!a) return res.status(404).json({ error: 'no such team member' })
         contact = await resolveContact(store, a)
         keys = [a.username, ...(contact ? await keysForContact(store, contact) : [])]
-        tier = contact?.tier || (a.role === 'animal_health_technician' ? TIER_ANIMAL_HEALTH_TECHNICIAN : TIER_FIELD_WORKER)
+        tier = contact?.tier || (a.role === 'animal_health_technician' ? TIER.specialist : TIER.field)
         name = a.display_name || a.username
       }
       ranger = { key, name }

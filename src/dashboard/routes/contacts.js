@@ -1,6 +1,6 @@
 import { fmtPhone27 } from '../../format.js'
 import { mountRoutes } from './register.js'
-import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, ADMIN_ONLY_TIERS, grantableBy, resolveContactTier } from '../../contact-tiers.js'
+import { TIER_ORDER, ADMIN_ONLY_TIERS, grantableBy, resolveContactTier, TIER } from '../../contact-tiers.js'
 import { createInvite, createInvites, listInvites, revokeInvite, normalizeMsisdn } from '../../role-invites.js'
 import { countPersonsByContact } from '../../phone-persons.js'
 
@@ -20,10 +20,10 @@ export function getContacts({ store, authed }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const people = await countPersonsByContact(store).catch(() => new Map())
     const all = (await store.listContacts({ limit: 10000 })).map((c) => ({ ...publicContact(c), ...(people.has(c.id) ? { people: people.get(c.id), shared_phone: people.get(c.id) > 1 } : {}) }))
-    const team = all.filter((c) => c.tier !== TIER_REPORTER)
+    const team = all.filter((c) => c.tier !== TIER.reporter)
     const seg = String(req.query.segment || '')
     const q = String(req.query.q || '').trim().slice(0, 100).toLowerCase().replace(/\s+/g, ' ')
-    let rows = seg === 'team' ? team : seg === 'public' ? all.filter((c) => c.tier === TIER_REPORTER) : all
+    let rows = seg === 'team' ? team : seg === 'public' ? all.filter((c) => c.tier === TIER.reporter) : all
     if (q) rows = rows.filter((c) => [c.display_name, c.external_id_formatted].join(' ').toLowerCase().includes(q))
     const CAP = 300
     res.json({ contacts: rows.slice(0, CAP), matched: rows.length, capped: rows.length > CAP, counts: { team: team.length, public: all.length - team.length, all: all.length } })
@@ -36,9 +36,9 @@ export function postContactTier({ store, authed, isAdmin, actingOperator }) {
     try {
       const { tier } = req.body || {}
       if (!TIER_ORDER.includes(tier)) return res.status(400).json({ error: `tier must be one of ${TIER_ORDER.map(t => `"${t}"`).join(', ')}` })
-      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: `only an admin can make someone ${tier === TIER_OPERATOR ? 'an operator' : 'a technician'}` })
+      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: `only an admin can make someone ${tier === TIER.operator ? 'an operator' : 'a technician'}` })
       const existing = await store.getContact(req.params.id)
-      if (existing && resolveContactTier(existing) === TIER_OPERATOR && tier !== TIER_OPERATOR && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can change an operator' })
+      if (existing && resolveContactTier(existing) === TIER.operator && tier !== TIER.operator && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can change an operator' })
       await store.setContactTier(req.params.id, tier, { id: actingOperator(req).id, role: 'operator' })
       const updated = await store.getContact(req.params.id)
       res.json({ contact: publicContact(updated) })
@@ -65,10 +65,10 @@ export function postContactRegister({ store, authed, isAdmin, actingOperator }) 
       const { phone, name, tier } = req.body || {}
       const external_id = normalizeMsisdn(phone)
       if (!external_id) return res.status(400).json({ error: 'that does not look like a phone number -- use the full number, e.g. 079 091 5297 or +27 79 091 5297' })
-      if (!TIER_ORDER.includes(tier) || tier === TIER_REPORTER) return res.status(400).json({ error: `role must be one of ${TIER_ORDER.filter(t => t !== TIER_REPORTER).map(t => `"${t}"`).join(', ')}` })
-      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: `only an admin can make someone ${tier === TIER_OPERATOR ? 'an operator' : 'a technician'}` })
+      if (!TIER_ORDER.includes(tier) || tier === TIER.reporter) return res.status(400).json({ error: `role must be one of ${TIER_ORDER.filter(t => t !== TIER.reporter).map(t => `"${t}"`).join(', ')}` })
+      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: `only an admin can make someone ${tier === TIER.operator ? 'an operator' : 'a technician'}` })
       const known = (await store.listContacts({ limit: 1000 })).find(k => k.channel === 'whatsapp' && k.external_id === external_id)
-      if (known && resolveContactTier(known) === TIER_OPERATOR && tier !== TIER_OPERATOR && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can change an operator' })
+      if (known && resolveContactTier(known) === TIER.operator && tier !== TIER.operator && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can change an operator' })
       const contact = await store.registerContact({ channel: 'whatsapp', external_id, display_name: String(name || '').trim().slice(0, 80), tier }, { id: actingOperator(req).id, role: 'operator' })
       res.json({ contact: publicContact(contact) })
     } catch (e) { res.status(400).json({ error: e.message }) }

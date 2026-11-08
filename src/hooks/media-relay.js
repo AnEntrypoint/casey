@@ -4,7 +4,7 @@ import { observation, raiseOperatorItem } from './case-writes.js'
 import { carriesArtifact } from './media-intake.js'
 import { truncate } from './heuristics.js'
 import { staffLabel } from './staff-outbound.js'
-import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
+import { atLeast, resolveContactTier, TIER } from '../contact-tiers.js'
 import { assigneeKeyFor, isAssignedTo, isOwnConversation } from '../case-assignment.js'
 import { refsIn, writeGate, focusOf, proposeFocus, identifyingLine } from '../team-focus.js'
 import { isOpenCase } from '../format.js'
@@ -31,7 +31,7 @@ export async function routeStaffArtifact({ store, log, caseRow, msg, inboundText
   if (!carriesArtifact(msg)) return null
   try {
     const contact = caseRow.contact_id ? await store.getContact(caseRow.contact_id) : null
-    if (!contact || !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)) return null
+    if (!contact || !atLeast(resolveContactTier(contact), TIER.field)) return null
     const ctx = { contact, inboundRefs: refsIn(inboundText), turnId: String(msgId || '') }
     const f = await focusOf(store, contact.id, now)
     const target = f ? await store.getCase(f.caseId) : null

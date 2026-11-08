@@ -21,7 +21,7 @@ import { confirmRecordChoices } from '../choices.js'
 import { refsIn, setFocus, focusOf, proposeFocus, confusableHeldRefs, identifyingLine } from '../team-focus.js'
 import { messageId } from './case-intake.js'
 import { buildCaseToolset, hiddenToolNamesForTier } from '../case-tools.js'
-import { resolveContactTier, canQueryCases, canSignOff, TIER_REPORTER } from '../contact-tiers.js'
+import { resolveContactTier, canQueryCases, canSignOff, TIER } from '../contact-tiers.js'
 import { FAILURE_REASONS } from '../degraded-turns.js'
 import { TURN_HARD_DEADLINE_MS } from './turn-deadlines.js'
 
@@ -444,7 +444,7 @@ export async function runAgentTurn({
 
   const turnBinding = { id: fresh.id, ref: fresh.ref }
 
-  const speakerOn = resolvedTier === TIER_REPORTER && !!contact?.id
+  const speakerOn = resolvedTier === TIER.reporter && !!contact?.id
   const readSpeaker = async (touch) => {
     if (!speakerOn) return null
     try { return await speakerState(store, contact.id, { touch, caseId: turnBinding.id }) } catch { return null }
@@ -452,11 +452,11 @@ export async function runAgentTurn({
   let speaker = await readSpeaker(true)
   const speakerAtStart = speaker
 
-  const consentOn = consentManaged() && resolvedTier === TIER_REPORTER && !!contact?.id
+  const consentOn = consentManaged() && resolvedTier === TIER.reporter && !!contact?.id
   const readConsent = async () => (consentOn ? consentState(store, contact.id, { caseId: turnBinding.id }) : null)
   let consent = await readConsent()
 
-  const returnOn = resolvedTier === TIER_REPORTER && !!contact?.id
+  const returnOn = resolvedTier === TIER.reporter && !!contact?.id
   const readReturn = async () => (returnOn ? returnState(store, await store.getCase(turnBinding.id).catch(() => null), contact) : null)
   let ret = await readReturn()
   systemPromptText = caseSystemPrompt(fresh, events, contact, speaker, consent, ret)

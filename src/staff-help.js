@@ -1,6 +1,6 @@
 import { evData } from './safe.js'
 import { loadDomainConfig } from './config-loader.js'
-import { atLeast, TIER_ANIMAL_HEALTH_TECHNICIAN } from './contact-tiers.js'
+import { atLeast, TIER } from './contact-tiers.js'
 
 const OWN_CASE_CAP = 20
 
@@ -48,7 +48,7 @@ const asList = (v) => (Array.isArray(v) ? v : [v]).filter(Boolean)
 
 export function helpFor(tier) {
   const { persona } = loadDomainConfig()
-  const examples = atLeast(tier, TIER_ANIMAL_HEALTH_TECHNICIAN) ? persona.helpTechnician : persona.helpRanger
+  const examples = atLeast(tier, TIER.specialist) ? persona.helpTechnician : persona.helpRanger
   if (!examples) throw new Error('persona.helpRanger/helpTechnician missing: add bot.help_ranger and bot.help_technician to vocabulary.yml')
   return { examples: asList(examples), onboarding: persona.helpOnboarding ? String(asList(persona.helpOnboarding).join(' ')) : '' }
 }

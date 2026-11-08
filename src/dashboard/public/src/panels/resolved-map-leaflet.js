@@ -16,8 +16,6 @@ function tileUrl() {
     return '/tiles/{z}/{x}/{y}.png';
 }
 
-const HOME_VIEW = [[-31.6, 29.3], 8];
-
 export function cssColour(el, token) {
     const v = el ? getComputedStyle(el).getPropertyValue(token).trim() : '';
     return v || '#888888';
@@ -33,13 +31,13 @@ export const DISEASE_MARKS = [
     { fill: false, dash: '8 3 1 3' },
 ];
 
-export function mountResolvedMap(canvas, prev) {
+export function mountResolvedMap(canvas, prev, homeView) {
     if (!canvas || !L()) return null;
     if (prev && prev.canvas === canvas) return prev;
     if (prev && prev.map) prev.map.remove();
     canvas.innerHTML = '';
     const map = L().map(canvas, { zoomControl: true });
-    map.setView(HOME_VIEW[0], HOME_VIEW[1]);
+    map.setView(homeView.centre, homeView.zoom);
     const drv = { canvas, map, layer: null, fitted: '', tilesFailing: false };
     const tiles = L().tileLayer(tileUrl(), { maxZoom: 14, attribution: word('ui.resolved_map_leaflet_attribution') }).addTo(map);
     let tileFails = 0;

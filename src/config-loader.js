@@ -10,7 +10,7 @@ const yamlLoad = (text) => yamlLoadRaw(text, { schema: YAML11_SCHEMA })
 const require = createRequire(import.meta.url)
 
 function resolveConfigDir() {
-  if (!process.env.CASEY_CONFIG_DIR) throw new Error('CASEY_CONFIG_DIR is required: it holds thatcher.config.yml, report-fields.yml, persona.cjs, vocabulary.yml and portal-defaults.yml')
+  if (!process.env.CASEY_CONFIG_DIR) throw new Error('CASEY_CONFIG_DIR is required: it holds domain.yml, thatcher.config.yml, report-fields.yml, persona.cjs, vocabulary.yml and portal-defaults.yml')
   const dir = path.resolve(process.env.CASEY_CONFIG_DIR)
   if (!fs.existsSync(dir)) throw new Error(`casey config dir not found: ${dir}`)
   return dir
@@ -33,14 +33,64 @@ export function loadDomainConfig() {
   const personaMod = require(personaPath)
   if (!personaMod.persona) throw new Error(`persona.cjs must export persona via module.exports (${personaPath})`)
 
-  const vocabulary = loadVocabulary(dir, { reportFields, persona: personaMod.persona })
-  const applied = applyVocabulary(reportFields, personaMod.persona, vocabulary)
+  const domain = loadDomain(dir)
+  const tierIds = Object.values(domain.tiers)
+  const vocabulary = loadVocabulary(dir, { reportFields, persona: personaMod.persona, tierIds })
+  const applied = applyVocabulary(reportFields, personaMod.persona, vocabulary, tierIds)
 
-  cached = { dir, reportFields: applied.reportFields, persona: applied.persona, vocabulary }
+  cached = {
+    dir,
+    domain,
+    reportFields: applied.reportFields,
+    persona: applied.persona,
+    vocabulary,
+    pack: loadOptionalCjs(dir, 'pack.cjs'),
+    externalSchema: loadOptionalCjs(dir, 'external-schema.cjs'),
+    dashboard: loadOptionalYaml(dir, 'dashboard.yml'),
+  }
   return cached
 }
 
+const TIER_KEYS = ['reporter', 'field', 'specialist', 'operator']
+
+function validateDomain(domain, file) {
+  const fail = (why) => { throw new Error(`domain.yml ${why} (${file})`) }
+  const tiers = domain?.tiers
+  if (!tiers || typeof tiers !== 'object' || Object.keys(tiers).join() !== TIER_KEYS.join()) fail(`tiers must list ${TIER_KEYS.join(', ')} in ladder order`)
+  if (new Set(Object.values(tiers)).size !== TIER_KEYS.length || Object.values(tiers).some(v => typeof v !== 'string' || !v.trim())) fail('tiers must map each key to a distinct tier id')
+  const labels = domain.tier_labels
+  if (!labels || TIER_KEYS.some(k => typeof labels[k] !== 'string' || !labels[k].trim())) fail('tier_labels must label each tier key')
+  if (!Array.isArray(domain.admin_only_tiers) || domain.admin_only_tiers.some(k => !TIER_KEYS.includes(k))) fail('admin_only_tiers must list tier keys')
+  if (typeof domain.observation_form !== 'string' || !domain.observation_form) fail('observation_form must name the pack form')
+  if (!domain.tool_names || typeof domain.tool_names !== 'object') fail('tool_names must map generic tool names to visible names')
+  return domain
+}
+
+function loadDomain(dir) {
+  const file = path.join(dir, 'domain.yml')
+  if (!fs.existsSync(file)) throw new Error(`domain.yml not found in config dir: ${dir}`)
+  return validateDomain(yamlLoad(fs.readFileSync(file, 'utf8')), file)
+}
+
+function loadOptionalCjs(dir, name) {
+  const file = path.join(dir, name)
+  if (!fs.existsSync(file)) return null
+  delete require.cache[require.resolve(file)]
+  return require(file)
+}
+
+function loadOptionalYaml(dir, name) {
+  const file = path.join(dir, name)
+  if (!fs.existsSync(file)) return {}
+  return yamlLoad(fs.readFileSync(file, 'utf8')) || {}
+}
+
+export function visibleToolName(name) {
+  return loadDomainConfig().domain.tool_names[name] ?? name
+}
+
 const VOCAB_FILE = 'vocabulary.yml'
+
 export const VOCAB_CLIENT_SECTIONS = ['ui', 'glossary', 'stages', 'legend', 'form']
 
 export const VOCAB_BOT_KEYS = {
@@ -85,14 +135,14 @@ function readVocabFile(file) {
   return { exists: true, words: out, bad }
 }
 
-function expectedKeys(defaultsWords, { reportFields, persona }, isDeploymentDir) {
+function expectedKeys(defaultsWords, { reportFields, persona, tierIds = [] }, isDeploymentDir) {
   const keys = new Set(Object.keys(defaultsWords))
   if (!isDeploymentDir) return keys
   for (const f of reportFields.fields || []) {
     keys.add('fields.' + f.key + '.label')
     if (f.public !== false && !f.append) { keys.add('fields.' + f.key + '.form_label'); keys.add('fields.' + f.key + '.form_hint') }
   }
-  for (const t of ['reporter', 'field_worker', 'animal_health_technician', 'operator']) keys.add('tiers.' + t)
+  for (const t of tierIds) keys.add('tiers.' + t)
   keys.add('app.brand'); keys.add('app.leaf')
   for (const s of new Set((reportFields.fields || []).map(f => f.section).filter(Boolean))) keys.add('sections.' + slug(s))
   for (const [name, path_] of Object.entries(VOCAB_BOT_KEYS)) {
@@ -114,7 +164,7 @@ export function loadVocabulary(dir, domain = null) {
 
 function clone(o) { return JSON.parse(JSON.stringify(o)) }
 
-export function applyVocabulary(reportFields, persona, vocab) {
+export function applyVocabulary(reportFields, persona, vocab, tierIds = []) {
   const w = vocab.words
   const rf = clone(reportFields)
   for (const f of rf.fields || []) {
@@ -126,7 +176,7 @@ export function applyVocabulary(reportFields, persona, vocab) {
   const ui = { ...(rf.dashboard_ui || {}) }
   let touchedUi = false
   const tiers = {}
-  for (const t of ['reporter', 'field_worker', 'animal_health_technician', 'operator']) if (w['tiers.' + t]) tiers[t] = w['tiers.' + t]
+  for (const t of tierIds) if (w['tiers.' + t]) tiers[t] = w['tiers.' + t]
   if (Object.keys(tiers).length) { ui.tier_labels = { ...(ui.tier_labels || {}), ...tiers }; touchedUi = true }
   const relabel = {}
   for (const [k, v] of Object.entries(w)) if (k.startsWith('nav.')) relabel[k.slice(4)] = v

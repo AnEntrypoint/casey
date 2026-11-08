@@ -1,16 +1,15 @@
+import { loadDomainConfig } from './config-loader.js'
 
+const { domain } = loadDomainConfig()
 
-export const TIER_REPORTER = 'reporter'
-export const TIER_FIELD_WORKER = 'field_worker'
-export const TIER_ANIMAL_HEALTH_TECHNICIAN = 'animal_health_technician'
-export const TIER_OPERATOR = 'operator'
+export const TIER = Object.freeze({ ...domain.tiers })
 
-export const TIER_ORDER = [TIER_REPORTER, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR]
+export const TIER_ORDER = Object.values(TIER)
 
 const RANK = new Map(TIER_ORDER.map((tier, i) => [tier, i]))
 
 export function resolveTierValue(value) {
-  return RANK.has(value) ? value : TIER_REPORTER
+  return RANK.has(value) ? value : TIER.reporter
 }
 
 export function resolveContactTier(contact) {
@@ -26,29 +25,24 @@ export function atLeast(value, min) {
 }
 
 export function canQueryCases(value) {
-  return atLeast(value, TIER_FIELD_WORKER)
+  return atLeast(value, TIER.field)
 }
 
 export function isOperator(value) {
-  return atLeast(value, TIER_OPERATOR)
+  return atLeast(value, TIER.operator)
 }
 
 export function canSignOff(value) {
-  return resolveTierValue(value) === TIER_ANIMAL_HEALTH_TECHNICIAN
+  return resolveTierValue(value) === TIER.specialist
 }
 
-export const ADMIN_ONLY_TIERS = [TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR]
+export const ADMIN_ONLY_TIERS = domain.admin_only_tiers.map(key => TIER[key])
 
 export function grantableBy(isAdmin) {
-  return TIER_ORDER.filter(t => t !== TIER_REPORTER && (isAdmin || !ADMIN_ONLY_TIERS.includes(t)))
+  return TIER_ORDER.filter(t => t !== TIER.reporter && (isAdmin || !ADMIN_ONLY_TIERS.includes(t)))
 }
 
-export const DEFAULT_TIER_LABELS = {
-  [TIER_REPORTER]: 'Reporter',
-  [TIER_FIELD_WORKER]: 'Field worker',
-  [TIER_ANIMAL_HEALTH_TECHNICIAN]: 'Animal health technician',
-  [TIER_OPERATOR]: 'Operator',
-}
+export const DEFAULT_TIER_LABELS = Object.fromEntries(Object.entries(TIER).map(([key, id]) => [id, domain.tier_labels[key]]))
 
 export function tierLabel(value, labels = null) {
   const tier = resolveTierValue(value)

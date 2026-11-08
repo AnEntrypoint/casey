@@ -4,7 +4,7 @@ import { observation, flagNeedsHuman, raiseOperatorItem } from './case-writes.js
 import { applyServiceControls, isLlmDown } from './service-controls.js'
 import { describeMedia, recordInboundMedia, recordInboundLocation, transcribeInboundAudio, inboundAudioData } from './media-intake.js'
 import { voiceNote, voiceFailureNote } from '../stt/readback.js'
-import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
+import { atLeast, resolveContactTier, resolveTierValue, TIER } from '../contact-tiers.js'
 import { routeStaffArtifact, recordRelayedLocationPin, noteRoute, routeChoices } from './media-relay.js'
 import { staffLabel } from './staff-outbound.js'
 import { truncate, stripChannelMarkup, mergeTag, dropTag } from './heuristics.js'
@@ -14,7 +14,6 @@ import { tagList } from '../timestamp.js'
 import { stampReporter } from '../phone-persons.js'
 import { tapNote } from '../choices.js'
 import { isBarePin, answerBarePin } from '../pin-query.js'
-import { resolveTierValue, TIER_REPORTER } from '../contact-tiers.js'
 
 export function messageId(msg) {
   return msg.raw?.id || msg.id || ''
@@ -90,7 +89,7 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
 
 async function isTeamSender(store, caseRow) {
   const contact = caseRow.contact_id ? await store.getContact(caseRow.contact_id) : null
-  return !!contact && atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)
+  return !!contact && atLeast(resolveContactTier(contact), TIER.field)
 }
 
 export async function applyInboundSideEffects({ store, log, caseRow, created, msg, channel, inboundText, media }) {
@@ -137,7 +136,7 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   try { await store.appendEvent(caseRow.id, { kind: 'note', actor: 'system', text: `Case opened from ${channel}` }) }
   catch (e) { log.warn?.('[casey] case-opened note failed', { caseId: caseRow.id, error: e.message }) }
 
-  if (caseRow.contact_id && resolveTierValue(caseRow.reporter_tier) === TIER_REPORTER) {
+  if (caseRow.contact_id && resolveTierValue(caseRow.reporter_tier) === TIER.reporter) {
     try { await stampReporter(store, caseRow.contact_id, caseRow.id) }
     catch (e) { log.warn?.('[casey] reporter stamp failed', { caseId: caseRow.id, error: e.message }) }
   }

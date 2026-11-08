@@ -2,7 +2,7 @@ import { isOpenCase } from './format.js'
 import { tagList } from './timestamp.js'
 import { OPTED_OUT_TAG } from './hooks/heuristics.js'
 import { isOwnConversation } from './case-assignment.js'
-import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from './contact-tiers.js'
+import { atLeast, resolveContactTier, TIER } from './contact-tiers.js'
 import { haversineKm, isValidLatLon } from './case-tools-shared.js'
 import { scrubNumbers } from './relay.js'
 import { identifyingLine } from './team-focus.js'
@@ -43,7 +43,7 @@ async function storeCheckIn(store, contact, pin) {
 
 export async function answerBarePin({ store, log, caseRow, msg }) {
   const contact = caseRow.contact_id ? await store.getContact(caseRow.contact_id) : null
-  if (!contact || !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)) return null
+  if (!contact || !atLeast(resolveContactTier(contact), TIER.field)) return null
   const pin = msg.location
   if (!isValidLatLon(pin.lat, pin.lon)) return null
   await storeCheckIn(store, contact, pin)

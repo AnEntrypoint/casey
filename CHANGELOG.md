@@ -22,7 +22,7 @@ supposed to look like once the code moves on.
 ### Fixed
 - **The bootstrap admin password is no longer printed to the log.** On a fresh
   deployment `ensureBootstrapAdmin()` printed the generated admin password to
-  stdout, which on the production VM is `/var/log/uhh/uhh.log`, tailed by the
+  stdout, which on the production host goes to the log file, tailed by the
   Google Cloud Ops Agent and shipped to Cloud Logging -- so a live admin
   credential landed in a log store readable by anyone with log-reader access.
   The password is now written to a root-only file (`bootstrap-admin-password.txt`,
@@ -34,7 +34,7 @@ supposed to look like once the code moves on.
   Witnessed live on WhatsApp: a person wrote "we have 4 stray dogs that look very ill they're all
   covulsing, you can contact us at the office at <url>", the model called no tool, and the reply
   asked who was writing -- so the report stayed blank and every later reply (whose still-needed list
-  is read from the RECORD) asked for the animals and signs they had just given. Worse, the model
+  is read from the RECORD) asked for the subjects and signs they had just given. Worse, the model
   also re-asked whether the team could keep what they send, months after that number had agreed, and
   nothing caught it: shape 15 is withheld once consent is settled and no other shape reads the ask as
   wrong. `reply-judge.js` shape 18 (`not-recorded`) flags a reply that leaves a plainly-reported
@@ -50,7 +50,7 @@ supposed to look like once the code moves on.
   `m.document`/`m.video`, so Meta's documented `{type:'location',
   location:{latitude,longitude,name,address,url}}` message reached the turn as a
   no-text, no-media event with the coordinates thrown away -- a field worker
-  sharing where the animals are got a "what can I help with?" reply. The adapter
+  sharing where the subjects are got a "what can I help with?" reply. The adapter
   now normalises the pin (it carries no media id and must never enter the
   two-hop download path) and `hooks/media-intake.js`'s `recordInboundLocation`
   writes it to the case's lat/lon columns with `location_source: 'gps'`
@@ -128,7 +128,7 @@ supposed to look like once the code moves on.
   dashboard's 4000). It also omitted `CASEY_SESSION_SECRET`, which the docs said
   it wrote, and `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS`, which `doctor` checks for.
 - **`casey doctor` says which `.env` it looked for.** It checked casey's own
-  package root and reported ".env missing" on a deployer package (uhh, serpent)
+  package root and reported ".env missing" on a deployer package
   that loads its own `.env` before importing casey at all, then recommended a
   `casey init` that would scaffold a second one in the wrong directory.
 
@@ -142,9 +142,9 @@ supposed to look like once the code moves on.
   WhatsApp/Discord adapters (`src/adapters/`) that freddie used to provide.
 - **The domain is config, not code.** `CASEY_CONFIG_DIR` +
   `src/config-loader.js` + `src/store/report-shape.js` replace the
-  hardcoded animal-health vocabulary; this repo ships a generic IT-helpdesk
-  demo under `config/default/`, and the animal-health deployment moved to
-  the separate `AnEntrypoint/uhh` config package. `CASEY_EXTRA_PLUGINS_DIR`
+  hardcoded domain vocabulary; this repo ships a generic IT-helpdesk
+  demo under `config/default/`, and a deployment's domain moved to
+  a separate deployer config package. `CASEY_EXTRA_PLUGINS_DIR`
   and `CASEY_EXTRA_DASHBOARD_ROUTES` let a deployer add tools and dashboard
   routes without casey knowing the domain.
 - **Composed dependencies resolve locally.** `thatcher`, `acptoapi` and
@@ -541,7 +541,7 @@ supposed to look like once the code moves on.
   target the channel (delivery target is split from the case-identity key).
 - A complete report no longer dead-ends on "Thank you. Your reference is X": once
   every field is captured, memobot confirms the report is on record and invites a
-  fresh report for any other animal or place, so a finished case has a clean exit.
+  fresh report for any other subject or place, so a finished case has a clean exit.
 - Intake no longer loops when an asked field has no extractor: a worker's free-text
   answer ("boyi son of the owner") to a question like "who is there and how are they
   linked to the owner?" is now bound to that field (bindPendingAsk) instead of being
@@ -549,9 +549,9 @@ supposed to look like once the code moves on.
   asked on two consecutive turns.
 
 ### Changed
-- Intake is reframed for a field worker relaying a farmer's animals rather than the
+- Intake is reframed for a field worker relaying a farmer's subjects rather than the
   owner: the asks and the system prompt request only what the worker can see ("what
-  can be seen in the animals") or relay ("how long the animals have been like this,
+  can be seen in the subject") or relay ("how long the subject has been like this,
   from what the person says" -- never "when you first noticed it"), lead with
   worker-observable facts, and capture who is on site and their link to the owner
   (owner/relative/herder) plus the owner's contact, so an absent owner with a
@@ -568,7 +568,7 @@ supposed to look like once the code moves on.
   intake reply (intakeAdvanceReply) leads with a brief greeting or a just-captured-
   fact acknowledgement plus the ask for the next needed fact, never the "Thank you
   for letting us know ... your reference is X" holding-ack preamble. A bare greeting
-  opens warmly and asks the first needed fact (where/which animals); intake keeps
+  opens warmly and asks the first needed fact (where/which subject); intake keeps
   asking every still-missing visit-critical fact, one per turn, once each, including
   the tool-only how_to_find/farmer_available/contact_fallback.
 - Escape route for a returning contact with a new case: detectNewCaseConflict flags
@@ -618,7 +618,7 @@ supposed to look like once the code moves on.
   excludes forward-looking tokens, and a token merely containing "thank"
   ("thankfully") no longer classifies as thanks.
 - Field capture: horse/donkey/chicken/poultry and isiXhosa `iimvu` are captured
-  as species (were silently dropped, so intake re-asked a stated animal); a
+  as species (were silently dropped, so intake re-asked a stated subject); a
   location no longer absorbs the trailing place-type word ("Greenvalley farm" ->
   "Greenvalley"); and a captured-field acknowledgement no longer stacks on the
   generic holding ack (a double thank-you that overran the 240-char reply cap).
@@ -741,7 +741,7 @@ supposed to look like once the code moves on.
 
 ### Changed
 - First contact greeting is neutral about ownership across en/af/zu/xh, since the
-  reporter is often organising-team staff inspecting someone else's animals, not
+  reporter is often organising-team staff inspecting someone else's subjects, not
   the owner.
 - `casey doctor` and `casey up` print the data-dir location.
 

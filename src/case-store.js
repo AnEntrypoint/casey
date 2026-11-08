@@ -13,7 +13,7 @@ import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 import { tokens } from './correlate.js'
 import { DERIVED_ONLY_FIELDS, writeGuardViolation, toStorable, installVersionGuard } from './store/guards.js'
 import { REPORT_KEYS, REPORT_KEY_ORDER, AREA_FIELD, SYSTEM_SET_FIELDS } from './store/report-shape.js'
-import { TIER_ORDER, TIER_FIELD_WORKER, atLeast, resolveTierValue } from './contact-tiers.js'
+import { TIER_ORDER, atLeast, resolveTierValue, TIER } from './contact-tiers.js'
 import { isContactAssignee } from './case-assignment.js'
 import { byCreatedAscList, byCreatedDescList } from './store/query.js'
 import { validateCaseConfig, parseFieldEnums } from './store/config-schema.js'
@@ -262,7 +262,7 @@ export class CaseStore {
   }
 
   async _releaseHeldCases(contactId, tier, user) {
-    if (atLeast(tier, TIER_FIELD_WORKER)) return
+    if (atLeast(tier, TIER.field)) return
     return this.releaseCasesHeldBy(`contact:${contactId}`, 'the team member holding it lost their role', user)
   }
 

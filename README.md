@@ -12,34 +12,26 @@ does not impose domain-specific rules or escalation; priority stays with the
 people. Times are shown in SAST and phone numbers in +27 format by default
 (overridable via `CASEY_TZ`/`CASEY_COUNTRY_CODE`).
 
-This repo ships a generic **IT/facilities-helpdesk** demo config by default.
-The animal-disease-surveillance-for-rural-South-Africa domain casey was
-originally built for is a separate, fully self-contained config package:
-[`AnEntrypoint/uhh`](https://github.com/AnEntrypoint/uhh) (private). Install
-it with `git clone --recurse-submodules` and run `node ./bin/uhh.js up`; it
-declares casey as `file:deps/casey`, and an in-repo `file:` dependency cannot
-be resolved inside an npx-installed package, so `npx github:AnEntrypoint/uhh`
-does not work.
+This repository contains no deployment's domain. A deployment supplies it as a
+config directory named by `CASEY_CONFIG_DIR` (see "Configuring casey" below).
+The deployment package that configures casey is maintained separately from
+this repository.
 
 ## Configuring casey
 
 Point `CASEY_CONFIG_DIR` at a directory holding `thatcher.config.yml`,
-`report-fields.yml`, and `persona.cjs` to swap casey's entire domain (report
-vocabulary, agent persona, entity schema, dashboard labels) with no code
-change. See `AGENTS.md`'s "Configuration architecture" section for the full
-schema, and `AnEntrypoint/uhh`'s `config/` directory for a real worked
-example.
+`report-fields.yml`, `persona.cjs`, `vocabulary.yml` and `portal-defaults.yml`
+to set casey's entire domain (report vocabulary, agent persona, entity schema,
+dashboard labels) with no code change. Loading the domain config throws when
+`CASEY_CONFIG_DIR` is unset. See `AGENTS.md`'s "Configuration architecture"
+section for the full schema.
 
-The three files are not resolved by one mechanism. `src/config-loader.js`
-reads `report-fields.yml` and `persona.cjs` from `CASEY_CONFIG_DIR`, falling
-back to this repo's bundled `config/default/`. `thatcher.config.yml` is
-resolved separately -- by `src/case-store.js`'s `CaseStore` constructor and
-`config-loader.js`'s `readThatcherFieldEnum`, each using `CASEY_CONFIG_DIR`
-if set and otherwise `<cwd>/thatcher.config.yml`. `config/default/` therefore
-ships only two of the three files; the third is this repo's own root
-`thatcher.config.yml`. Copying `config/default/` as a template for a new
-deployment gives an incomplete config dir -- copy the root
-`thatcher.config.yml` alongside it.
+The files are not all resolved the same way. `src/config-loader.js` reads
+`report-fields.yml`, `persona.cjs` and `vocabulary.yml` from `CASEY_CONFIG_DIR`.
+`thatcher.config.yml` is resolved separately, by `src/case-store.js`'s
+`CaseStore` constructor and `config-loader.js`'s `readThatcherFieldEnum`, each
+using `CASEY_CONFIG_DIR` if set and otherwise `<cwd>/thatcher.config.yml`.
+Keep all of them in the same config directory.
 
 casey is a thin orchestrator that composes four existing projects, each
 checked out as a git submodule under `deps/` for local editing -- see

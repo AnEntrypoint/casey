@@ -1,10 +1,11 @@
+import { visibleToolName } from './config-loader.js'
 import { defTool, str } from './case-tools-shared.js'
 import { staffLabel } from './hooks/staff-outbound.js'
 import { mergeTag, dropTag } from './hooks/heuristics.js'
 import { isOpenCase } from './format.js'
 import { writeGate, recordedOn, clearFocusForCase } from './team-focus.js'
 import { REPORT_ENTITY_LABEL } from './store/report-shape.js'
-import { atLeast, TIER_FIELD_WORKER } from './contact-tiers.js'
+import { atLeast, TIER } from './contact-tiers.js'
 import { assigneeKeyFor, isOwnConversation } from './case-assignment.js'
 import { AGENT_USER } from './case-store.js'
 import { NOT_ASSIGNED, findCase, authorityOn, deskAuthorityOn, actorData } from './case-tools-team-shared.js'
@@ -37,7 +38,7 @@ export function buildRelayTools(store) {
         await writeNote(store(), c, ctx, { tag: RANGER_NOTE, label: 'RANGER NOTE', text: note })
         return { ok: true, recorded_on: await recordedOn(store(), c, ctx), noted_for_the_technician: true, sent_to_anyone: false }
       }),
-    defTool('case_note_to_ranger', 'cases',
+    defTool(visibleToolName('case_note_to_specialist'), 'cases',
       `Leave a short note for the ranger who holds a ${REPORT_ENTITY_LABEL}, on the record, WITHOUT messaging them: nothing is sent, and it is not subject to the 24 hour window. The ranger sees it the next time they talk to the assistant (what is waiting for them) and it is on the console timeline. Use it for an answer or instruction for the ranger that need not be sent now; use case_ask_ranger to send a question to a ranger who filed a record. No phone numbers are kept in it.`,
       { type: 'object', properties: { case: str('Record reference or id'), text: str('The note for the ranger') }, required: ['case', 'text'] },
       async ({ case: ref, text }, ctx) => {
@@ -63,7 +64,7 @@ export function buildRelayTools(store) {
         const target = await resolveTeamContact(store(), to); if (target.error) return target
         const them = target.contact
         if (them.id === ctx.contact.id) return { error: 'That is you: name a different team member.' }
-        if (!atLeast(them.tier, TIER_FIELD_WORKER)) return { error: 'That person is not on the team.' }
+        if (!atLeast(them.tier, TIER.field)) return { error: 'That person is not on the team.' }
         if (isOwnConversation(c, them)) return { error: 'That record is their own chat with the assistant, so it cannot be handed to them.' }
         const by = staffLabel(ctx.contact)
         await store().appendEvent(c.id, {

@@ -1,32 +1,35 @@
 
 
+import { visibleToolName } from './config-loader.js'
 import { boundCase } from './case-tools-shared.js'
-import { atLeast, TIER_REPORTER, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR } from './contact-tiers.js'
+import { atLeast, TIER } from './contact-tiers.js'
 
 export const REPORT_ONLY_TOOLS = new Set(['case_report', 'case_stop', 'case_handoff', 'case_new', 'case_feedback', 'case_speaker', 'case_consent', 'case_clarify'])
 
-export const TOOL_MIN_TIER = {
-  case_search: TIER_FIELD_WORKER, case_pending: TIER_FIELD_WORKER, case_claim: TIER_FIELD_WORKER, case_release: TIER_FIELD_WORKER,
-  case_dispatch_reply: TIER_FIELD_WORKER, case_focus: TIER_FIELD_WORKER, case_gaps: TIER_FIELD_WORKER,
-  case_contact: TIER_FIELD_WORKER, case_edit: TIER_FIELD_WORKER, case_stage: TIER_FIELD_WORKER,
-  case_message: TIER_FIELD_WORKER,
-  signoff_queue: TIER_ANIMAL_HEALTH_TECHNICIAN, case_review: TIER_ANIMAL_HEALTH_TECHNICIAN,
-  case_reopen: TIER_ANIMAL_HEALTH_TECHNICIAN, case_ask_ranger: TIER_ANIMAL_HEALTH_TECHNICIAN,
-  team_queue: TIER_OPERATOR, team_handover: TIER_OPERATOR, team_assign: TIER_OPERATOR,
-  team_draft: TIER_OPERATOR, team_invite: TIER_OPERATOR,
-  team_register: TIER_OPERATOR, team_roster: TIER_OPERATOR, team_quiet_staff: TIER_OPERATOR,
-  team_nudge_staff: TIER_OPERATOR, team_feedback: TIER_OPERATOR,
-  case_handoff_to_technician: TIER_FIELD_WORKER, case_my_day: TIER_FIELD_WORKER,
-  team_ranger_day: TIER_OPERATOR, team_relocate_case: TIER_OPERATOR,
-  case_visit: TIER_FIELD_WORKER, case_visit_log: TIER_FIELD_WORKER,
-  case_note_to_ranger: TIER_ANIMAL_HEALTH_TECHNICIAN,
-  case_withdraw_handoff: TIER_FIELD_WORKER,
-  case_photos: TIER_FIELD_WORKER,
+const GENERIC_TOOL_MIN_TIER = {
+  case_search: TIER.field, case_pending: TIER.field, case_claim: TIER.field, case_release: TIER.field,
+  case_dispatch_reply: TIER.field, case_focus: TIER.field, case_gaps: TIER.field,
+  case_contact: TIER.field, case_edit: TIER.field, case_stage: TIER.field,
+  case_message: TIER.field,
+  signoff_queue: TIER.specialist, case_review: TIER.specialist,
+  case_reopen: TIER.specialist, case_ask_specialist: TIER.specialist,
+  team_queue: TIER.operator, team_handover: TIER.operator, team_assign: TIER.operator,
+  team_draft: TIER.operator, team_invite: TIER.operator,
+  team_register: TIER.operator, team_roster: TIER.operator, team_quiet_staff: TIER.operator,
+  team_nudge_staff: TIER.operator, team_feedback: TIER.operator,
+  case_handoff_to_specialist: TIER.field, case_my_day: TIER.field,
+  team_specialist_day: TIER.operator, team_relocate_case: TIER.operator,
+  case_visit: TIER.field, case_visit_log: TIER.field,
+  case_note_to_specialist: TIER.specialist,
+  case_withdraw_handoff: TIER.field,
+  case_photos: TIER.field,
 }
 
+export const TOOL_MIN_TIER = Object.fromEntries(Object.entries(GENERIC_TOOL_MIN_TIER).map(([name, tier]) => [visibleToolName(name), tier]))
+
 export function minTierOf(name) {
-  if (REPORT_ONLY_TOOLS.has(name)) return TIER_REPORTER
-  return TOOL_MIN_TIER[name] || TIER_FIELD_WORKER
+  if (REPORT_ONLY_TOOLS.has(name)) return TIER.reporter
+  return TOOL_MIN_TIER[name] || TIER.field
 }
 
 export function toolVisibleToTier(name, tier) {

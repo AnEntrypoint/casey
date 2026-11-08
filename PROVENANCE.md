@@ -2,8 +2,8 @@
 
 This file collects the non-code design decisions and open deployment
 questions for the additive ground-truth/provenance layer described in
-AGENTS.md's "Provenance subsystem" section. Code lives in `src/core/` and
-`src/packs/`. This file is where the surrounding policy,
+AGENTS.md's "Provenance subsystem" section. Code lives in `src/core/`, and each deployment's pack lives in its config directory as `CASEY_CONFIG_DIR/pack.cjs`.
+This file is where the surrounding policy,
 research, and operational questions live -- items that are real, named,
 and load-bearing for an actual deployment, but are not code.
 
@@ -28,7 +28,7 @@ vet service's case categories look like. This subsystem does not invent a
 new chain -- it slots into the one casey already assumes.
 
 - Notifiable/reportable disease alignment: casey's `suspected_disease`
-  codelist (see `src/packs/animal-health.js`) is a starter list
+  codelist (see the `suspected_disease` codelist in the deployment's `pack.cjs`) is a starter list
   (foot_and_mouth, newcastle, anthrax, rabies) chosen as illustrative
   examples of WOAH-notifiable diseases; a real deployment MUST replace this
   codelist with the exact list its national veterinary authority maintains

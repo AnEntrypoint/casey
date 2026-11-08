@@ -1,3 +1,4 @@
+import { visibleToolName } from './config-loader.js'
 import { vocabText } from './config-loader.js'
 
 
@@ -5,7 +6,7 @@ import { defTool, str } from './case-tools-shared.js'
 import { tagList, tsMs } from './timestamp.js'
 import { isOpenCase, fmtPhone27 } from './format.js'
 import { rankAttention } from './attn.js'
-import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, TIER_FIELD_WORKER, grantableBy, atLeast, resolveTierValue } from './contact-tiers.js'
+import { TIER_ORDER, grantableBy, atLeast, resolveTierValue, TIER } from './contact-tiers.js'
 import { assigneeKeyFor, isAssignedTo, isOwnConversation, contactIdOfAssignee, isContactAssignee } from './case-assignment.js'
 import { createInvite, normalizeMsisdn } from './role-invites.js'
 import { sendStaffMessage, pendingDraft, releaseCase, staffLabel } from './hooks/staff-outbound.js'
@@ -32,7 +33,7 @@ const isUnassigned = (c) => { const a = String(c.assignee || '').trim(); return 
 
 export async function teamContacts(store) {
   const all = await store.listContacts({ limit: 500 })
-  return all.filter(k => atLeast(k.tier, TIER_FIELD_WORKER))
+  return all.filter(k => atLeast(k.tier, TIER.field))
 }
 
 export async function resolveTeamContact(store, name) {
@@ -249,7 +250,7 @@ export function buildTeamOperatorTools(store) {
           cases.sort((a, b) => b.quiet_hours - a.quiet_hours)
           out.push({
             name: staffLabel(k), role: TIER_LABELS[resolveTierValue(k.tier)], phone: fmtPhone27(k.external_id),
-            reachable_through_assistant: reachable, see_their_day_with: 'team_ranger_day', waiting_reporters: cases.filter(x => x.reporter_waiting).length, cases: cases.slice(0, 8),
+            reachable_through_assistant: reachable, see_their_day_with: visibleToolName('team_specialist_day'), waiting_reporters: cases.filter(x => x.reporter_waiting).length, cases: cases.slice(0, 8),
             nudge_text: `Hello ${staffLabel(k).split(' ')[0]}, it is ${staffLabel(ctx.contact)} from the team. ${cases.length === 1 ? `${cases[0].ref} has` : `${cases.length} of your records have`} been quiet${cases.some(x => x.reporter_waiting) ? ' and the reporter is waiting to hear from you' : ''}. Can you update us or tell us if someone else should take ${cases.length === 1 ? 'it' : 'them'}?`,
           })
         }

@@ -2,13 +2,13 @@
 
 import { extractCode, claimInvite, attemptsExhausted, noteFailedAttempt, withoutIssuedCodes, issuedLooseCode, ATTEMPT_WINDOW_MS } from '../role-invites.js'
 import { TIER_LABELS } from '../store/report-shape.js'
-import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR, tierLabel } from '../contact-tiers.js'
+import { tierLabel, TIER } from '../contact-tiers.js'
 import { vocabText } from '../config-loader.js'
 
 const WELCOME = {
-  [TIER_FIELD_WORKER]: (label) => vocabText('ui.role_welcome_field_worker', 'You are registered as {label}. Message me the way you already do: describe what you see (animal, how many, where, what is wrong) and send photos or a voice note. Ask "my cases" or "what is open near me" any time. I will also record where you are if you share a location pin.', { label }),
-  [TIER_ANIMAL_HEALTH_TECHNICIAN]: (label) => vocabText('ui.role_welcome_technician', 'You are registered as {label}. You can see and update your cases here, and you are the one who signs a case off as resolved once help has been given -- tell me when a case is done and I will check the record is complete first. Ask "my cases" or "waiting for sign off" any time.', { label }),
-  [TIER_OPERATOR]: (label) => vocabText('ui.role_welcome_operator', 'You are registered as {label}. You can work the queue from here: ask what needs attention, reply to a reporter, assign a case, or say "invite eco ranger" / "invite technician" to get a one-time code for a new team member. Signing a case off stays with the technician.', { label }),
+  [TIER.field]: (label) => vocabText('ui.role_welcome_field_worker', 'You are registered as {label}. Message me the way you already do: describe what you see (animal, how many, where, what is wrong) and send photos or a voice note. Ask "my cases" or "what is open near me" any time. I will also record where you are if you share a location pin.', { label }),
+  [TIER.specialist]: (label) => vocabText('ui.role_welcome_technician', 'You are registered as {label}. You can see and update your cases here, and you are the one who signs a case off as resolved once help has been given -- tell me when a case is done and I will check the record is complete first. Ask "my cases" or "waiting for sign off" any time.', { label }),
+  [TIER.operator]: (label) => vocabText('ui.role_welcome_operator', 'You are registered as {label}. You can work the queue from here: ask what needs attention, reply to a reporter, assign a case, or say "invite eco ranger" / "invite technician" to get a one-time code for a new team member. Signing a case off stays with the technician.', { label }),
 }
 
 const REFUSAL_DEFAULTS = {
@@ -71,5 +71,5 @@ export async function tryRegisterByCode({ store, log, adapter, msg, channel, ext
   }
   log.info?.('[casey] role registered by code', { channel, tier: outcome.tier })
   const label = tierLabel(outcome.tier, labels)
-  return say((WELCOME[outcome.tier] || WELCOME[TIER_FIELD_WORKER])(label))
+  return say((WELCOME[outcome.tier] || WELCOME[TIER.field])(label))
 }

@@ -1,8 +1,6 @@
 
 
-import {
-  atLeast, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR, resolveTierValue,
-} from '../contact-tiers.js'
+import { atLeast, resolveTierValue, TIER } from '../contact-tiers.js'
 import { SAST_TZ } from '../format.js'
 import { TIER_LABELS, DIAGNOSIS_STATUS_KEY, DIAGNOSIS_STATUS_OPTIONS } from '../store/report-shape.js'
 
@@ -74,20 +72,20 @@ export function feedbackSection() {
 
 export function roleSection(persona, caseRow, contact) {
   const tier = resolveTierValue(contact?.tier)
-  if (!atLeast(tier, TIER_FIELD_WORKER)) return []
+  if (!atLeast(tier, TIER.field)) return []
 
-  const isTechnician = tier === TIER_ANIMAL_HEALTH_TECHNICIAN
+  const isTechnician = tier === TIER.specialist
   if (isTechnician) {
     return [
       ``,
       `THE PERSON WRITING TO YOU IS THE ANIMAL HEALTH TECHNICIAN, on their own registered phone. Whatever disease and recommended resolution they state are THEIR professional statement, recorded as theirs. A ${persona.entityLabel} that holds every required fact and is handed over or held by nobody is on THEIR desk, so it is theirs to sign off: it does not have to be assigned to them. When they name a ${persona.entityLabel}, give a disease and a recommended resolution and ask to sign off, that IS the sign-off request: do it (case_review if you have not yet looked, then case_transition with identified_disease and recommended_resolution), and only ask when something the tool names is missing. Never ask who they are, never say signing off is someone else's job, and never refuse because the ${persona.entityLabel} is unassigned. If they send only a reference, look at it with case_review (not case_get) and reply in two short sentences: what it holds, and, if it holds every required fact, ask for the identified disease and the recommended resolution so you can sign it off (they can answer without repeating the reference).${certaintyClause()} Never offer a menu of things you could do with it.`,
-      ...technicianBlock(persona, TIER_LABELS[TIER_ANIMAL_HEALTH_TECHNICIAN]),
-      ...fieldBlock(persona, TIER_LABELS[TIER_FIELD_WORKER], { signsOff: true }),
+      ...technicianBlock(persona, TIER_LABELS[TIER.specialist]),
+      ...fieldBlock(persona, TIER_LABELS[TIER.field], { signsOff: true }),
     ]
   }
   return [
-    ...fieldBlock(persona, TIER_LABELS[TIER_FIELD_WORKER], { signsOff: false }),
-    ...(atLeast(tier, TIER_ANIMAL_HEALTH_TECHNICIAN) ? technicianBlock(persona, TIER_LABELS[TIER_ANIMAL_HEALTH_TECHNICIAN]) : []),
-    ...(atLeast(tier, TIER_OPERATOR) ? operatorBlock(persona, TIER_LABELS[TIER_OPERATOR]) : []),
+    ...fieldBlock(persona, TIER_LABELS[TIER.field], { signsOff: false }),
+    ...(atLeast(tier, TIER.specialist) ? technicianBlock(persona, TIER_LABELS[TIER.specialist]) : []),
+    ...(atLeast(tier, TIER.operator) ? operatorBlock(persona, TIER_LABELS[TIER.operator]) : []),
   ]
 }

@@ -1,5 +1,6 @@
 
 
+import { visibleToolName } from './config-loader.js'
 import { defTool, str } from './case-tools-shared.js'
 import { staffLabel } from './hooks/staff-outbound.js'
 import { writeGate, recordedOn } from './team-focus.js'
@@ -17,7 +18,7 @@ const NO_SUCH = { error: 'No such record. Ask for the reference again.' }
 
 export function buildTeamDeskTools(store) {
   return [
-    defTool('case_handoff_to_technician', 'cases',
+    defTool(visibleToolName('case_handoff_to_specialist'), 'cases',
       `Hand ONE assigned ${REPORT_ENTITY_LABEL} to the sign-off desk once the team member has confirmed it holds every required fact: it then shows in the animal health technician's queue and they are told. It stays with the team member (they keep supporting it) and the technician can send it back. Refused, naming what is missing, if a required fact is blank. Only for a ${REPORT_ENTITY_LABEL} assigned to this person; say the reference and the animals and place first and act only after they have confirmed it.`,
       { type: 'object', properties: { case: str('Record reference or id'), note: str('Optional short note for the technician') }, required: ['case'] },
       async ({ case: ref, note = '' }, ctx) => {
@@ -51,7 +52,7 @@ export function buildTeamDeskTools(store) {
         if (!contact?.id) return { error: 'Could not tell who you are on this conversation.' }
         return myDay(store(), { keys: await keysForContact(store(), contact), contact, tier: ctx.tier, name: staffLabel(contact) })
       }),
-    defTool('team_ranger_day', 'cases',
+    defTool(visibleToolName('team_specialist_day'), 'cases',
       `An operator's view of ONE team member's day: the same summary the ranger gets from their own assistant (their area's counts today, their own by stage, what changed since the day began, what each still needs, the sign-off desk for a technician). Use it after team_quiet_staff to see what is behind a quiet ranger. Give the ranger's name. No phone numbers.`,
       { type: 'object', properties: { name: str('The team member\'s name, as team_quiet_staff or team_roster shows it') }, required: ['name'] },
       async ({ name }, ctx) => {

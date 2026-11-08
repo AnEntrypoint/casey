@@ -9,7 +9,7 @@ export const BACKUP_FORMAT = 1
 
 export const NOT_INCLUDED = [
   { name: '.env', why: 'holds live channel tokens and the dashboard session key; restore it by hand from wherever secrets are kept' },
-  { name: 'config package (thatcher.config.yml, report-fields.yml, persona.cjs)', why: 'lives in the deployer package\'s own git repository, which is the authoritative copy' },
+  { name: 'config package (domain.yml, thatcher.config.yml, report-fields.yml, persona.cjs, pack.cjs, external-schema.cjs, dashboard.yml)', why: 'lives in the deployer package\'s own git repository, which is the authoritative copy' },
 ]
 
 function copyTree(src, dest) {

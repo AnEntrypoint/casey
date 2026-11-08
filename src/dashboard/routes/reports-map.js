@@ -5,6 +5,10 @@ import { SIGNOFF_DIAGNOSIS_FIELDS, DIAGNOSIS_STATUS_KEY, normalizeDiagnosisStatu
 import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY } from '../../privacy.js'
 import { fmtTimeSAST } from '../../format.js'
 import { mountRoutes } from './register.js'
+import { loadDomainConfig } from '../../config-loader.js'
+
+const reportsConfig = loadDomainConfig().dashboard?.reports ?? {}
+const HOME_VIEW = loadDomainConfig().dashboard?.map?.home_view ?? { centre: [0, 0], zoom: 2 }
 
 const POOL_CAP = 10000
 const DISEASE_KEY = SIGNOFF_DIAGNOSIS_FIELDS[0] || 'identified_disease'
@@ -18,22 +22,15 @@ export const RULED_OUT = 'ruled_out'
 
 export const statusOf = (report) => normalizeDiagnosisStatus(report[DIAGNOSIS_STATUS_KEY]) || CONFIRMED
 export const NO_CONCLUSION = 'Not stated'
-const RESOLUTION_KINDS = [
-  ['Vaccination', /vaccin|\binent|\binspuit|entstof|immuni[sz]/i],
-  ['Quarantine or movement control', /quarantin|\bisolat(?:e\b|ion|ing)(?! sample)|\bseparat(?:e|ing) (?:the |sick |affected )?(?:animals|herd|sick)|movement|restrict|beweging|kwarantyn|isoleer/i],
-  ['Culling or disposal', /\bcull|slaughter|destroy|dispos|\bbury|\bburn|doodmaak|\bbegrawe|\bverbrand|\bslagting\b|\bslag (?:die|al die|dit)\b/i],
-  ['Treatment', /treat|medic|antibiotic|drug|dose|inject|\bdip(?:ping)?\b|dren[ck]|behandel/i],
-  ['Referred to a vet or lab', /\bvet(?:erinar)?\b|veearts|monster|\brefer|laborator|\blab\b|sample|verwys/i],
-  ['Monitoring', /monitor|watch|follow.?up|observ|\breview|revisit|\bvolg|\bopvolg|dophou/i],
-]
+const RESOLUTION_KINDS = (reportsConfig.advice_kinds ?? []).map((k) => [k.label, new RegExp(k.pattern, 'i')])
 export const OTHER_CONCLUSION = 'Other advice'
 
-const NEGATED = /\b(?:no|not|without|never|don'?t|do not|geen|nie)[ \t]+(?:\w+[ \t]+){0,2}\w+/gi
+const NEGATED = reportsConfig.negation_pattern ? new RegExp(reportsConfig.negation_pattern, 'gi') : null
 
 export function conclusionKinds(text) {
   const raw = String(text == null ? '' : text)
   if (!raw.trim()) return [NO_CONCLUSION]
-  const t = raw.replace(NEGATED, ' ')
+  const t = NEGATED ? raw.replace(NEGATED, ' ') : raw
   const hit = RESOLUTION_KINDS.filter(([, re]) => re.test(t)).map(([k]) => k)
   return hit.length ? hit : [OTHER_CONCLUSION]
 }
@@ -311,7 +308,7 @@ export function getResolvedMap({ store, authed }) {
     const points = placed.filter(r => cellCount.get(cellKey(r.ll)) >= MIN_AGGREGATE_CELL).map(r => ({
       lat: r.ll.lat, lon: r.ll.lon, disease: r.disease, species: r.species, status: r.status, advice: r.conclusions, resolved_at: weekStartOf(r.sec),
     })).sort((a, b) => a.resolved_at < b.resolved_at ? -1 : a.resolved_at > b.resolved_at ? 1 : 0)
-    res.json({ ...stamp(w), k: MIN_AGGREGATE_CELL, count: points.length, withheld: floored(placed.length - points.length), without_location: floored(rows.length - placed.length), precision_km: 1, truncated, points })
+    res.json({ ...stamp(w), k: MIN_AGGREGATE_CELL, count: points.length, withheld: floored(placed.length - points.length), without_location: floored(rows.length - placed.length), precision_km: 1, truncated, points, home_view: HOME_VIEW })
   }
 }
 

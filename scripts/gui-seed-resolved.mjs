@@ -1,16 +1,11 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 
-
-const DISEASES = [
-  ['Foot and mouth disease', 30], ['Anthrax', 8], ['Lumpy skin disease', 26], ['Newcastle disease', 14],
-  ['Brucellosis', 9], ['Heartwater', 16], ['Pulpy kidney', 6], ['Rift Valley fever', 3], ['Ticks and tick-borne disease', 12],
-]
-const AREAS = [
-  ['Upper Lambasi', -31.55, 29.35, 22], ['Lower Lambasi', -31.62, 29.42, 16], ['Ngqeleni', -31.68, 29.03, 18],
-  ['Libode', -31.55, 29.04, 12], ['Port St Johns', -31.63, 29.54, 14], ['Lusikisiki', -31.36, 29.58, 10],
-  ['Bizana', -30.85, 29.86, 7], ['Flagstaff', -31.08, 29.49, 2],
-]
-const ADVICE = ['Vaccinate the herd and move no animals for 14 days', 'Treat the sick animals and watch the rest', 'Send a sample to the state vet', 'Cull the affected animals and bury them', 'Dip all animals weekly']
-const SPECIES = ['cattle', 'goats', 'sheep', 'chickens', 'pigs']
+const FX = JSON.parse(readFileSync(path.join(process.env.CASEY_CONFIG_DIR, 'gui-check', 'fixtures.json'), 'utf8'))
+const DISEASES = FX.resolved.diseases
+const AREAS = FX.resolved.areas
+const ADVICE = FX.resolved.advice
+const SPECIES = FX.resolved.species
 const pick = (list, r) => { let t = r * list.reduce((s, x) => s + x[list[0].length - 1], 0); for (const x of list) { t -= x[x.length - 1]; if (t <= 0) return x } return list[list.length - 1] }
 
 const rng = (seed) => () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296
@@ -26,7 +21,7 @@ export async function seedResolved(store, { n = 300, prefix = '2779', now = Math
     const [disease] = pick(DISEASES, R())
     const species = SPECIES[Math.floor(R() * SPECIES.length)]
     const bucket = R()
-    const report = { species, symptoms: 'sores and limping', location: 'Near the ' + area + ' clinic, call 0' + (820000000 + i), association: area }
+    const report = { species, symptoms: FX.resolved.symptoms, location: FX.resolved.locationPrefix + area + FX.resolved.locationSuffix + (820000000 + i), association: area }
     const noLoc = bucket > 0.9
     await store.mergeReport(c.id, report, { id: 'seed', role: 'agent' })
     await store.updateCase(c.id, noLoc ? {} : { lat: lat + (R() - 0.5) * 0.15, lon: lon + (R() - 0.5) * 0.15, location_source: 'estimated' }, admin)

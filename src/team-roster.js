@@ -2,7 +2,7 @@
 
 import crypto from 'node:crypto'
 import { taggedObservations } from './store/settings-log.js'
-import { atLeast, resolveTierValue, TIER_FIELD_WORKER } from './contact-tiers.js'
+import { atLeast, resolveTierValue, TIER } from './contact-tiers.js'
 import { normalizeMsisdn } from './role-invites.js'
 import { parseReport } from './timestamp.js'
 
@@ -96,7 +96,7 @@ export async function rolloutTable(store) {
     let messaged = false
     for (const cs of own) { if ((await store.listEvents(cs.id).catch(() => [])).some(e => e.kind === 'inbound')) { messaged = true; break } }
     status.set(p.key, {
-      registered: !!c && atLeast(resolveTierValue(c.tier), TIER_FIELD_WORKER),
+      registered: !!c && atLeast(resolveTierValue(c.tier), TIER.field),
       first_message: messaged,
       first_case: own.some(cs => Object.values(parseReport(cs) || {}).some(v => v != null && String(v).trim() !== '')),
     })

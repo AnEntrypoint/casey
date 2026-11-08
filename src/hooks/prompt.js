@@ -6,7 +6,7 @@ import { buildPromptContext } from './prompt-context.js'
 import { consentManaged } from '../phone-consent.js'
 import { headerSection, caseContextSection, gatherSection, replySection, speakerSection, consentSection, returnSection, stopConfirmSection } from './prompt-sections.js'
 import { roleSection, feedbackSection } from './prompt-roles.js'
-import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR } from '../contact-tiers.js'
+import { TIER } from '../contact-tiers.js'
 
 const { persona } = loadDomainConfig()
 
@@ -48,27 +48,27 @@ function selfCheckLoadBearingPromptContent() {
   const caseRow = { ref: 'SELFCHECK', id: 'selfcheck', status: 'triaging', priority: 'normal', assignee: null, subject: null, summary: null, tags: null, report: null, autonomy: 'auto' }
   const text = caseSystemPrompt(caseRow, events, staleContact)
 
-  const workerText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER_FIELD_WORKER })
+  const workerText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER.field })
 
-  const signOffText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER_ANIMAL_HEALTH_TECHNICIAN })
+  const signOffText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER.specialist })
 
-  const operatorText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER_OPERATOR })
+  const operatorText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER.operator })
   const roleBlocks = [
-    { name: 'field team block (which record first, confirm before writing)', pattern: /WHICH RECORD FIRST/, from: TIER_FIELD_WORKER },
-    { name: 'field team block (finishing is not theirs)', pattern: /FINISHING IS NOT YOURS/, from: TIER_FIELD_WORKER, exact: [TIER_FIELD_WORKER, TIER_OPERATOR] },
+    { name: 'field team block (which record first, confirm before writing)', pattern: /WHICH RECORD FIRST/, from: TIER.field },
+    { name: 'field team block (finishing is not theirs)', pattern: /FINISHING IS NOT YOURS/, from: TIER.field, exact: [TIER.field, TIER.operator] },
 
-    { name: 'technician finishing rule (the desk signs off)', pattern: /FINISHING\. This person is also the technician who signs/, from: TIER_ANIMAL_HEALTH_TECHNICIAN, exact: [TIER_ANIMAL_HEALTH_TECHNICIAN] },
-    { name: 'technician sign-off desk block', pattern: /SIGN-OFF DESK/, from: TIER_ANIMAL_HEALTH_TECHNICIAN },
-    { name: 'technician two-refusals rule', pattern: /two DIFFERENT refusals/, from: TIER_ANIMAL_HEALTH_TECHNICIAN },
-    { name: 'operator desk block', pattern: /OPERATOR DESK/, from: TIER_OPERATOR },
-    { name: 'operator cannot sign off', pattern: /CANNOT sign a/, from: TIER_OPERATOR },
-    { name: 'phone-plain-text rule for team replies', pattern: /PLAIN TEXT FOR A PHONE/, from: TIER_FIELD_WORKER },
-    { name: 'queue and handover answered as short plain lines', pattern: /QUEUE AND HANDOVER ANSWERS/, from: TIER_OPERATOR },
-    { name: 'case search phrasing and answer rules', pattern: /FINDING AND LISTING/, from: TIER_FIELD_WORKER },
-    { name: 'today date for relative ranges', pattern: /TODAY IS /, from: TIER_FIELD_WORKER },
+    { name: 'technician finishing rule (the desk signs off)', pattern: /FINISHING\. This person is also the technician who signs/, from: TIER.specialist, exact: [TIER.specialist] },
+    { name: 'technician sign-off desk block', pattern: /SIGN-OFF DESK/, from: TIER.specialist },
+    { name: 'technician two-refusals rule', pattern: /two DIFFERENT refusals/, from: TIER.specialist },
+    { name: 'operator desk block', pattern: /OPERATOR DESK/, from: TIER.operator },
+    { name: 'operator cannot sign off', pattern: /CANNOT sign a/, from: TIER.operator },
+    { name: 'phone-plain-text rule for team replies', pattern: /PLAIN TEXT FOR A PHONE/, from: TIER.field },
+    { name: 'queue and handover answered as short plain lines', pattern: /QUEUE AND HANDOVER ANSWERS/, from: TIER.operator },
+    { name: 'case search phrasing and answer rules', pattern: /FINDING AND LISTING/, from: TIER.field },
+    { name: 'today date for relative ranges', pattern: /TODAY IS /, from: TIER.field },
   ]
-  const composed = { reporter: text, [TIER_FIELD_WORKER]: workerText, [TIER_ANIMAL_HEALTH_TECHNICIAN]: signOffText, [TIER_OPERATOR]: operatorText }
-  const rungs = [TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR]
+  const composed = { reporter: text, [TIER.field]: workerText, [TIER.specialist]: signOffText, [TIER.operator]: operatorText }
+  const rungs = [TIER.field, TIER.specialist, TIER.operator]
   for (const { name, pattern, from, exact } of roleBlocks) {
     if (pattern.test(text)) throw new Error(`caseSystemPrompt regression: role block leaked to the reporter tier (${name}).`)
     for (const rung of rungs) {
@@ -127,7 +127,7 @@ function selfCheckLoadBearingPromptContent() {
     const ret = { owed: true, species: 'goats', location: 'Lambasi', person: 'Thabo' }
     const asks = caseSystemPrompt(caseRow, events, staleContact, null, 'agreed', ret)
     const quiet = caseSystemPrompt(caseRow, events, staleContact, null, 'agreed', { owed: false })
-    const team = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER_FIELD_WORKER }, null, null, ret)
+    const team = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER.field }, null, null, ret)
     if (!/RETURNING TO A COMPLETE REPORT[\s\S]*case_clarify[\s\S]*THE ONE QUESTION/.test(asks + caseSystemPrompt(caseRow, events, staleContact, null, 'agreed', ret))) throw new Error('caseSystemPrompt regression: the return-to-a-complete-report question is missing. See hooks/prompt-sections.js returnSection and return-clarify.js.')
     if (/RETURNING TO A COMPLETE REPORT/.test(quiet)) throw new Error('caseSystemPrompt regression: the return question is rendered when none is owed.')
     if (/RETURNING TO A COMPLETE REPORT/.test(team)) throw new Error('caseSystemPrompt regression: the return question is rendered for a team member.')
@@ -135,7 +135,7 @@ function selfCheckLoadBearingPromptContent() {
   if (consentManaged()) {
     const askConsent = caseSystemPrompt(caseRow, events, staleContact, null, 'none')
     const agreedText = caseSystemPrompt(caseRow, events, staleContact, null, 'agreed')
-    const teamText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER_FIELD_WORKER }, null, 'none')
+    const teamText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER.field }, null, 'none')
     if (!/CHECK BEFORE RECORDING[\s\S]*ONE question[\s\S]*case_consent/.test(askConsent)) throw new Error('caseSystemPrompt regression: the once-per-number consent question is missing. See hooks/prompt-sections.js consentSection and phone-consent.js.')
     for (const [t, why] of [[agreedText, 'a number that already agreed'], [teamText, 'a team member']]) {
       if (/CHECK BEFORE RECORDING/.test(t)) throw new Error(`caseSystemPrompt regression: the consent question is rendered for ${why}.`)
@@ -164,7 +164,7 @@ function selfCheckLoadBearingPromptContent() {
       throw new Error(`caseSystemPrompt regression: field_worker-only instruction leaked to reporter tier (${name}). That tier cannot see or dispatch the tool this names -- see case-tools-gates.js REPORT_ONLY_TOOLS.`)
     }
     if (!pattern.test(signOffText)) {
-      throw new Error(`caseSystemPrompt regression: elevated instruction missing at the ${TIER_ANIMAL_HEALTH_TECHNICIAN} tier (${name}). A tier branch was rewritten as a field_worker EQUALITY comparison, so the HIGHEST rung is composing the report-only prompt while gateByTier still grants it every tool -- use canQueryCases (contact-tiers.js), never ===.`)
+      throw new Error(`caseSystemPrompt regression: elevated instruction missing at the ${TIER.specialist} tier (${name}). A tier branch was rewritten as a field_worker EQUALITY comparison, so the HIGHEST rung is composing the report-only prompt while gateByTier still grants it every tool -- use canQueryCases (contact-tiers.js), never ===.`)
     }
   }
   selfCheckFenceIntegrity()

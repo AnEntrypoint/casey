@@ -1,9 +1,10 @@
 
 
+import { visibleToolName } from './config-loader.js'
 import { defTool, str, slimCase } from './case-tools-shared.js'
 import { parseReport, tagList } from './timestamp.js'
 import { isOpenCase } from './format.js'
-import { atLeast, TIER_FIELD_WORKER } from './contact-tiers.js'
+import { atLeast, TIER } from './contact-tiers.js'
 import { publicAssignee } from './case-assignment.js'
 import { OPTED_OUT_TAG } from './hooks/heuristics.js'
 import { sendStaffMessage, staffLabel } from './hooks/staff-outbound.js'
@@ -97,7 +98,7 @@ export function buildTeamReviewTools(store) {
         await store().appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `REOPENED by ${by}: ${String(reason).slice(0, 500)}`, data: actorData(ctx) })
         return { ok: true, recorded_on: r.on, ref: c.ref, reopened_to: 'in_progress' }
       }),
-    defTool('case_ask_ranger', 'cases',
+    defTool(visibleToolName('case_ask_specialist'), 'cases',
       'Ask the field worker who filed a record for a missing fact, by WhatsApp through the assistant\'s number. Only when the person who filed it is a field worker; a member of the public is asked by the assistant itself, so for a record a ranger handed over this instead sends it back to that ranger with your text as the question (nothing is sent to anyone). Omit `text` and the missing required facts are asked for. Refused, and says so, if they asked us to stop or last wrote more than 24 hours ago.',
       { type: 'object', properties: { case: str('Record reference or id'), text: str('Optional: what to ask, in their language') }, required: ['case'] },
       async ({ case: ref, text }, ctx) => {
@@ -105,7 +106,7 @@ export function buildTeamReviewTools(store) {
         const { c } = r
         let reporter = null
         try { reporter = c.contact_id ? await store().getContact(c.contact_id) : null } catch { reporter = null }
-        if (!atLeast(reporter?.tier, TIER_FIELD_WORKER)) {
+        if (!atLeast(reporter?.tier, TIER.field)) {
 
           if (isHandedOff(c)) {
             const back = await sendBackToRanger(store(), c.id, { by: staffLabel(ctx.contact), user: AGENT_USER, text: String(text || '').trim(), data: actorData(ctx) })

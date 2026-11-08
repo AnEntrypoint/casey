@@ -1,16 +1,20 @@
 
 
 import http from 'node:http'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-const { resolveRole, ACCOUNT_ROLES, isViewer } = await import(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'dashboard', 'roles.js'))
+const SRC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src')
+const { resolveRole, ACCOUNT_ROLES, isViewer } = await import(path.join(SRC_DIR, 'dashboard', 'roles.js'))
+const { loadDomainConfig } = await import(path.join(SRC_DIR, 'config-loader.js'))
 import { seedResolved } from './gui-seed-resolved.mjs'
+const FX = JSON.parse(readFileSync(path.join(process.env.CASEY_CONFIG_DIR, 'gui-check', 'fixtures.json'), 'utf8'))
+const ADVICE_KINDS = loadDomainConfig().dashboard.reports.advice_kinds.map((k) => k.label)
 
 const ALLOWED = [
   '/api/config', '/api/overview', '/api/whoami',
-  '/api/reports/resolved-map', '/api/reports/diseases', '/api/reports/heat', '/api/reports/areas', '/api/reports/heat?advice=Vaccination', '/api/reports/export.csv',
-  '/api/reports/resolved-map?region=Upper%20Lambasi', '/api/reports/diseases?grain=quarter', '/api/reports/heat?scope=all',
+  '/api/reports/resolved-map', '/api/reports/diseases', '/api/reports/heat', '/api/reports/areas', '/api/reports/heat?advice=' + encodeURIComponent(ADVICE_KINDS[0]), '/api/reports/export.csv',
+  '/api/reports/resolved-map?region=' + encodeURIComponent(FX.places.upperLambasi), '/api/reports/diseases?grain=quarter', '/api/reports/heat?scope=all',
   '/api/reports/diseases?from=2026-01-01&to=2026-06-30',
   '/api/reports/diseases/print', '/api/reports/diseases/print?grain=quarter', '/api/reports/files',
 ]
@@ -24,7 +28,7 @@ async function forbiddenValues(store) {
     add(r.location); add(r.owner_name); add(r.present_person)
   }
   for (const k of await store.listContacts({ limit: 5000 })) { add(k.display_name); add(k.external_id); add(k.notes) }
-  for (const w of ['Seed Farmer', 'Farmer 0', 'GUI Ranger', 'GUI Technician', 'GUI Check', 'Public Pete', 'guicheck-rng', 'guicheck-aht', 'guicheck-rng2', 'guicheck-rng0', 'Seed report', 'Dlamini', '0821112222', 'clinic, call']) add(w)
+  for (const w of ['Seed Farmer', 'Farmer 0', FX.people.ranger.name, FX.people.technician.name, FX.people.admin, FX.people.publicReporter.name, 'guicheck-rng', 'guicheck-aht', 'guicheck-rng2', 'guicheck-rng0', 'Seed report', ...FX.viewer.leakWords, 'clinic, call']) add(w)
   return [...out]
 }
 
@@ -63,9 +67,9 @@ export async function runViewerChecks(c) {
   const made = await seedResolved(store, { n: 300 })
 
   const { case: odd } = await store.findOrCreateCase({ channel: 'whatsapp', external_id: '27790009999', contact: { name: 'Odd Farmer', phone: '27790009999' }, subject: 'Odd report' })
-  await store.mergeReport(odd.id, { species: 'cattle', symptoms: 'x', location: 'y', association: 'Upper Lambasi' }, { id: 'seed', role: 'agent' })
+  await store.mergeReport(odd.id, { species: FX.animals.cattle, symptoms: 'x', location: 'y', association: FX.places.upperLambasi }, { id: 'seed', role: 'agent' })
   await store.updateCase(odd.id, { lat: -31.55, lon: 29.35 }, { id: 'casey-system', role: 'admin' })
-  await store.mergeReport(odd.id, { identified_disease: 'Anthrax 0821112222 Mr Dlamini', recommended_resolution: 'x' }, { id: 'aht', role: 'operator' }, { bypassObserve: true, autoAssign: false })
+  await store.mergeReport(odd.id, { identified_disease: FX.viewer.oddDisease, recommended_resolution: 'x' }, { id: 'aht', role: 'operator' }, { bypassObserve: true, autoAssign: false })
   for (const to of ['triaging', 'in_progress', 'resolved']) await store.transition(odd.id, to, { user: { id: 'casey-system', role: 'admin' }, reason: 'seed' })
   check(made.resolved > 100 && made.open > 50, 'seeded a spread of stages', `${JSON.stringify(made)} in ${Date.now() - t0}ms`)
 
@@ -139,7 +143,7 @@ export async function runViewerChecks(c) {
   const bad = [], sizes = []
   const forbidden = await forbiddenValues(store)
   const payloads = []
-  const variants = [...ALLOWED, '/api/reports/resolved-map?region=unknown', '/api/reports/heat?scope=all&from=2026-01-01', '/api/reports/heat?disease=Anthrax', '/api/reports/diseases?region=Upper%20Lambasi&grain=year', '/api/overview?days=90', '/api/reports/diseases?from=x']
+  const variants = [...ALLOWED, '/api/reports/resolved-map?region=unknown', '/api/reports/heat?scope=all&from=2026-01-01', '/api/reports/heat?disease=' + FX.viewer.disease, '/api/reports/diseases?region=' + encodeURIComponent(FX.places.upperLambasi) + '&grain=year', '/api/overview?days=90', '/api/reports/diseases?from=x']
   for (const p of variants) {
     const r = await rawRequest(PORT, 'GET', p, cookie)
     payloads.push([p, r.body]); sizes.push(r.body.length)
@@ -157,7 +161,7 @@ export async function runViewerChecks(c) {
   check(map.points.every((p) => p.status === 'confirmed' || p.status === 'suspected'), 'a map point status is only confirmed or suspected, never ruled out')
       check(map.points.every((p) => Math.abs(p.lat * 100 - Math.round(p.lat * 100)) < 1e-6 && Math.abs(p.lon * 100 - Math.round(p.lon * 100)) < 1e-6), 'every point is rounded to 0.01 degree (about 1 km)')
   check(map.points.every((p) => new Date(p.resolved_at + 'T00:00:00Z').getUTCDay() === 1), 'every point carries only the Monday of the week signed off, never the day')
-  check(!map.points.some((p) => /Dlamini|0821/.test(p.disease)) && map.points.some((p) => p.disease === 'Other (rare)'), 'a disease label with a name and number typed into it is stripped of the number and shown as "Other (rare)"', [...new Set(map.points.map((p) => p.disease))].join(', ').slice(0, 200))
+  check(!map.points.some((p) => new RegExp(FX.viewer.leakWords[0] + '|' + FX.viewer.leakFragment).test(p.disease)) && map.points.some((p) => p.disease === 'Other (rare)'), 'a disease label with a name and number typed into it is stripped of the number and shown as "Other (rare)"', [...new Set(map.points.map((p) => p.disease))].join(', ').slice(0, 200))
   const cellsOf = new Map()
   for (const p of map.points) { const key = Math.floor(p.lat / 0.1) + ':' + Math.floor(p.lon / 0.1); cellsOf.set(key, (cellsOf.get(key) || 0) + 1) }
   check([...cellsOf.values()].every((n) => n >= map.k), 'no dot is released from a 0.1 degree cell holding fewer than the floor of cases', `${cellsOf.size} cells, ${map.withheld} withheld`)
@@ -166,7 +170,7 @@ export async function runViewerChecks(c) {
 
   const under = cells.filter((x) => x.count < dis.k)
   check(cells.length > 10 && under.every((x) => x.region === 'unknown' && Object.keys(x).length === 2), `every released group has at least ${dis.k} cases (only the by-area "area not stated" line may be smaller)`, `${cells.length} groups; under the floor: ${JSON.stringify(under)}`)
-  const kinds = new Set(['Vaccination', 'Quarantine or movement control', 'Culling or disposal', 'Treatment', 'Referred to a vet or lab', 'Monitoring', 'Other advice', 'Not stated'])
+  const kinds = new Set([...ADVICE_KINDS, 'Other advice', 'Not stated'])
   check(dis.by_conclusion.length > 2 && map.points.every((p) => p.advice.every((k) => kinds.has(k))) && dis.by_conclusion.every((x) => kinds.has(x.conclusion) || x.conclusion === 'other/sparse'), 'technician advice is released only as a fixed set of kinds, never the typed words', dis.by_conclusion.map((x) => x.conclusion + ':' + x.count).join(', '))
   const areasRes = JSON.parse(await (await fetch(`http://127.0.0.1:${PORT}/api/reports/areas`, { headers: { cookie } })).text())
   check(areasRes.areas.length > 2 && areasRes.areas.every((a) => a.count >= areasRes.k && Math.abs(a.lat * 10 - Math.round(a.lat * 10)) < 1e-6 && !/\d{5,}/.test(a.region)), 'the by-area map releases only named areas with enough cases, placed to about 10 km', areasRes.areas.map((a) => a.region + ':' + a.count).join(', '))
@@ -209,7 +213,7 @@ export async function runViewerChecks(c) {
   check(alt.rows > 0, 'the map has a table of the same figures for anyone who cannot use colour or a pointer', alt.rows + ' rows')
   check(v.dots === map.count, 'the map draws one dot per signed-off case with a place', `${v.dots} dots for ${map.count} points`)
   check(v.cloud >= 3 && v.slider && v.play && /export\.csv/.test(v.csv), 'word cloud, time slider, play button and export link are on the screen', `cloud ${v.cloud}, csv ${v.csv.replace(/^https?:\/\/[^/]+/, '')}`)
-  check(!/CASE-\d|Seed Farmer|GUI Ranger|0\d{9}|Dlamini/.test(v.text), 'no reference, name or number appears anywhere on the viewer screen')
+  check(!new RegExp(`CASE-\\d|Seed Farmer|${FX.people.ranger.name}|0\\d{9}|${FX.viewer.leakWords[0]}`).test(v.text), 'no reference, name or number appears anywhere on the viewer screen')
   check(v.scrollW <= v.innerW, 'no horizontal overflow at desktop width', `${v.scrollW} vs ${v.innerW}`)
   const csvRes = await evalJs(`fetch('/api/reports/export.csv').then(async (r) => r.status + ' ' + r.headers.get('content-type') + ' ' + (await r.text()).split('\\n')[0])`)
   check(/^200 text\/csv/.test(csvRes), 'the export button target downloads a CSV', csvRes)
@@ -217,7 +221,7 @@ export async function runViewerChecks(c) {
   await axeBoth('viewer home (dots)')
 
   console.log('\nviewer: region filter, time-lapse, heat')
-  const region = 'Upper Lambasi'
+  const region = FX.places.upperLambasi
   const want = JSON.parse(await evalJs(`fetch('/api/reports/resolved-map?region=' + encodeURIComponent(${JSON.stringify(region)})).then((r) => r.json()).then((j) => JSON.stringify(j.count))`))
   await evalJs(`(() => { const s = [...document.querySelectorAll('select')].find((e) => [...e.options].some((o) => o.value === ${JSON.stringify(region)})); s.value = ${JSON.stringify(region)}; s.dispatchEvent(new Event('change', { bubbles: true })); return 1 })()`)
   await sleep(1800)

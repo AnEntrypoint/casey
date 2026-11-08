@@ -1,6 +1,6 @@
 
 
-import { TIER_ORDER, TIER_REPORTER, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR, ADMIN_ONLY_TIERS, DEFAULT_TIER_LABELS, resolveTierValue, tierRank, tierLabel } from './contact-tiers.js'
+import { TIER_ORDER, ADMIN_ONLY_TIERS, DEFAULT_TIER_LABELS, resolveTierValue, tierRank, tierLabel, TIER } from './contact-tiers.js'
 import { normalizeMsisdn } from './role-invites.js'
 import { TIER_LABELS } from './store/report-shape.js'
 import { loadRoster, recordRoster, rosterKey } from './team-roster.js'
@@ -16,9 +16,9 @@ function roleTable() {
   const m = new Map()
   const add = (word, tier) => m.set(norm(word), tier)
   for (const t of TIER_ORDER) { add(t, t); add(tierLabel(t, TIER_LABELS), t); add(DEFAULT_TIER_LABELS[t], t) }
-  for (const w of ['ranger', 'eco ranger', 'ecoranger', 'field worker', 'fieldworker', 'field']) add(w, TIER_FIELD_WORKER)
-  for (const w of ['aht', 'a h t', 'technician', 'animal health tech', 'animal health']) add(w, TIER_ANIMAL_HEALTH_TECHNICIAN)
-  for (const w of ['op', 'ops']) add(w, TIER_OPERATOR)
+  for (const w of ['ranger', 'eco ranger', 'ecoranger', 'field worker', 'fieldworker', 'field']) add(w, TIER.field)
+  for (const w of ['aht', 'a h t', 'technician', 'animal health tech', 'animal health']) add(w, TIER.specialist)
+  for (const w of ['op', 'ops']) add(w, TIER.operator)
   return m
 }
 
@@ -27,7 +27,7 @@ export function mapRole(word) {
   if (w === 'secretary') return { error: 'an operator dashboard login is not a WhatsApp role; create it under Accounts' }
   if (!w) return { error: 'no role given' }
   const tier = roleTable().get(w)
-  if (!tier || tier === TIER_REPORTER) return { error: `"${clean(word, 40)}" is not a role this import knows (use ${tierLabel(TIER_FIELD_WORKER, TIER_LABELS)}, ${tierLabel(TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_LABELS)} or ${tierLabel(TIER_OPERATOR, TIER_LABELS)})` }
+  if (!tier || tier === TIER.reporter) return { error: `"${clean(word, 40)}" is not a role this import knows (use ${tierLabel(TIER.field, TIER_LABELS)}, ${tierLabel(TIER.specialist, TIER_LABELS)} or ${tierLabel(TIER.operator, TIER_LABELS)})` }
   return { tier }
 }
 

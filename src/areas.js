@@ -5,7 +5,7 @@ import { normalizeLocation } from './location-normalize.js'
 import { parseReport } from './timestamp.js'
 import { isOpenCase } from './format.js'
 import { evData } from './safe.js'
-import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, resolveTierValue } from './contact-tiers.js'
+import { resolveTierValue, TIER } from './contact-tiers.js'
 import { assigneeKeyFor, isContactAssignee, contactIdOfAssignee, isOwnConversation } from './case-assignment.js'
 import { staffLabel, releaseCase } from './hooks/staff-outbound.js'
 import { clearFocusForCase } from './team-focus.js'
@@ -113,7 +113,7 @@ export async function checkRanger(store, key) {
     const contact = await store.getContact(contactIdOfAssignee(k)).catch(() => null)
     if (!contact || contact.channel === 'system') return { ok: false, why: 'that team member is not registered' }
     const t = resolveTierValue(contact.tier)
-    if (t !== TIER_FIELD_WORKER && t !== TIER_ANIMAL_HEALTH_TECHNICIAN) return { ok: false, why: 'that person does not hold a ranger or technician role' }
+    if (t !== TIER.field && t !== TIER.specialist) return { ok: false, why: 'that person does not hold a ranger or technician role' }
     return { ok: true, name: staffLabel(contact), contact }
   }
   const [acct] = await store.t.list('operator_account', { username: k }, { limit: 1 }).catch(() => [])

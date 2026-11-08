@@ -1,28 +1,22 @@
 # WFGY lessons -- casey
 
-## 2026-07-07 -- ruthless goal-optimize: capture + honest presentation
-Goal (G): flawless channel-independent field-worker report capture, and operator
-presentation that shows only real/confirmed information (reported symptoms) --
-never an inferred cause/diagnosis (suspected_disease) dressed up as fact.
-What drifted / what went wrong: the initial user prompt ("ruthlessly optimize our
-goal") named no concrete target -- three plausible goals existed (capture
-completeness, dropped-turn reduction, operator triage speed) and guessing wrong
-would have wasted the whole multi-repo investigation. Mid-task the user also
-tightened the goal further (real-facts-only, symptom-not-cause) after the initial
-audits were already dispatched -- had to fold that in without re-running the
-audits from scratch.
+## 2026-07-07 -- ruthless goal-optimize: name the target, trace real bytes, qualify unverified fields
+Goal (G): an undirected "ruthlessly optimize our goal" prompt named no concrete
+target -- three plausible goals existed (capture completeness, dropped-turn
+reduction, operator triage speed) and guessing wrong would have wasted the whole
+multi-repo investigation. Mid-task the user also tightened the goal (real facts
+only, observed rather than inferred) after the initial audits were already
+dispatched -- had to fold that in without re-running the audits from scratch.
 Fix / resolution: asked before investigating (AskUserQuestion) rather than picking
-the most obvious-looking target: field-worker capture is a small nice-to-have if
-the actual priority is operator triage speed. Confirmed goal = capture + honest
+the most obvious-looking target. Confirmed goal = capture completeness plus honest
 presentation, triage explicitly de-prioritized. Ran 3 parallel Explore audits
 (casey dashboard/map, casey+freddie capture pipeline, thatcher CRM ceiling)
 before writing any code. Found: media (photos/voice notes) was never actually
 downloaded by either WhatsApp or Discord adapters in freddie -- casey only ever
-recorded a text note ("farmer sent a photo") with zero bytes behind it, a capture
-gap disguised as working. Separately, clusters.js exposed a `disease` field
-computed straight from suspected_disease (an unverified worker relay of the
-farmer's own guess) with no `symptoms` (real, observed) field surfaced at all --
-exactly backwards for the honesty constraint.
+recorded a text note with zero bytes behind it, a capture gap disguised as
+working. Separately, clusters.js exposed a derived field computed straight from
+an unverified relay, with no observed field surfaced beside it -- exactly
+backwards for the honesty constraint.
 When a genuinely bigger design decision came up mid-fix (where do downloaded
 media bytes actually get stored -- thatcher has no blob/file column, only JSON-
 text), did NOT silently pick a scheme (e.g. base64-inline, which would bloat
@@ -30,16 +24,16 @@ sqlite) -- surfaced it to the user as a real BBCR checkpoint. Confirmed: local
 disk under <dataDir>/media/<caseId>/, path string recorded in the report field.
 Generalizes to: (1) when a task-invoking prompt states a goal in the imperative
 but doesn't name a concrete target, ask before doing multi-repo research --
-the cost of guessing wrong compounds across every subsequent step. (2) In this
-codebase specifically, any field derived from `suspected_disease` (or similarly
-hearsay-sourced report fields: recent_movement, farmer_available) must never be
-surfaced to an operator under a bare confident-sounding label -- always separate
-from and subordinate to the directly-observed `symptoms` field, and qualified
-("as reported", "unconfirmed") wherever it is shown. (3) freddie's channel
-adapters (plugins/platform-whatsapp, plugins/platform-discord) previously gave
-the appearance of full media capture via text notes alone -- when auditing any
-"is X actually captured" claim in this codebase, trace the ACTUAL bytes, not just
-the observation/log line that says they arrived.
+the cost of guessing wrong compounds across every subsequent step. (2) Any field
+derived from an unverified relay (for example a suspected-cause field, or a
+reported-availability field) must never be surfaced to an operator under a bare
+confident-sounding label -- always separate from and subordinate to the
+directly-observed field, and qualify it ("as reported", "unconfirmed") wherever
+it is shown. (3) freddie's channel adapters (plugins/platform-whatsapp,
+plugins/platform-discord) previously gave the appearance of full media capture
+via text notes alone -- when auditing any "is X actually captured" claim in this
+codebase, trace the ACTUAL bytes, not just the observation/log line that says
+they arrived.
 
 ## 2026-07-07 -- third ruthless-optimize round: goal fork resolved to all-three
 Goal (G): after two prior same-day ruthless-optimize passes (worker-fact
@@ -65,8 +59,8 @@ conversation robustness, AND cross-repo architecture debt in one pass across
 casey/freddie/thatcher.
 What drifted / what went wrong: nothing structural -- three parallel gm-driving
 audit subagents (one per axis) returned 12 confirmed findings with zero overlap.
-One near-miss during VERIFY: a synthetic test string for the Sesotho/Setswana
-tie-break accidentally included a real Setswana-distinctive marker ("a lwala"),
+One near-miss during VERIFY: a synthetic test string for a language-cue
+tie-break accidentally included a real marker for one of the two languages,
 making an intended "ambiguous tie" test case actually resolve correctly to 'tn'
 -- initially read as a bug before re-deriving the per-language cue-hit counts by
 hand and confirming the code was right and the test string was wrong.
@@ -89,11 +83,11 @@ since CaseStore has no delete API by design (append-only).
 Generalizes to: (1) when a live-witness test string accidentally satisfies a
 DIFFERENT code path than intended, re-derive the actual per-branch scoring by
 hand before concluding the code is wrong -- the test's premise can be the bug.
-(2) A subagent's audit finding citing "Portuguese" or another language not
+(2) A subagent's audit finding citing a language not
 actually promised anywhere in the target codebase's own system prompt is a cue
 to verify the finding's scope against the codebase's real stated commitments
-before implementing past what was asked (Portuguese was dropped from the
-lang-cues fix for exactly this reason -- only Sesotho/Setswana were actually
+before implementing past what was asked (a language was dropped from the
+lang-cues fix for exactly this reason -- only the two that were actually
 promised). (3) A dependency's "never pinned, always latest" policy recorded in
 AGENTS.md should be preserved even when fixing a shim that depended on version
 uncertainty -- deleting the runtime probe was correct, but adding a package.json
@@ -148,7 +142,7 @@ Fix / resolution: Stopped after this single legitimate crash-triggered retry (no
 Generalizes to: A gate-denial fingerprint that survives a daemon crash+respawn is strong evidence the bad state is disk-persisted (not process memory) -- do not expect a "just reboot the watcher" recovery to help once this is observed, since it was already tried. This is the strongest possible signal (short of reading rs-plugkit's own source) that a PLAN->EXECUTE-shaped stuck loop is a genuine engine bug rather than a transient runtime hiccup.
 
 ## 2026-09-08 -- second-pass smell sweep: the highest-yield defect class is an extracted helper left beside its inline copy
-Goal (G): Pursue every remaining smell, AI tell-tale, and structural/GUI/architectural improvement across casey, uhh and the design kit, after a first pass had already closed all four standing PRD rows.
+Goal (G): Pursue every remaining smell, AI tell-tale, and structural/GUI/architectural improvement across casey, its deployment repo and the design kit, after a first pass had already closed all four standing PRD rows.
 What drifted / what went wrong: The first pass fixed defects one at a time without naming the class they belonged to, so the same shape kept reappearing in areas thought finished. Five instances turned up in total, four of them live defects, and all five have the identical shape: a helper was extracted, SOME call sites were converted, the rest kept their inline copy, and the two then drifted. resolveChainLinks was the worst -- the freddie-bundle copy had been fixed to stop swallowing a buildAutoChain throw while casey's agent bridge still swallowed it, so one process held two different failure behaviours for the same call, decided by which module imported first. isLlmDown's own comment said three call sites spelled it out inline; two were converted and the third was not, leaving the extracted function with zero importers. toolCaseRefs was extracted and its call site never switched. Two CSS cases (.casey-rep-row, .casey-ev) were the same thing in a stylesheet, reimplementing primitives the design kit did not yet have. Separately, two of this session's own claims were over-stated and had to be retracted: an "input length" root cause for the gm embedder (disproved when 1163 bytes failed after 1559 succeeded) and then an "identifier density" one (disproved when plain prose of the same length also failed) -- the real behaviour is progressive saturation with no clean threshold.
-Fix / resolution: Treated the duplication as a class rather than as incidents -- scanned for >=6 identical consecutive non-trivial lines across files AND for exported symbols whose only reference is their own definition, which found all five cheaply. Where the duplicated thing was a UI primitive the kit lacked, the fix was to ADD the primitive carrying casey's own geometry rather than bend casey onto an ill-fitting existing one: DetailRow for a record's field and LogRow for a timeline line, both pushed to the design kit and adopted, both rendering identically to what they replaced. Where a kit primitive genuinely did not fit (.case-row needs active/selected/kbd-focused visually distinct, and Row aliases selected onto active), recorded the specific disqualifying reason in the file instead of leaving a vague deferral. Applying this file's own 2026-07-07 invariant as an audit target then found a live violation it had not reached: the case detail rendered "Linked to 3 other report(s) nearby: foot-and-mouth" with the relayed disease names bare after a colon, because map-leaflet.js had shortened reported_disease_names to `diseases` on the way out.
-Generalizes to: (1) In this codebase, an extracted helper sitting beside a surviving inline copy is the single highest-yield thing to grep for -- every historical extraction pass left some, and the copies drift into genuinely different behaviour rather than merely duplicating. (2) When a shared primitive does not fit, ask whether the kit is missing one before bending the consumer; promoting the consumer's own geometry into the kit keeps rendering identical while collapsing the owners to one. (3) A field carrying a caveat must carry it in its NAME across module boundaries -- reported_disease_names survived every hop until one module shortened it to `diseases`, and the guarantee died there, so a comment asking people not to is weaker than a name they would have to deliberately strip. (4) Retract an over-claimed root cause explicitly and immediately; two were retracted here, and stating the disproving measurement is more useful than the original claim was.
+Fix / resolution: Treated the duplication as a class rather than as incidents -- scanned for >=6 identical consecutive non-trivial lines across files AND for exported symbols whose only reference is their own definition, which found all five cheaply. Where the duplicated thing was a UI primitive the kit lacked, the fix was to ADD the primitive carrying casey's own geometry rather than bend casey onto an ill-fitting existing one: DetailRow for a record's field and LogRow for a timeline line, both pushed to the design kit and adopted, both rendering identically to what they replaced. Where a kit primitive genuinely did not fit (.case-row needs active/selected/kbd-focused visually distinct, and Row aliases selected onto active), recorded the specific disqualifying reason in the file instead of leaving a vague deferral. Applying this file's own 2026-07-07 invariant as an audit target then found a live violation it had not reached: the case detail rendered a relayed name bare after a colon, because map-leaflet.js had shortened a `reported_*_names` field to a bare name on the way out.
+Generalizes to: (1) In this codebase, an extracted helper sitting beside a surviving inline copy is the single highest-yield thing to grep for -- every historical extraction pass left some, and the copies drift into genuinely different behaviour rather than merely duplicating. (2) When a shared primitive does not fit, ask whether the kit is missing one before bending the consumer; promoting the consumer's own geometry into the kit keeps rendering identical while collapsing the owners to one. (3) A field carrying a caveat must carry it in its NAME across module boundaries -- a `reported_*_names` field survived every hop until one module shortened it to a bare name, and the guarantee died there, so a comment asking people not to is weaker than a name they would have to deliberately strip. (4) Retract an over-claimed root cause explicitly and immediately; two were retracted here, and stating the disproving measurement is more useful than the original claim was.

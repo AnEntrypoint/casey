@@ -1,7 +1,7 @@
 
 
 import crypto from 'node:crypto'
-import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, grantableBy, resolveTierValue } from './contact-tiers.js'
+import { TIER_ORDER, grantableBy, resolveTierValue, TIER } from './contact-tiers.js'
 import { taggedObservations } from './store/settings-log.js'
 
 const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
@@ -89,7 +89,7 @@ function statusOf(v, now) {
 const publicView = (v, now) => ({ id: v.id, tier: v.tier, label: v.label, created_by: v.by, created_at: v.created_at, expires_at: v.expires_at, uses: v.uses, max_uses: v.max_uses, status: statusOf(v, now) })
 
 export async function createInvite(store, { tier, label = '', ttlHours = DEFAULT_TTL_HOURS, maxUses = 1, by = 'operator', grantableTiers = grantableBy(false), now = Date.now() } = {}) {
-  if (!TIER_ORDER.includes(tier) || tier === TIER_REPORTER) throw new Error(`tier must be one of ${TIER_ORDER.filter(t => t !== TIER_REPORTER).join(', ')}`)
+  if (!TIER_ORDER.includes(tier) || tier === TIER.reporter) throw new Error(`tier must be one of ${TIER_ORDER.filter(t => t !== TIER.reporter).join(', ')}`)
   if (!grantableTiers.includes(tier)) throw new Error(`you cannot invite someone as ${tier}${grantableBy(true).includes(tier) && !grantableBy(false).includes(tier) ? ' -- only an admin can' : ''}`)
   const ttl = Math.min(Math.max(Number(ttlHours) || DEFAULT_TTL_HOURS, 1), MAX_TTL_HOURS)
   const uses = Math.min(Math.max(Math.floor(Number(maxUses)) || 1, 1), 25)

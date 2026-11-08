@@ -108,8 +108,8 @@ for (const dir of STUB_MOCK_SCAN_DIRS) {
 }
 
 const PACKS_FORBIDDEN_IMPORTS = ['src/core', './core', '../core']
-let packFiles = []
-try { packFiles = walk(join(ROOT, 'src/packs')).filter((p) => ['.js', '.mjs'].includes(extname(p))) } catch { packFiles = [] }
+const CONFIG_DIR = process.env.CASEY_CONFIG_DIR
+const packFiles = CONFIG_DIR ? ['pack.cjs', 'external-schema.cjs'].map((name) => join(CONFIG_DIR, name)) : []
 for (const f of packFiles) {
   let src = ''
   try { src = readFileSync(f, 'utf8') } catch { continue }
@@ -118,7 +118,7 @@ for (const f of packFiles) {
   while ((m = importRe.exec(src))) {
     const spec = m[1] || m[2]
     if (PACKS_FORBIDDEN_IMPORTS.some((bad) => spec.includes(bad))) {
-      note(`trust-boundary: ${f.replace(ROOT, '')} imports "${spec}" -- src/packs/ is declarative data and may never import src/core/`)
+      note(`trust-boundary: ${f.replace(ROOT, '')} imports "${spec}" -- the deployment pack config is declarative data and may never import src/core/`)
     }
   }
 }

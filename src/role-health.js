@@ -1,7 +1,7 @@
 
 
 import fs from 'node:fs'
-import { TIER_ORDER, atLeast, TIER_FIELD_WORKER, resolveTierValue } from './contact-tiers.js'
+import { TIER_ORDER, atLeast, resolveTierValue, TIER } from './contact-tiers.js'
 
 const row = (id, level, text, fix) => ({ id, level, text, ...(fix ? { fix } : {}) })
 const DAY = 86400e3
@@ -48,7 +48,7 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
       const ccols = await tableCols(db, 'contact')
       if (ccols.has('tier')) contacts = (await q(db, `SELECT id, external_id, display_name, tier, status, channel FROM contact`)).filter(c => c.status !== 'deleted' && c.channel !== 'system')
     }
-    const teamContacts = contacts.filter(c => atLeast(resolveTierValue(c.tier), TIER_FIELD_WORKER))
+    const teamContacts = contacts.filter(c => atLeast(resolveTierValue(c.tier), TIER.field))
     const fieldLogins = live.filter(a => a.role === 'eco_ranger' || a.role === 'animal_health_technician')
     const byTier = {}
     for (const c of teamContacts) byTier[resolveTierValue(c.tier)] = (byTier[resolveTierValue(c.tier)] || 0) + 1
@@ -107,7 +107,7 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
         if (a.startsWith('contact:')) {
           holder = contactById.get(a.slice(8))
           if (!holder) problem = 'a contact that no longer exists'
-          else if (!atLeast(resolveTierValue(holder.tier), TIER_FIELD_WORKER)) problem = `${holder.display_name || 'a contact'}, who no longer holds a team rung`
+          else if (!atLeast(resolveTierValue(holder.tier), TIER.field)) problem = `${holder.display_name || 'a contact'}, who no longer holds a team rung`
         } else {
           holder = loginByName.get(a)
           if (!holder) problem = `"${a}", who is not a login or a team contact`

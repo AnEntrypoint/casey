@@ -9,7 +9,7 @@ import { isHandedOff, isUnheld } from './signoff-desk.js'
 import { doneStages, deskAuthorityOn, scrubNumbers } from './case-tools-team-shared.js'
 import { OPTED_OUT_TAG, CASE_REF_RE } from './hooks/heuristics.js'
 import { reportersForCases, firstName } from './phone-persons.js'
-import { atLeast, TIER_ANIMAL_HEALTH_TECHNICIAN } from './contact-tiers.js'
+import { atLeast, TIER } from './contact-tiers.js'
 import {
   MANDATORY_MINIMUM_FIELDS, CRITICAL_FIELDS, REPORT_KEYS, AREA_FIELD, missingMandatoryMinimum, fieldLabel,
 } from './store/report-shape.js'
@@ -136,7 +136,7 @@ function describeFilters(f) {
 }
 
 function parseArgs(args, ctx, now) {
-  const scopeDefault = atLeast(ctx?.tier, TIER_ANIMAL_HEALTH_TECHNICIAN) ? 'all' : 'mine'
+  const scopeDefault = atLeast(ctx?.tier, TIER.specialist) ? 'all' : 'mine'
   const scope = fold(args.scope) || scopeDefault
   if (!SCOPES.includes(scope)) return fail(`scope must be one of ${SCOPES.join(', ')}`)
   const q = String(args.q ?? '').trim()

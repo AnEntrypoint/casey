@@ -1,5 +1,5 @@
 import { createCaseStore } from '../src/case-store.js'
-import { TIER_ORDER, TIER_REPORTER, resolveTierValue, atLeast, TIER_FIELD_WORKER, tierLabel } from '../src/contact-tiers.js'
+import { TIER_ORDER, resolveTierValue, atLeast, tierLabel, TIER } from '../src/contact-tiers.js'
 import { createInvite, createInvites, listInvites, revokeInvite, normalizeMsisdn } from '../src/role-invites.js'
 import { mapRole } from '../src/team-import.js'
 import { fmtPhone27, fmtTimeSAST } from '../src/format.js'
@@ -10,7 +10,7 @@ import { runImport, MAX_IMPORT_ROWS, MAX_IMPORT_CHARS } from '../src/team-import
 import { rolloutTable, forgetRoster } from '../src/team-roster.js'
 
 const CLI = { id: 'cli-operator', role: 'operator' }
-const TEAM_TIERS = TIER_ORDER.filter(t => t !== TIER_REPORTER)
+const TEAM_TIERS = TIER_ORDER.filter(t => t !== TIER.reporter)
 
 async function openStore() { const s = createCaseStore(); await s.init(); return s }
 
@@ -31,7 +31,7 @@ export async function cmdRoles({ flags, rest }) {
   const fail = async (msg, hint) => { say(bad(msg)); if (hint) say(dim('  ' + hint)); await closeAndExit(store, 1) }
 
   if (sub === 'list') {
-    const contacts = (await store.listContacts({ limit: 5000 })).filter(c => atLeast(resolveTierValue(c.tier), TIER_FIELD_WORKER))
+    const contacts = (await store.listContacts({ limit: 5000 })).filter(c => atLeast(resolveTierValue(c.tier), TIER.field))
     const { listAccounts } = await import('../src/dashboard/auth.js')
     const accounts = await listAccounts(store)
     if (flags.json) {
@@ -109,8 +109,8 @@ export async function cmdRoles({ flags, rest }) {
     if (!needle) await fail('usage: casey roles demote <phone|contact-id>')
     const c = await findWhatsappContact(store, needle)
     if (!c) await fail(`no contact matches "${needle}".`, 'casey roles list shows the team; a person who never messaged has no contact row.')
-    await store.setContactTier(c.id, TIER_REPORTER, CLI)
-    console.log(green(`${c.display_name || fmtPhone27(c.external_id)} is now ${TIER_REPORTER}; every open report they held went back to the queue.`))
+    await store.setContactTier(c.id, TIER.reporter, CLI)
+    console.log(green(`${c.display_name || fmtPhone27(c.external_id)} is now ${TIER.reporter}; every open report they held went back to the queue.`))
     await closeAndExit(store, 0)
   }
 

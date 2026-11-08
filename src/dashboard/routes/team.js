@@ -2,7 +2,7 @@ import { mountRoutes } from './register.js'
 import { tsMs } from '../../timestamp.js'
 import { normalizeMsisdn } from '../../role-invites.js'
 import { assigneeKeyFor, isContactAssignee, contactIdOfAssignee } from '../../case-assignment.js'
-import { resolveContactTier, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN } from '../../contact-tiers.js'
+import { resolveContactTier, TIER } from '../../contact-tiers.js'
 import { TIER_LABELS, fieldLabel } from '../../store/report-shape.js'
 import { fmtPhone27 } from '../../format.js'
 import { waLink } from '../wa-link.js'
@@ -11,7 +11,7 @@ import { parseReport } from '../../timestamp.js'
 import { loadAreas, resolveArea, statedArea } from '../../areas.js'
 import { buildTeamMetrics, DEFAULT_STUCK_HOURS } from '../../ranger-metrics.js'
 
-const ROLE_LABEL = { eco_ranger: TIER_LABELS[TIER_FIELD_WORKER], animal_health_technician: TIER_LABELS[TIER_ANIMAL_HEALTH_TECHNICIAN] }
+const ROLE_LABEL = { eco_ranger: TIER_LABELS[TIER.field], animal_health_technician: TIER_LABELS[TIER.specialist] }
 const NUDGE_CASE_CAP = 300
 const HOUR = 3600e3
 
@@ -23,7 +23,7 @@ export function getTeamMembers({ store, authed, listAccounts }) {
     const contacts = await store.listContacts({ limit: 500 })
     for (const c of contacts) {
       const tier = resolveContactTier(c)
-      if (tier !== TIER_FIELD_WORKER && tier !== TIER_ANIMAL_HEALTH_TECHNICIAN) continue
+      if (tier !== TIER.field && tier !== TIER.specialist) continue
       const key = assigneeKeyFor(c)
       if (!key) continue
       if (c.channel === 'whatsapp') contactKeyByPhone.set(normalizeMsisdn(c.external_id), key)
@@ -119,7 +119,7 @@ export async function teamPeople(store, listAccounts) {
   const byPhone = new Map()
   for (const c of await store.listContacts({ limit: 500 })) {
     const tier = resolveContactTier(c)
-    if (tier !== TIER_FIELD_WORKER && tier !== TIER_ANIMAL_HEALTH_TECHNICIAN) continue
+    if (tier !== TIER.field && tier !== TIER.specialist) continue
     const key = assigneeKeyFor(c)
     if (!key) continue
     const name = c.display_name && c.display_name !== c.external_id ? c.display_name : fmtPhone27(c.external_id)

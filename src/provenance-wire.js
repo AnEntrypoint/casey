@@ -1,14 +1,17 @@
 
 
-import { animalHealthPack } from './packs/animal-health.js'
+import { loadDomainConfig } from './config-loader.js'
+import { TIER } from './contact-tiers.js'
 import { loadPack } from './core/pack-schema.js'
 import { mkValue } from './core/provenance.js'
 import { writeObservation } from './core/write-path.js'
 import { RawLog } from './core/raw-log.js'
 
-const PACK = loadPack(animalHealthPack)
+const { domain, pack: packDefinition } = loadDomainConfig()
+if (!packDefinition) throw new Error('pack.cjs not found in CASEY_CONFIG_DIR')
+const PACK = loadPack(packDefinition)
 
-const PACK_FIELD_MAP = PACK.observationForms.sick_or_dead_animal.fields
+const PACK_FIELD_MAP = PACK.observationForms[domain.observation_form].fields
 
 let _rawLog = null
 function getRawLog(dataDir) {
@@ -35,7 +38,7 @@ export async function recordProvenanceObservation({ dataDir, caseId, author, inc
   return writeObservation(rawLog, {
     subjectId: caseId,
     observerId: author || 'unknown',
-    observerRole: 'reporter',
+    observerRole: TIER.reporter,
     reportedAt: new Date(recordedAtMs).toISOString(),
     findings,
     packId: PACK.id,

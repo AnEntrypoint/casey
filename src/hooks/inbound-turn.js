@@ -20,7 +20,7 @@ import { decideNotice, composeNotice, recordNoticeShown } from '../first-contact
 import { renderFormProgress, formLabelsFor } from '../progress-line.js'
 import { staffProgressLine } from '../team-focus.js'
 import { caseDeliveryTarget } from './handler.js'
-import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
+import { atLeast, resolveContactTier, TIER } from '../contact-tiers.js'
 import { tryRegisterByCode } from './role-registration.js'
 import { parseReport, tagList } from '../timestamp.js'
 import { controlRegistered, offeredChoices } from './turn-results.js'
@@ -155,7 +155,7 @@ async function driveAgentTurn(deps, {
 
   const turnStartedAt = Date.now()
 
-  const isPublic = !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && !!contact?.id
+  const isPublic = !atLeast(resolveContactTier(contact), TIER.field) && !!contact?.id
   const speakerNow = () => (isPublic ? speakerState(store, contact.id).catch(() => null) : Promise.resolve(null))
   const speakerBefore = await speakerNow()
   const noticeFor = (caseRow, speaker) => decideNotice(store, { fresh: caseRow, events, contact, speaker })
@@ -204,7 +204,7 @@ async function driveAgentTurn(deps, {
   text = await correctOutboundRef({ store, fresh, text, result, inboundText, contact })
 
   if (text && channel === 'whatsapp') {
-    const plain = normaliseReply(text, { keepLists: atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) })
+    const plain = normaliseReply(text, { keepLists: atLeast(resolveContactTier(contact), TIER.field) })
     if (plain.changed) {
       text = plain.text
       try { await store.appendEvent(fresh.id, observation('REPLY-FORMAT-NORMALISED: markdown syntax rewritten for WhatsApp')) }
@@ -258,7 +258,7 @@ async function driveAgentTurn(deps, {
       if ((after?.current?.id || null) !== (speakerBefore?.current?.id || null)) early = await noticeFor(fresh, after)
     }
     notice = early ? early.notice : null
-    const wantsForm = !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && !tagList(fresh).includes('opted-out')
+    const wantsForm = !atLeast(resolveContactTier(contact), TIER.field) && !tagList(fresh).includes('opted-out')
 
       && !(consentManaged() && isPublic && await consentState(store, contact.id, { caseId: fresh.id }) !== 'agreed')
     let merged = ''
@@ -269,7 +269,7 @@ async function driveAgentTurn(deps, {
 
       if (merged) text = `${merged}\n\n${text}`
     }
-    if (atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && contact?.id) {
+    if (atLeast(resolveContactTier(contact), TIER.field) && contact?.id) {
       try {
         const working = await staffProgressLine(store, contact)
         if (working) text = `${working}\n\n${text}`
@@ -281,7 +281,7 @@ async function driveAgentTurn(deps, {
       else { notice = null; await store.appendEvent(fresh.id, observation('NOTICE-NOT-COMPOSED: the first-contact notice could not be composed; it is still owed')).catch(() => {}) }
     }
   }
-  const staffTier = atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)
+  const staffTier = atLeast(resolveContactTier(contact), TIER.field)
   const offered = staffTier ? (offeredChoices(result) || turn.preChoices || inboundChoices) : null
   const { reply, delivered } = await sendAgentReply({ store, log, adapter, fresh, channel, replyTo, platform, text, isFallback, degraded, offered, groupIds, startedOnId })
   if (owed.length) {

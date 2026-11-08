@@ -4,7 +4,7 @@ import { evData } from './safe.js'
 import { parseReport, tsMs } from './timestamp.js'
 import { MANDATORY_MINIMUM_FIELDS, missingMandatoryMinimum } from './store/report-shape.js'
 import { isDone } from './signoff-desk.js'
-import { resolveContactTier, atLeast, TIER_FIELD_WORKER } from './contact-tiers.js'
+import { resolveContactTier, atLeast, TIER } from './contact-tiers.js'
 import { speakerState } from './phone-persons.js'
 
 export const returnGapMs = () => Number(process.env.CASEY_RETURN_CLARIFY_MS) || 3600e3
@@ -16,7 +16,7 @@ export function isFilled(caseRow) {
   return !!r && Object.keys(r).length > 0 && missingMandatoryMinimum(r).length === 0
 }
 
-const isTeam = (contact) => atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)
+const isTeam = (contact) => atLeast(resolveContactTier(contact), TIER.field)
 
 export async function noteReturn(store, { caseRow, events, contact, msgId }) {
   try {

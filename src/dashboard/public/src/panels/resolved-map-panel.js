@@ -79,7 +79,7 @@ function ensureHeat(untilIso) {
 const liveHeat = () => (rm.heat && rm.heat.key === rm.wantKey ? rm.heat : null);
 
 function paint(canvas, dots, weeks) {
-  rm.drv = mountResolvedMap(canvas, rm.drv);
+  rm.drv = mountResolvedMap(canvas, rm.drv, rd.points.home_view);
   if (!rm.drv) return false;
   const fitKey = [rf.region, rf.period, rm.mode].join('|');
   const ranked = diseaseRank(rd.points.points);

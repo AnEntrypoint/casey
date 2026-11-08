@@ -4,7 +4,7 @@ import { defTool, str, pick, isValidLatLon } from './case-tools-shared.js'
 import { REPORT_KEYS } from './case-store.js'
 import { parseReport, tagList } from './timestamp.js'
 import { isOpenCase, fmtPhone27 } from './format.js'
-import { canSignOff, isOperator, atLeast, TIER_ANIMAL_HEALTH_TECHNICIAN } from './contact-tiers.js'
+import { canSignOff, isOperator, atLeast, TIER } from './contact-tiers.js'
 import { assigneeKeyFor, isAssignedTo, isOwnConversation, publicAssignee } from './case-assignment.js'
 import { normalizeLocation } from './location-normalize.js'
 import { OPTED_OUT_TAG, RESERVED_TAG, mergeTag, dropTag } from './hooks/heuristics.js'
@@ -164,7 +164,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
           const key = assigneeKeyFor(me)
           const own = key ? (await store().listCases({ assignee: key }, { limit: 200 })).filter(c => isOpenCase(c) && !isOwnConversation(c, me)) : []
 
-          if (!atLeast(ctx?.tier, TIER_ANIMAL_HEALTH_TECHNICIAN) || isOperator(ctx?.tier)) return own
+          if (!atLeast(ctx?.tier, TIER.specialist) || isOperator(ctx?.tier)) return own
           const seen = new Set(own.map(c => c.id))
           return [...own, ...(await signOffCandidates(store(), ctx)).filter(c => !seen.has(c.id))]
         }
@@ -196,7 +196,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         }
         const authority = deskAuthorityOn(ctx, target)
 
-        if (!isOpenCase(target) && !atLeast(ctx?.tier, TIER_ANIMAL_HEALTH_TECHNICIAN)) return FINISHED
+        if (!isOpenCase(target) && !atLeast(ctx?.tier, TIER.specialist)) return FINISHED
         if (authority === 'operator') { await setFocus(store(), me?.id, target); await recordSeen(store(), me?.id, target); return { ok: true, focused: true, recorded_on: await recordedOn(store(), target, ctx) } }
         if (!confirm) {
           await proposeFocus(store(), me?.id, target, ctx?.turnId)

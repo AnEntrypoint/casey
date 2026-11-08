@@ -1,7 +1,7 @@
 
 
 import { AGENT_USER, UNCLAIMED_ASSIGNEE } from './case-store.js'
-import { isOperator, canQueryCases, atLeast, TIER_ANIMAL_HEALTH_TECHNICIAN } from './contact-tiers.js'
+import { isOperator, canQueryCases, atLeast, TIER } from './contact-tiers.js'
 import { isAssignedTo, isOwnConversation, publicAssignee, assigneeKeyFor } from './case-assignment.js'
 import { enquiryRow } from './case-tools-shared.js'
 import { staffLabel } from './hooks/staff-outbound.js'
@@ -38,7 +38,7 @@ export function deskAuthorityOn(ctx, caseRow) {
   if (direct) return direct
   const a = String(caseRow?.assignee || '').trim()
 
-  if (atLeast(ctx?.tier, TIER_ANIMAL_HEALTH_TECHNICIAN) && (!a || a === UNCLAIMED_ASSIGNEE || isHandedOff(caseRow)) && !isOwnConversation(caseRow, ctx?.contact)) return 'assigned'
+  if (atLeast(ctx?.tier, TIER.specialist) && (!a || a === UNCLAIMED_ASSIGNEE || isHandedOff(caseRow)) && !isOwnConversation(caseRow, ctx?.contact)) return 'assigned'
   return null
 }
 
