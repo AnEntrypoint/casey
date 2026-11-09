@@ -88,6 +88,14 @@ export async function findRouter(store, routerId) {
   return row || null
 }
 
+export async function rotateRouterToken(store, routerId, now = new Date().toISOString()) {
+  const row = await findRouter(store, routerId)
+  if (!row) throw new Error(`unknown router_id ${routerId}`)
+  const token = newToken()
+  await store.t.update(TABLE.routers, row.id, { token_hash: hashToken(token), updated_at: now }, ACTOR, { expectedVersion: row._version })
+  return { token, router_id: routerId }
+}
+
 export function parseEvents(events) {
   if (!Array.isArray(events)) return { error: 'events must be an array' }
   if (events.length > EVENT_BATCH_MAX) return { error: `at most ${EVENT_BATCH_MAX} events per request` }

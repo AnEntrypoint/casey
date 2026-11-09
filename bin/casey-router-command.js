@@ -1,5 +1,5 @@
 import { createCaseStore } from '../src/case-store.js'
-import { createRouter, listRouters } from '../src/portal/portal-store.js'
+import { createRouter, listRouters, rotateRouterToken } from '../src/portal/portal-store.js'
 import { fmtTimeSAST } from '../src/format.js'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
 
@@ -39,7 +39,22 @@ export async function cmdRouter({ flags, rest }) {
     await closeAndExit(store, 0)
   }
 
+  if (sub === 'rotate-token') {
+    const id = typeof flags.id === 'string' ? flags.id : ''
+    if (!id) { say(bad('usage: casey router rotate-token --id <router_id>')); await closeAndExit(store, 1) }
+    try {
+      const { token } = await rotateRouterToken(store, id)
+      console.log(green(`rotated the token for router_id: ${id}`))
+      console.log('')
+      console.log(bold('  ' + token))
+      console.log('')
+      console.log(red('  The previous token is refused from now on. This is the only time the new token is shown.'))
+      console.log(red('  Write it to the router before the router next calls home, with the deployer provisioning tool.'))
+      await closeAndExit(store, 0)
+    } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
+  }
+
   if (sub) say(bad(`casey router has no "${sub}" subcommand.`))
-  say('usage: casey router <create|list> ...')
+  say('usage: casey router <create|list|rotate-token> ...')
   await closeAndExit(store, 1)
 }
