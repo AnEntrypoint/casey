@@ -186,9 +186,29 @@ export async function dailyCaps(store, { routerId = null, capBytesFor, now = Dat
       remaining_bytes: Math.max(0, cap - used),
       capped: used >= cap,
       cap_hit_at: hits.get(`${device.router_id}|${device.mac}`) ?? null,
+      last_seen: device.last_seen,
     })
   }
   return out
+}
+
+export const DELTA_MAX_AGE_MS = 12 * 3600e3
+export const CAPS_OVERLAP_MS = 120e3
+
+export function syncIsFull(since, now = Date.now()) {
+  const sinceMs = since ? Date.parse(since) : NaN
+  if (!Number.isFinite(sinceMs)) return true
+  if (sinceMs > now) return true
+  if (now - sinceMs > DELTA_MAX_AGE_MS) return true
+  return sinceMs < Date.parse(sastDayStart(now))
+}
+
+export async function capsAnswer(store, { routerId, capBytesFor, since = null, now = Date.now() }) {
+  const ts = new Date(now - CAPS_OVERLAP_MS).toISOString()
+  const everything = await dailyCaps(store, { routerId, capBytesFor, now })
+  if (syncIsFull(since, now)) return { full: true, ts, caps: everything }
+  const sinceMs = Date.parse(since)
+  return { full: false, ts, caps: everything.filter((cap) => Date.parse(cap.last_seen) > sinceMs) }
 }
 
 export async function registeredPhone(store, routerId, mac) {

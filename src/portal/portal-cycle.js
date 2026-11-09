@@ -1,5 +1,5 @@
 import { unpack } from 'msgpackr'
-import { normaliseMac, parseEvents, recordEvents, routerStatus } from './portal-store.js'
+import { ACTOR, TABLE, normaliseMac, parseEvents, recordEvents, routerStatus } from './portal-store.js'
 import { parseHealth, recordHealth, latestHealth } from './portal-health.js'
 import { parseUsageSamples, ingestUsage, USAGE_SAMPLES_MAX } from './portal-usage.js'
 import { validWgKey } from './portal-admin.js'
@@ -62,6 +62,15 @@ export function parseCycle(body) {
     if (!validWgKey(body.p)) return fail('p must be a WireGuard public key', 'p')
     pub = body.p
   }
+  let sync = null
+  if (body.q !== undefined) {
+    if (!isArray(body.q) || body.q.length !== 3) return fail('q must be [since, resume_ok, tls_path]', 'q')
+    const [since, resumeOk, tlsPath] = body.q
+    if (since !== '' && (typeof since !== 'string' || since.length > 40 || !Number.isFinite(Date.parse(since)))) return fail('q since must be an ISO time or empty', 'q')
+    if (typeof resumeOk !== 'boolean') return fail('q resume_ok must be a boolean', 'q')
+    if (tlsPath !== 'full' && tlsPath !== 'resume') return fail('q tls_path must be full or resume', 'q')
+    sync = { since: since || null, resumeOk, tlsPath }
+  }
   const eventRows = body.e === undefined ? [] : body.e
   if (!isArray(eventRows)) return fail('e must be an array', 'e')
   if (eventRows.length > CYCLE_EVENTS_MAX) return { ...fail(`at most ${CYCLE_EVENTS_MAX} events per request`, 'e'), tooLarge: true }
@@ -77,10 +86,11 @@ export function parseCycle(body) {
   }
   const checkedEvents = parseEvents(events)
   if (checkedEvents.error) return fail(checkedEvents.error, 'e')
-  return { cycle: { cv, samples: usage.samples, health, events: checkedEvents.events, pub } }
+  return { cycle: { cv, samples: usage.samples, health, events: checkedEvents.events, pub, sync } }
 }
 
 export async function applyCycle(store, router, cycle, now = new Date().toISOString()) {
+  if (cycle.sync) await store.t.update(TABLE.routers, router.id, { resume_ok: cycle.sync.resumeOk, tls_path: cycle.sync.tlsPath }, ACTOR)
   const usage = await ingestUsage(store, router, cycle.samples)
   const events = cycle.events.length ? await recordEvents(store, router, cycle.events, now) : 0
   let heartbeat = false

@@ -163,6 +163,15 @@ export async function saveSettings(store, routerId, values, now = new Date().toI
   }
 }
 
+export async function settingsChangedSince(store, routerId, since) {
+  if (!since) return true
+  for (const owner of [GLOBAL_ROUTER_ID, routerId]) {
+    const rows = await store.t.list(TABLE.settings, { router_id: owner, updated_at: { $gt: since } }, { limit: 1 })
+    if (rows.length) return true
+  }
+  return false
+}
+
 export function resolveSettings(globalOverrides = {}, routerOverrides = {}) {
   const defaults = loadDefaults()
   return Object.fromEntries(SETTING_KEYS.map(key => [key, routerOverrides[key] ?? globalOverrides[key] ?? defaults[key]]))

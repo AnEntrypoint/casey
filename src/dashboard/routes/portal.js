@@ -4,7 +4,7 @@ import * as portal from '../../portal/portal-store.js'
 import * as portalSettings from '../../portal/portal-config.js'
 import { ASSET_NAMES, renderAsset } from '../../portal/portal-render.js'
 import { HEARTBEAT_BYTES_MAX, parseHealth, recordHealth, healthRows, latestHealth } from '../../portal/portal-health.js'
-import { DAY_MS, BUCKETS, USAGE_SAMPLES_MAX, parseUsageSamples, ingestUsage, parseWindow, parseUsageFilter, usageReport, registeredPhone, dailyCaps, sastDayStart, capBytesFromMb } from '../../portal/portal-usage.js'
+import { DAY_MS, BUCKETS, USAGE_SAMPLES_MAX, parseUsageSamples, ingestUsage, parseWindow, parseUsageFilter, usageReport, registeredPhone, dailyCaps, capsAnswer, sastDayStart, capBytesFromMb } from '../../portal/portal-usage.js'
 import { purgeIfDue } from '../../portal/portal-retention.js'
 import { createWaPrefixSource, waPrefixesText } from '../../portal/portal-wa-prefixes.js'
 import { decodeBody, parseCycle, applyCycle, parseStatusBatch, statusBatch } from '../../portal/portal-cycle.js'
@@ -283,14 +283,19 @@ export function postRouterCycle({ store }) {
     await purgeIfDue(store).catch(e => { console.error('[portal] retention purge failed', String(e?.message || e)); return 0 })
     const counts = await applyCycle(store, router, parsed.cycle)
     const effective = await portalSettings.effectiveSettings(store, router.router_id)
-    const caps = await dailyCaps(store, { routerId: router.router_id, capBytesFor: async () => capBytesFromMb(effective.daily_cap_mb) })
+    const since = parsed.cycle.sync ? parsed.cycle.sync.since : null
+    const sync = await capsAnswer(store, { routerId: router.router_id, capBytesFor: async () => capBytesFromMb(effective.daily_cap_mb), since })
+    const settingsChanged = sync.full || await portalSettings.settingsChangedSince(store, router.router_id, since)
     const answer = {
       ok: true,
       usage: counts.usage,
       events: counts.events,
       heartbeat: counts.heartbeat,
       cv: portalSettings.configVersion(effective),
-      caps: caps.map(({ mac, used_bytes, cap_bytes }) => ({ mac, used_bytes, cap_bytes })),
+      full: sync.full,
+      ts: sync.ts,
+      settings_changed: settingsChanged,
+      caps: sync.caps.map(({ mac, used_bytes, cap_bytes }) => ({ mac, used_bytes, cap_bytes })),
     }
     if (parsed.cycle.pub) {
       answer.admin = await admin.adminPoll(store, router.router_id, parsed.cycle.pub, {
