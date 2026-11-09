@@ -2,10 +2,3 @@ title = "casey secrets scan"
 
 [extend]
 useDefault = true
-
-[allowlist]
-description = "gm session state committed before it was ignored: harness memory records and a browser profile with key names only"
-paths = [
-  '''^\.gm/memories/mem-[0-9a-f]+-[0-9]+\.md$''',
-  '''^\.gm/browser-chrome-profile[^/]*/''',
-]
