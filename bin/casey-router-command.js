@@ -1,5 +1,5 @@
 import { createCaseStore } from '../src/case-store.js'
-import { createRouter, listRouters, rotateRouterToken } from '../src/portal/portal-store.js'
+import { createRouter, deleteRouter, listRouters, rotateRouterToken } from '../src/portal/portal-store.js'
 import { fmtTimeSAST } from '../src/format.js'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
 
@@ -54,7 +54,17 @@ export async function cmdRouter({ flags, rest }) {
     } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
   }
 
+  if (sub === 'delete') {
+    const id = typeof flags.id === 'string' ? flags.id : ''
+    if (!id) { say(bad('usage: casey router delete --id <router_id>')); await closeAndExit(store, 1) }
+    try {
+      const gone = await deleteRouter(store, id)
+      console.log(green('deleted router "' + gone.name + '" (router_id: ' + gone.router_id + ')'))
+      await closeAndExit(store, 0)
+    } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
+  }
+
   if (sub) say(bad(`casey router has no "${sub}" subcommand.`))
-  say('usage: casey router <create|list|rotate-token> ...')
+  say('usage: casey router <create|list|rotate-token|delete> ...')
   await closeAndExit(store, 1)
 }

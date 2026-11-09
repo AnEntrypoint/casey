@@ -177,3 +177,15 @@ export async function routerOverview(store, now = Date.now()) {
     }
   }))
 }
+
+export async function deleteRouter(store, routerId) {
+  const row = await findRouter(store, routerId)
+  if (!row) throw new Error('unknown router_id ' + routerId)
+  if (row.last_seen) throw new Error('router_id ' + routerId + ' has checked in; refusing to delete')
+  for (const table of [TABLE.admin, TABLE.adminLog, TABLE.health, TABLE.events, TABLE.usage, TABLE.settings]) {
+    const [used] = await store.t.list(table, { router_id: routerId }, { limit: 1 })
+    if (used) throw new Error('router_id ' + routerId + ' has rows in ' + table + '; refusing to delete')
+  }
+  await store.t.remove(TABLE.routers, row.id, ACTOR)
+  return { router_id: routerId, name: row.name }
+}
