@@ -1,10 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { load as yamlLoadRaw, YAML11_SCHEMA } from 'js-yaml'
+import { validPassphrase, validSsid, validRouterId as routerIdOk, SITE_MAX } from './portal-store.js'
 
 export const BUNDLE_FILE = 'router-bundle.yml'
-const SSID = /^[\x20-\x7e]{1,32}$/
-const PASSPHRASE = /^[\x20-\x7e]{8,63}$/
+export const UPLINK_PASSPHRASE_ENV = 'CASEY_UPLINK_PASSPHRASE'
+const WG_KEY = /^[A-Za-z0-9+/]{43}=$/
 const NAME_MAX = 120
 const CERT_DIR = 'certs'
 const MANIFEST_KEYS = Object.freeze(['scripts', 'apply_script', 'seed', 'tls_files', 'root_cert', 'config_script', 'config_globals', 'tls_mode', 'log_prefix', 'bootstrap_title', 'router_id_prefix'])
@@ -62,17 +63,23 @@ export function bundleText(name, { tlsDir, dir, env = process.env, bundle = load
   return base ? routerFile(base, name, bundle.root_cert.file) : null
 }
 
-export function checkRouterInput(body, validRouterId) {
+export function checkRouterInput(body, validRouterId = routerIdOk) {
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   if (!name) return { error: 'name is required', field: 'name' }
   if (name.length > NAME_MAX) return { error: `name must be at most ${NAME_MAX} characters`, field: 'name' }
+  const site = typeof body.site === 'string' ? body.site.trim() : ''
+  if (!site) return { error: 'site is required', field: 'site' }
+  if (site.length > SITE_MAX) return { error: `site must be at most ${SITE_MAX} characters`, field: 'site' }
   const routerId = body.router_id === undefined || body.router_id === '' ? undefined : body.router_id
   if (routerId !== undefined && !validRouterId(routerId)) return { error: 'router_id may hold only letters, digits, - and _ (max 64)', field: 'router_id' }
   const uplinkSsid = typeof body.uplink_ssid === 'string' ? body.uplink_ssid : ''
-  if (!SSID.test(uplinkSsid)) return { error: 'uplink_ssid must be 1 to 32 printable ASCII characters', field: 'uplink_ssid' }
-  const uplinkPassphrase = typeof body.uplink_passphrase === 'string' ? body.uplink_passphrase : ''
-  if (!PASSPHRASE.test(uplinkPassphrase)) return { error: 'uplink_passphrase must be 8 to 63 printable ASCII characters', field: 'uplink_passphrase' }
-  return { value: { name, routerId, uplinkSsid, uplinkPassphrase } }
+  if (!validSsid(uplinkSsid)) return { error: 'uplink_ssid must be 1 to 32 printable ASCII characters', field: 'uplink_ssid' }
+  return { value: { name, site, routerId, uplinkSsid } }
+}
+
+export function uplinkPassphraseFrom(env = process.env) {
+  const value = env[UPLINK_PASSPHRASE_ENV]
+  return validPassphrase(value) ? value : null
 }
 
 export function configSource({ bundle, base, token, routerId, host }) {
@@ -93,7 +100,8 @@ export function seedScript({ bundle = loadBundle(), base, token, routerId }) {
   return `:if ([:len [/system script find name=${bundle.config_script}]] = 0) do={ /system script add name=${bundle.config_script} owner=admin policy=ftp,read,write,policy,test,sensitive source=${source} }\n`
 }
 
-export function bootstrapScript({ bundle = loadBundle(), base, token, routerId, uplinkSsid, uplinkPassphrase }) {
+export function bootstrapScript({ bundle = loadBundle(), base, token, routerId, uplinkSsid, uplinkPassphrase, wgPrivateKey }) {
+  if (!WG_KEY.test(String(wgPrivateKey))) throw new Error('bootstrapScript needs the router WireGuard private key')
   const origin = new URL(base).origin
   const bundleUrl = `${origin}/api/router/bundle/`
   const auth = `http-header-field="Authorization: Bearer ${token}"`
@@ -107,6 +115,8 @@ export function bootstrapScript({ bundle = loadBundle(), base, token, routerId, 
     `:if ([:len [/ip dhcp-client find interface=wifi1]] = 0) do={ /ip dhcp-client add interface=wifi1 disabled=no }`,
     `:local waited 0; :while ([:len [/ip address find interface=wifi1]] = 0 && $waited < 90) do={ :delay 1s; :set waited ($waited + 1) }`,
     `:if ([:len [/ip address find interface=wifi1]] = 0) do={ :error "${log}: no address on wifi1, check the uplink" }`,
+    `:if ([:len [/interface wireguard find name=uhh-admin]] = 0) do={ /interface wireguard add name=uhh-admin listen-port=13231 disabled=yes comment=uhh-admin }`,
+    `/interface wireguard set [find name=uhh-admin] private-key=${rosString(wgPrivateKey)}`,
     `/tool fetch url="${bundleUrl}${certFile}" dst-path=${certFile} check-certificate=no`,
     `/certificate import file-name=${certFile} passphrase=""`,
     `:if ([/certificate get [find common-name="${certName}"] fingerprint] != "${certSha}") do={ :error "${log}: ${certName} fingerprint mismatch" }`,

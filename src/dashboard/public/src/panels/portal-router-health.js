@@ -4,6 +4,7 @@ import { Table } from '/design/src/components/content/table.js';
 import { DetailRow } from '/design/src/components/content/row.js';
 import { word } from '../words.js';
 import { formatBytes, formatUptime } from './portal-format.js';
+import { fmtTime, NO_TIME_TEXT } from '../format.js';
 import { Sparkline } from './portal-sparkline.js';
 
 const h = webjsx.createElement;
@@ -75,8 +76,11 @@ function HistoryBody(history) {
     ];
 }
 
-export function RouterHealth({ router, history }) {
+export function RouterHealth({ router, history, live }) {
   const health = router.last_health;
+  const staleNote = health && !live
+    ? [h('p', { key: 'stale', class: 'casey-hint' }, word('ui.routers_panel_health_stale', { time: fmtTime(router.last_health_at) || NO_TIME_TEXT }))]
+    : [];
   const healthCards = health
     ? [
       Card(word('ui.routers_panel_health_status'), HealthFacts(health)),
@@ -86,6 +90,7 @@ export function RouterHealth({ router, history }) {
     : [h('p', { class: 'casey-hint' }, word('ui.routers_panel_no_health'))];
   return Section({
     title: word('ui.routers_panel_health_title'), headingLevel: 3, children: [
+      ...staleNote,
       h('div', { class: 'portal-health-grid' },
         ...healthCards,
         Card(word('ui.routers_panel_history_title'), HistoryBody(history))),

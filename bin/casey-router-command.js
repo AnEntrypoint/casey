@@ -1,5 +1,8 @@
 import { createCaseStore } from '../src/case-store.js'
-import { createRouter, deleteRouter, listRouters, rotateRouterToken } from '../src/portal/portal-store.js'
+import { deleteRouter, listRouters, rotateRouterToken } from '../src/portal/portal-store.js'
+import { provisionRouter } from '../src/portal/router-lifecycle.js'
+import { loadBundle, checkRouterInput } from '../src/portal/router-provisioning.js'
+import { publicBase } from '../src/portal/portal-config.js'
 import { fmtTimeSAST } from '../src/format.js'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
 
@@ -14,19 +17,21 @@ export async function cmdRouter({ flags, rest }) {
   const sub = rest[0]
 
   if (sub === 'create') {
-    const name = typeof flags.name === 'string' ? flags.name.trim() : ''
-    if (!name) { say(bad('usage: casey router create --name <label> [--id <router_id>]')); await closeAndExit(store, 1) }
+    const bundle = loadBundle()
+    if (!bundle) { say(bad('router provisioning is not configured (config/router-bundle.yml).')); await closeAndExit(store, 1) }
+    const checked = checkRouterInput({ name: flags.name, site: flags.site, router_id: flags.id, uplink_ssid: flags['uplink-ssid'] })
+    if (checked.error) { say(bad(`usage: casey router create --name <label> --site <site> --uplink-ssid <ssid> [--id <router_id>] (${checked.error})`)); await closeAndExit(store, 1) }
     try {
-      const routerId = typeof flags.id === 'string' ? flags.id : undefined
-      const { row, token } = await createRouter(store, { name, routerId })
-      console.log(green(`created router "${row.name}" (router_id: ${row.router_id})`))
+      const made = await provisionRouter(store, checked.value, { bundle, base: publicBase() })
+      console.log(green(`created router "${made.row.name}" (router_id: ${made.row.router_id}, site: ${made.row.site})`))
       console.log('')
-      console.log(bold('  ' + token))
-      console.log('')
-      console.log(red('  This is the only time the token is shown. Only its SHA-256 hash is stored.'))
-      console.log(red('  Put it on the router now; a lost token means creating a new router.'))
+      console.log(bold(made.bootstrap))
+      console.log(red('  The script holds the token and the router WireGuard key. It is shown only now; paste it into the router terminal.'))
       await closeAndExit(store, 0)
-    } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
+    } catch (e) {
+      say(bad(e.message))
+      await closeAndExit(store, 1)
+    }
   }
 
   if (sub === 'list') {
@@ -34,7 +39,7 @@ export async function cmdRouter({ flags, rest }) {
     if (!routers.length) { console.log('no routers yet.'); console.log(dim('  run ' + cyan('casey router create --name <label>') + ' to add one.')); await closeAndExit(store, 0) }
     for (const r of routers) {
       const seen = r.last_seen ? fmtTimeSAST(Math.floor(Date.parse(r.last_seen) / 1000)) : null
-      console.log(`${bold(r.name)}\t${r.router_id}\t${dim(seen || 'never seen')}`)
+      console.log(`${bold(r.name)}\t${r.router_id}\t${dim(r.site || 'no site')}\t${dim(r.serial || 'no serial')}\t${dim(seen || 'never seen')}`)
     }
     await closeAndExit(store, 0)
   }

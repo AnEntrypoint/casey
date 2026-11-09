@@ -41,9 +41,14 @@ export async function recordHealth(store, router, health, now = new Date().toISO
   return now
 }
 
-export async function latestHealth(store, routerId) {
+export async function latestHealthRow(store, routerId) {
   const [row] = await store.t.list(TABLE.health, { router_id: routerId }, { limit: 1, sort: [{ field: 'ts', dir: 'DESC' }] })
-  return row ? parseHealthJson(row.health_json) : null
+  return row ? { ts: isoOrNull(row.ts), health: parseHealthJson(row.health_json) } : null
+}
+
+export async function latestHealth(store, routerId) {
+  const row = await latestHealthRow(store, routerId)
+  return row ? row.health : null
 }
 
 export async function healthRows(store, routerId, { since, until }) {

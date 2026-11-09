@@ -103,8 +103,11 @@ ${bold('usage:')}
                                                  provision a machine credential for /api/sync/* (printed once)
   casey sync-apikey list                        list sync API keys (never prints the key itself)
   casey sync-apikey revoke <id>                 revoke a sync API key without deleting its history
-  casey router create --name <label> [--id <router_id>]  register a field router and print its token once
-  casey router list                             list routers with their last_seen time
+  casey router create --name <label> --site <site> --uplink-ssid <ssid> [--id <router_id>]
+                                                 register a field router and print its one-time bootstrap script
+  casey router list                             list routers with site, serial and last_seen time
+  casey router rotate-token --id <router_id>    issue a new token for a router (printed once)
+  casey router delete --id <router_id>          delete a router that has never checked in
 
 ${bold('flags:')} --help / -h on any command, --version / -v
 

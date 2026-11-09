@@ -10,7 +10,7 @@ import { word } from '../words.js';
 
 const h = webjsx.createElement;
 
-const BLANK = Object.freeze({ name: '', router_id: '', uplink_ssid: '', uplink_passphrase: '' });
+const BLANK = Object.freeze({ name: '', site: '', router_id: '', uplink_ssid: '' });
 
 let form = { ...BLANK };
 let fieldErrors = {};
@@ -77,10 +77,11 @@ export function RouterSetupSection() {
     children: [
       h('div', { key: 'setup', class: 'portal-router-setup' },
         h('p', { key: 'lede', class: 'casey-hint' }, word('ui.router_setup_lede')),
+        h('p', { key: 'secret', class: 'casey-hint' }, word('ui.router_setup_passphrase_note')),
         Field('name', word('ui.router_setup_name')),
+        Field('site', word('ui.router_setup_site'), { hint: word('ui.router_setup_site_hint') }),
         Field('router_id', word('ui.router_setup_id'), { hint: word('ui.router_setup_id_hint') }),
         Field('uplink_ssid', word('ui.router_setup_uplink_ssid'), { hint: word('ui.router_setup_uplink_ssid_hint') }),
-        Field('uplink_passphrase', word('ui.router_setup_uplink_passphrase'), { type: 'password' }),
         h('div', { key: 'actions', class: 'ds-settings-actions' },
           Btn({
             variant: 'primary',

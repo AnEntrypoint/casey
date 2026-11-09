@@ -19,7 +19,10 @@ function query(params) {
   return s ? '?' + s : '';
 }
 
-export const createPortalRouter = (body) => send('POST', '/api/portal/routers', body);
+export const createPortalRouter = (body) => send('POST', '/api/admin/routers', body);
+export const deleteRouterRecord = (routerId) => send('DELETE', '/api/admin/routers/' + seg(routerId));
+export const rotateRouterToken = (routerId) => send('POST', '/api/admin/routers/' + seg(routerId) + '/rotate-token');
+export const putRouterUplink = (routerId, body) => send('PUT', '/api/admin/routers/' + seg(routerId) + '/uplink', body);
 export const fetchPortalConfig = () => json('/api/portal/config');
 export const putPortalConfig = (settings) => send('PUT', '/api/portal/config', { settings });
 export const putPortalRouterConfig = (routerId, settings) => send('PUT', '/api/portal/config/' + seg(routerId), { settings });

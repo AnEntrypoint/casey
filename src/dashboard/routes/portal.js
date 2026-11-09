@@ -3,12 +3,13 @@ import { registerPortalAdmin } from './portal-admin.js'
 import * as portal from '../../portal/portal-store.js'
 import * as portalSettings from '../../portal/portal-config.js'
 import { ASSET_NAMES, renderAsset } from '../../portal/portal-render.js'
-import { HEARTBEAT_BYTES_MAX, parseHealth, recordHealth, healthRows, latestHealth } from '../../portal/portal-health.js'
+import { HEARTBEAT_BYTES_MAX, parseHealth, recordHealth, healthRows, latestHealthRow } from '../../portal/portal-health.js'
 import { DAY_MS, BUCKETS, USAGE_SAMPLES_MAX, parseUsageSamples, ingestUsage, parseWindow, parseUsageFilter, usageReport, registeredPhone, dailyCaps, capsAnswer, sastDayStart, capBytesFromMb } from '../../portal/portal-usage.js'
 import { purgeIfDue } from '../../portal/portal-retention.js'
 import { createWaPrefixSource, waPrefixesText } from '../../portal/portal-wa-prefixes.js'
 import { decodeBody, parseCycle, applyCycle, parseStatusBatch, statusBatch } from '../../portal/portal-cycle.js'
 import * as bootstrap from '../../portal/router-provisioning.js'
+import * as lifecycle from '../../portal/router-lifecycle.js'
 import * as admin from '../../portal/portal-admin.js'
 import express from 'express'
 
@@ -44,6 +45,12 @@ function adminDenied(req, res, authed) {
   if (!authed(req)) { res.status(401).json({ error: 'unauthorized' }); return true }
   if (req.caseyAccount?.role !== 'admin') { res.status(403).json({ error: 'This is not available for your login.', code: 'role_forbidden' }); return true }
   return false
+}
+
+function refusedJson(res, err) {
+  if (err instanceof portal.RouterRefusal) return res.status(err.status).json({ error: err.message })
+  console.error('[portal] router request failed', String(err?.message || err))
+  return res.status(500).json({ error: 'router request failed' })
 }
 
 const finiteOrNull = (value) => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
@@ -156,10 +163,18 @@ export function getRouters({ store, authed }) {
     const until = new Date(now).toISOString()
     const overview = await portal.routerOverview(store, now)
     const routers = await Promise.all(overview.map(async (row) => {
-      const lastHealth = await latestHealth(store, row.router_id)
+      const lastRow = await latestHealthRow(store, row.router_id)
+      const lastHealth = lastRow ? lastRow.health : null
       const usage = await usageReport(store, { routerId: row.router_id, since, until, bucket: 'day' })
       const usage24h = usage.devices.reduce((sum, d) => ({ up_bytes: sum.up_bytes + d.up_bytes, down_bytes: sum.down_bytes + d.down_bytes }), { up_bytes: 0, down_bytes: 0 })
-      return { ...row, active_clients: finiteOrNull(lastHealth?.active_clients) ?? row.active_clients, last_health: lastHealth, usage_24h: usage24h }
+      return {
+        ...row,
+        active_clients: finiteOrNull(lastHealth?.active_clients) ?? row.active_clients,
+        active_clients_at: lastRow ? lastRow.ts : row.active_clients_at,
+        last_health: lastHealth,
+        last_health_at: lastRow ? lastRow.ts : null,
+        usage_24h: usage24h,
+      }
     }))
     res.json({ routers, generated_at: new Date(now).toISOString() })
   }
@@ -307,6 +322,21 @@ export function postRouterCycle({ store }) {
   }
 }
 
+export function postRouterSerial({ store }) {
+  return async (req, res) => {
+    const router = await routerFromBearer(store, req, res)
+    if (!router) return
+    const b = req.body || {}
+    if (b.router_id !== router.router_id) return res.status(403).json({ error: 'router_id does not match the token' })
+    try {
+      await portal.recordSerial(store, router, b.serial)
+      res.status(202).json({ ok: true })
+    } catch (err) {
+      refusedJson(res, err)
+    }
+  }
+}
+
 export function postRouterStatusBatch({ store }) {
   return async (req, res) => {
     const router = await routerFromBearer(store, req, res)
@@ -327,22 +357,56 @@ export function postPortalRouter({ store, authed }) {
     if (!bundle) return res.status(503).json({ error: 'router provisioning is not configured' })
     const checked = bootstrap.checkRouterInput(req.body || {}, portal.validRouterId)
     if (checked.error) return res.status(400).json({ error: checked.error, field: checked.field })
-    const { name, routerId, uplinkSsid, uplinkPassphrase } = checked.value
-    let created
     try {
-      created = await portal.createRouter(store, { name, routerId, routerIdPrefix: bundle.router_id_prefix })
-    } catch (e) {
-      const status = /already exists/.test(e.message) ? 409 : 400
-      return res.status(status).json({ error: e.message })
+      const made = await lifecycle.provisionRouter(store, checked.value, { bundle, base: portalSettings.publicBase() })
+      res.set('Cache-Control', 'no-store')
+      res.status(201).json({
+        router_id: made.row.router_id,
+        name: made.row.name,
+        site: made.row.site,
+        token: made.token,
+        bootstrap: made.bootstrap,
+      })
+    } catch (err) {
+      refusedJson(res, err)
     }
-    const { row, token } = created
-    res.set('Cache-Control', 'no-store')
-    res.status(201).json({
-      router_id: row.router_id,
-      name: row.name,
-      token,
-      bootstrap: bootstrap.bootstrapScript({ bundle, base: portalSettings.publicBase(), token, routerId: row.router_id, uplinkSsid, uplinkPassphrase }),
-    })
+  }
+}
+
+export function deleteRouterRoute({ store, authed }) {
+  return async (req, res) => {
+    if (adminDenied(req, res, authed)) return
+    try {
+      const gone = await portal.deleteRouter(store, String(req.params?.router_id ?? ''))
+      res.status(200).json({ deleted: true, router_id: gone.router_id })
+    } catch (err) {
+      refusedJson(res, err)
+    }
+  }
+}
+
+export function postRouterRotate({ store, authed }) {
+  return async (req, res) => {
+    if (adminDenied(req, res, authed)) return
+    try {
+      const rotated = await portal.rotateRouterToken(store, String(req.params?.router_id ?? ''))
+      res.set('Cache-Control', 'no-store')
+      res.status(200).json({ router_id: rotated.router_id, token: rotated.token })
+    } catch (err) {
+      refusedJson(res, err)
+    }
+  }
+}
+
+export function putRouterUplink({ store, authed }) {
+  return async (req, res) => {
+    if (adminDenied(req, res, authed)) return
+    const b = req.body || {}
+    try {
+      res.status(200).json(await portal.setRouterUplink(store, String(req.params?.router_id ?? ''), { site: b.site, uplinkSsid: b.uplink_ssid }))
+    } catch (err) {
+      refusedJson(res, err)
+    }
   }
 }
 
@@ -376,7 +440,13 @@ const ROUTES = [
   ['post', '/api/router/events', postRouterEvents],
   ['post', '/api/router/cycle', postRouterCycle, { middleware: [msgpackBody] }],
   ['post', '/api/router/status-batch', postRouterStatusBatch, { middleware: [msgpackBody] }],
+  ['post', '/api/router/serial', postRouterSerial],
   ['get', '/api/routers', getRouters],
+  ['post', '/api/admin/routers', postPortalRouter],
+  ['delete', '/api/admin/routers/:router_id', deleteRouterRoute],
+  ['post', '/api/admin/routers/:router_id/rotate-token', postRouterRotate],
+  ['put', '/api/admin/routers/:router_id/uplink', putRouterUplink],
+  ['put', '/api/admin/routers/:router_id/settings', putRouterPortalConfig],
   ['get', '/api/portal/config', getPortalConfig],
   ['put', '/api/portal/config', putPortalConfig],
   ['put', '/api/portal/config/:router_id', putRouterPortalConfig],
