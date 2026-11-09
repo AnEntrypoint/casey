@@ -46,6 +46,7 @@ const SCHEMA = Object.freeze({
 })
 
 const DEFAULTS_FILE = 'portal-defaults.yml'
+const DEPLOYER_KEYS = Object.freeze(['admin_router_cookie', 'phone_storage_key'])
 let defaultsCache = null
 
 export function loadDefaults(env = process.env) {
@@ -55,8 +56,7 @@ export function loadDefaults(env = process.env) {
   if (!file || !fs.existsSync(file)) throw new Error(`portal defaults not found: set CASEY_CONFIG_DIR to a directory holding ${DEFAULTS_FILE}`)
   const raw = yamlLoadRaw(fs.readFileSync(file, 'utf8'), { schema: YAML11_SCHEMA }) || {}
   const values = { ...raw }
-  for (const key of SETTING_KEYS) {
-    if (key === 'tc_body') continue
+  for (const key of [...SETTING_KEYS.filter(key => key !== 'tc_body'), ...DEPLOYER_KEYS]) {
     if (values[key] === undefined) throw new Error(`${DEFAULTS_FILE} is missing ${key}`)
   }
   values.tc_body = raw.tc_body || loadTcBody(env)

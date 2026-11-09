@@ -1,5 +1,5 @@
 import fs from 'node:fs'
-import { publicBase } from './portal-config.js'
+import { loadDefaults, publicBase } from './portal-config.js'
 
 export const ASSET_NAMES = Object.freeze(['login.html', 'blocked.html', 'tc.html', 'redirect.html'])
 
@@ -43,6 +43,7 @@ export function templateValues(settings, { routerId, apiBase }) {
   return {
     router_id: escapeHtml(routerId),
     api_base: escapeHtml(apiBase),
+    phone_key: escapeHtml(loadDefaults().phone_storage_key),
     bot_number: escapeHtml(settings.bot_number),
     bot_wa_url: escapeHtml(`https://wa.me/${waDigits}`),
     login_title: plainText('login_title'),

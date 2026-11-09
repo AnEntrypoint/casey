@@ -43,7 +43,7 @@ button:disabled{opacity:.6}
 (function(){
 var LOGIN="$(link-login-only)";
 var f=document.getElementById("f"),phone=document.getElementById("phone"),tc=document.getElementById("tc"),msg=document.getElementById("msg"),go=document.getElementById("go");
-var KEY="uhhPhone",saved="";try{saved=localStorage.getItem(KEY)||""}catch(e){}
+var KEY="{{phone_key}}",saved="";try{saved=localStorage.getItem(KEY)||""}catch(e){}
 if(saved)phone.value=saved;
 function norm(v){var s=v.replace(/[\s\-()]/g,"");if(/^0\d{9}$/.test(s))s="+27"+s.slice(1);return /^\+\d{8,15}$/.test(s)?s:null}
 f.addEventListener("submit",function(e){

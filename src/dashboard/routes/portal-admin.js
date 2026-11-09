@@ -1,12 +1,13 @@
 import http from 'node:http'
 import * as portal from '../../portal/portal-store.js'
 import * as admin from '../../portal/portal-admin.js'
+import { loadDefaults } from '../../portal/portal-config.js'
 import { mountRoutes } from './register.js'
 
 const PROXY_DROP = new Set(['cookie', 'authorization', 'host', 'connection', 'origin', 'referer', 'accept-encoding', 'keep-alive', 'upgrade', 'proxy-authorization'])
 const PROXY_TIMEOUT_MS = 30e3
 const ROUTER_PAGE_MAX = 500
-const ROUTER_COOKIE = 'uhh_admin_router'
+const routerCookieName = () => loadDefaults().admin_router_cookie
 const ROUTER_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 const bearer = (req) => {
@@ -38,7 +39,7 @@ function rewriteCookie(cookie, prefix) {
 }
 
 function routerFromCookie(req) {
-  const m = new RegExp(`(?:^|;\\s*)${ROUTER_COOKIE}=([^;]+)`).exec(String(req.headers.cookie || ''))
+  const m = new RegExp(`(?:^|;\\s*)${routerCookieName()}=([^;]+)`).exec(String(req.headers.cookie || ''))
   return m && ROUTER_ID.test(m[1]) ? m[1] : ''
 }
 
@@ -51,7 +52,7 @@ function forwardToRouter(req, res, row, routerId, rest) {
     const out = { ...up.headers }
     if (out.location) out.location = rewriteLocation(String(out.location), row.tunnel_ip, prefix)
     out['set-cookie'] = [].concat(out['set-cookie'] || []).map(c => rewriteCookie(c, prefix))
-      .concat(`${ROUTER_COOKIE}=${routerId}; Path=/; HttpOnly; SameSite=Strict${req.secure ? '; Secure' : ''}`)
+      .concat(`${routerCookieName()}=${routerId}; Path=/; HttpOnly; SameSite=Strict${req.secure ? '; Secure' : ''}`)
     res.writeHead(up.statusCode, out)
     up.pipe(res)
   })

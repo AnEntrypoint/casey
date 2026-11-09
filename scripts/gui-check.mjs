@@ -28,9 +28,7 @@ const USER = 'guicheck'
 const SCRATCH = mkdtempSync(path.join(os.tmpdir(), 'casey-gui-check-store-'))
 process.chdir(SCRATCH)
 
-const UHH_CONFIG = path.join(HERE, '..', '..', '..', 'config')
-if (!process.env.CASEY_CONFIG_DIR && existsSync(path.join(UHH_CONFIG, 'report-fields.yml'))) process.env.CASEY_CONFIG_DIR = UHH_CONFIG
-if (!process.env.CASEY_CONFIG_DIR) throw new Error('gui-check needs CASEY_CONFIG_DIR (see uhh/config)')
+if (!process.env.CASEY_CONFIG_DIR) throw new Error('gui-check needs CASEY_CONFIG_DIR')
 const FX = JSON.parse(readFileSync(path.join(process.env.CASEY_CONFIG_DIR, 'gui-check', 'fixtures.json'), 'utf8'))
 process.env.CASEY_COOKIE_SECURE = '0'
 

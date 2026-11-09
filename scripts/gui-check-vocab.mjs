@@ -21,13 +21,14 @@ export async function runVocabChecks(c) {
   writeFileSync(callsFile, '')
   const calls = () => readFileSync(callsFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
 
-  const UHH = process.env.CASEY_CONFIG_DIR || path.join(ROOT, '..', '..', 'config')
-  const FX = JSON.parse(readFileSync(path.join(UHH, 'gui-check', 'fixtures.json'), 'utf8'))
+  const CONFIG_DIR = process.env.CASEY_CONFIG_DIR
+  if (!CONFIG_DIR) throw new Error('gui-check-vocab needs CASEY_CONFIG_DIR')
+  const FX = JSON.parse(readFileSync(path.join(CONFIG_DIR, 'gui-check', 'fixtures.json'), 'utf8'))
   const cap = (s) => s[0].toUpperCase() + s.slice(1)
   const LAST_SPECIES = FX.vocab.speciesOptions.at(-1)
   const OTHER = FX.vocab.otherSpecies
   const XH = FX.vocab.messages.xhosaInbound
-  cpSync(UHH, cfg, { recursive: true })
+  cpSync(CONFIG_DIR, cfg, { recursive: true })
   let vocab = readFileSync(path.join(cfg, 'vocabulary.yml'), 'utf8')
   vocab = vocab.replace(/^  waiting: "Waiting"/m, '  waiting: "On hold"').replace(/^ {2}other_diseases: .*\n/m, '')
   writeFileSync(path.join(cfg, 'vocabulary.yml'), vocab)

@@ -9,7 +9,7 @@ const dd = argv.indexOf('--')
 const flags = dd === -1 ? argv : argv.slice(0, dd)
 const cmd = dd === -1 ? [] : argv.slice(dd + 1)
 const mi = flags.indexOf('--manifest')
-const manifestPath = mi !== -1 ? flags[mi + 1] : process.env.UHH_SECRETS_MANIFEST
+const manifestPath = mi !== -1 ? flags[mi + 1] : process.env.CASEY_SECRETS_MANIFEST
 if (!manifestPath || !cmd.length) { console.error('usage: secrets-exec.mjs --manifest <file> -- <command> [args...]'); process.exit(64) }
 
 installLogScrub()
@@ -18,7 +18,7 @@ try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) }
 catch { console.error('secrets-exec: cannot read the manifest file'); process.exit(78) }
 
 let loaded
-try { loaded = await loadSecrets(manifest, { allowLatest: process.env.UHH_ALLOW_LATEST_SECRET === '1' }) }
+try { loaded = await loadSecrets(manifest, { allowLatest: process.env.CASEY_ALLOW_LATEST_SECRET === '1' }) }
 catch (e) {
   console.error(`secrets-exec: ${e instanceof SecretsError ? e.message : 'secret loading failed'}; the command was not started`)
   process.exit(78)

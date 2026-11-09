@@ -140,8 +140,8 @@ export const USAGE = {
   Nothing here sends a WhatsApp message.`,
   init: `casey init
   Scaffold a .env in casey's own repo root for you to fill in. Never overwrites
-  an existing one. A deployer package that ships its own .env (uhh, serpent)
-  does not use this -- edit that package's .env instead.`,
+  an existing one. A deployer package that ships its own .env does not use
+  this -- edit that package's .env instead.`,
   doctor: `casey doctor [--port 4000] [--no-network]
   Preflight: Node version, .env, dependency resolution, supply-chain scan,
   submodule health, timeout coordination, channel credentials, config validity

@@ -1,7 +1,3 @@
-# omni-asr.py -- one transcription with Meta's Omnilingual ASR (CTC, int8) through sherpa-onnx, on CPU.
-# Called by src/hooks/local-stt.js:  python omni-asr.py <model-dir> <16 kHz mono wav>   ->  one JSON line {"text": "..."}.
-# The CTC models need no language setting: one model covers 1600+ languages (isiZulu, isiXhosa, Setswana, Sepedi,
-# Xitsonga, Afrikaans, English, ...). Installed by uhh's scripts/setup-local-stt.sh.
 import json, sys, wave
 import numpy as np
 import sherpa_onnx

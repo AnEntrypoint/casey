@@ -58,17 +58,21 @@ export function waTimestampIso(raw) {
 
 export const hashToken = (raw) => crypto.createHash('sha256').update(String(raw)).digest('hex')
 export const newToken = () => crypto.randomBytes(32).toString('base64url')
-export const newRouterId = () => 'rtr-' + crypto.randomBytes(6).toString('hex')
+export const newRouterId = (prefix) => {
+  if (typeof prefix !== 'string' || !prefix) throw new Error('router_id prefix is not configured (router-bundle.yml router_id_prefix)')
+  return prefix + crypto.randomBytes(6).toString('hex')
+}
 
-export async function createRouter(store, { name, routerId = newRouterId() }) {
+export async function createRouter(store, { name, routerId, routerIdPrefix }) {
   const label = String(name || '').trim().slice(0, 120)
   if (!label) throw new Error('name is required')
-  if (!validRouterId(routerId)) throw new Error('router_id may hold only letters, digits, - and _ (max 64)')
-  const [dup] = await store.t.list(TABLE.routers, { router_id: routerId }, { limit: 1 })
-  if (dup) throw new Error(`router_id ${routerId} already exists`)
+  const id = routerId ?? newRouterId(routerIdPrefix)
+  if (!validRouterId(id)) throw new Error('router_id may hold only letters, digits, - and _ (max 64)')
+  const [dup] = await store.t.list(TABLE.routers, { router_id: id }, { limit: 1 })
+  if (dup) throw new Error(`router_id ${id} already exists`)
   const token = newToken()
   const row = await store.t.create(TABLE.routers, {
-    router_id: routerId, token_hash: hashToken(token), name: label, last_seen: '', created_at: new Date().toISOString(),
+    router_id: id, token_hash: hashToken(token), name: label, last_seen: '', created_at: new Date().toISOString(),
   }, ACTOR)
   return { row, token }
 }

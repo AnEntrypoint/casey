@@ -323,12 +323,14 @@ export function postRouterStatusBatch({ store }) {
 export function postPortalRouter({ store, authed }) {
   return async (req, res) => {
     if (adminDenied(req, res, authed)) return
+    const bundle = bootstrap.loadBundle()
+    if (!bundle) return res.status(503).json({ error: 'router provisioning is not configured' })
     const checked = bootstrap.checkRouterInput(req.body || {}, portal.validRouterId)
     if (checked.error) return res.status(400).json({ error: checked.error, field: checked.field })
     const { name, routerId, uplinkSsid, uplinkPassphrase } = checked.value
     let created
     try {
-      created = await portal.createRouter(store, { name, routerId })
+      created = await portal.createRouter(store, { name, routerId, routerIdPrefix: bundle.router_id_prefix })
     } catch (e) {
       const status = /already exists/.test(e.message) ? 409 : 400
       return res.status(status).json({ error: e.message })
@@ -339,7 +341,7 @@ export function postPortalRouter({ store, authed }) {
       router_id: row.router_id,
       name: row.name,
       token,
-      bootstrap: bootstrap.bootstrapScript({ base: portalSettings.publicBase(), token, routerId: row.router_id, uplinkSsid, uplinkPassphrase }),
+      bootstrap: bootstrap.bootstrapScript({ bundle, base: portalSettings.publicBase(), token, routerId: row.router_id, uplinkSsid, uplinkPassphrase }),
     })
   }
 }
@@ -347,12 +349,13 @@ export function postPortalRouter({ store, authed }) {
 export function getRouterBundle({ store }) {
   return async (req, res) => {
     const name = String(req.params?.name ?? '')
-    const isPublic = name === bootstrap.ISRG_CERT
+    const bundle = bootstrap.loadBundle()
+    const isPublic = !!bundle && name === bundle.root_cert.file
     const router = isPublic ? null : await routerFromBearer(store, req, res)
     if (!isPublic && !router) return
-    const text = name === bootstrap.SEED
-      ? bootstrap.seedScript({ base: portalSettings.publicBase(), token: bearer(req), routerId: router.router_id })
-      : bootstrap.bundleText(name, { tlsDir: process.env.CASEY_PORTAL_TLS_DIR })
+    const text = bundle && name === bundle.seed
+      ? bootstrap.seedScript({ bundle, base: portalSettings.publicBase(), token: bearer(req), routerId: router.router_id })
+      : bootstrap.bundleText(name, { tlsDir: process.env.CASEY_PORTAL_TLS_DIR, bundle })
     if (text === null) return res.status(404).json({ error: 'not found' })
     res.set('Content-Type', 'text/plain; charset=utf-8')
     res.set('Cache-Control', 'no-store')
