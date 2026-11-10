@@ -1,7 +1,7 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Section } from '/design/src/components/content/panel.js';
 import { Alert } from '/design/src/components/content/feedback.js';
-import { TextField } from '/design/src/components/content/fields.js';
+import { TextField, Select } from '/design/src/components/content/fields.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { schedule } from '../state.js';
 import { createPortalRouter } from '../api-portal.js';
@@ -10,7 +10,7 @@ import { word } from '../words.js';
 
 const h = webjsx.createElement;
 
-const BLANK = Object.freeze({ name: '', site: '', router_id: '', uplink_ssid: '' });
+const BLANK = Object.freeze({ name: '', site: '', router_id: '', uplink: 'wifi', uplink_ssid: '' });
 
 let form = { ...BLANK };
 let fieldErrors = {};
@@ -24,7 +24,24 @@ function setField(key, value) {
 }
 
 function payload() {
-  return Object.fromEntries(Object.entries(form).filter(([, v]) => v !== ''));
+  const body = { ...form };
+  if (body.uplink === 'lte') delete body.uplink_ssid;
+  return Object.fromEntries(Object.entries(body).filter(([, v]) => v !== ''));
+}
+
+function UplinkSelect() {
+  return Select({
+    name: 'uplink',
+    key: 'uplink',
+    label: word('ui.router_setup_uplink'),
+    value: form.uplink,
+    options: [
+      { value: 'wifi', label: word('ui.router_setup_uplink_wifi') },
+      { value: 'lte', label: word('ui.router_setup_uplink_lte') },
+    ],
+    hint: word('ui.router_setup_uplink_hint'),
+    onChange: (v) => setField('uplink', v),
+  });
 }
 
 async function create() {
@@ -81,7 +98,8 @@ export function RouterSetupSection() {
         Field('name', word('ui.router_setup_name')),
         Field('site', word('ui.router_setup_site'), { hint: word('ui.router_setup_site_hint') }),
         Field('router_id', word('ui.router_setup_id'), { hint: word('ui.router_setup_id_hint') }),
-        Field('uplink_ssid', word('ui.router_setup_uplink_ssid'), { hint: word('ui.router_setup_uplink_ssid_hint') }),
+        UplinkSelect(),
+        form.uplink === 'lte' ? null : Field('uplink_ssid', word('ui.router_setup_uplink_ssid'), { hint: word('ui.router_setup_uplink_ssid_hint') }),
         h('div', { key: 'actions', class: 'ds-settings-actions' },
           Btn({
             variant: 'primary',
