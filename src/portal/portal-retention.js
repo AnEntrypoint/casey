@@ -1,6 +1,6 @@
 import { TABLE } from './portal-store.js'
 import { DAY_MS } from './portal-usage.js'
-import { retentionDays } from './portal-config.js'
+import { retentionDays, outageRetentionDays } from './portal-config.js'
 
 const HOUR_MS = 3600e3
 const PURGE_BATCH = 500
@@ -25,7 +25,9 @@ export function createPurgeGate({ everyMs = HOUR_MS } = {}) {
     const cutoff = new Date(now - days * DAY_MS).toISOString()
     const usage = await deleteOlderThan(store, TABLE.usage, 'received_at', cutoff)
     const health = await deleteOlderThan(store, TABLE.health, 'ts', cutoff)
-    return usage + health
+    const outageCutoff = new Date(now - outageRetentionDays() * DAY_MS).toISOString()
+    const outages = await deleteOlderThan(store, TABLE.outages, 'start_ts', outageCutoff)
+    return usage + health + outages
   }
 }
 

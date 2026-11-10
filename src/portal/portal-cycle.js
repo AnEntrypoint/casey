@@ -25,6 +25,22 @@ export function decodeBody(body) {
   }
 }
 
+const LTE_NUMBER_FIELDS = Object.freeze(['rssi_dbm', 'rsrp_dbm', 'rsrq_db', 'sinr_db'])
+const LTE_TEXT_FIELDS = Object.freeze(['registration', 'access_technology', 'operator'])
+
+export function lteFromCycle(a) {
+  const lte = { running: a[0] === 1 }
+  LTE_NUMBER_FIELDS.forEach((key, i) => {
+    const n = Number(a[i + 1])
+    if (a[i + 1] !== undefined && a[i + 1] !== '' && Number.isFinite(n)) lte[key] = n
+  })
+  LTE_TEXT_FIELDS.forEach((key, i) => {
+    const v = a[i + 1 + LTE_NUMBER_FIELDS.length]
+    if (typeof v === 'string' && v !== '') lte[key] = v.slice(0, 64)
+  })
+  return lte
+}
+
 export function healthFromCycle(h) {
   if (!isArray(h) || h.length < HEALTH_MIN_ITEMS) return fail('h must be an array of at least 16 items', 'h')
   const raw = {}
@@ -32,7 +48,8 @@ export function healthFromCycle(h) {
   try {
     if (isArray(h[10])) raw.wifi = h[10].map(([name, running, clients]) => ({ name, running: running === 1, clients }))
     if (isArray(h[11])) raw.ether = h[11].map(([name, running]) => ({ name, running: running === 1 }))
-    if (h[12] !== undefined) raw.lte = { running: h[12] === 1 }
+    if (isArray(h[12])) raw.lte = lteFromCycle(h[12])
+    else if (h[12] !== undefined) raw.lte = { running: h[12] === 1 }
     if (isArray(h[14])) raw.wan = { interface: 'wifi1', address: h[14][0], up: h[14][1] === 1 }
   } catch { return fail('h has a malformed nested item', 'h') }
   if (!isArray(h[16])) delete raw.log_errors

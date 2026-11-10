@@ -9,6 +9,8 @@ import { purgeIfDue } from '../../portal/portal-retention.js'
 import { createWaPrefixSource, waPrefixesText } from '../../portal/portal-wa-prefixes.js'
 import { decodeBody, parseCycle, applyCycle, parseStatusBatch, statusBatch } from '../../portal/portal-cycle.js'
 import * as bootstrap from '../../portal/router-provisioning.js'
+import { otaManifest } from '../../portal/router-ota.js'
+import { outagesFor } from '../../portal/portal-outages.js'
 import * as lifecycle from '../../portal/router-lifecycle.js'
 import * as admin from '../../portal/portal-admin.js'
 import express from 'express'
@@ -96,6 +98,7 @@ export function getRouterConfig({ store }) {
       server_time: new Date().toISOString(),
       settings: portalSettings.routerSettings(effective),
       assets: ASSET_NAMES,
+      scripts: otaManifest({ bundle: bootstrap.loadBundle(), tlsDir: process.env.CASEY_PORTAL_TLS_DIR }),
     })
   }
 }
@@ -250,6 +253,19 @@ export function getPortalUsage({ store, authed }) {
       phone_e164: await registeredPhone(store, cap.router_id, cap.mac),
     })))
     res.json({ bucket, series: report.series, devices, daily: { day_start: sastDayStart(now), devices: today } })
+  }
+}
+
+export function getPortalOutages({ store, authed }) {
+  return async (req, res) => {
+    if (adminDenied(req, res, authed)) return
+    const query = req.query || {}
+    if (!portal.validRouterId(query.router_id)) return res.status(400).json({ error: 'router_id is required', field: 'router_id' })
+    const range = parseWindow(query)
+    if (range.error) return res.status(400).json({ error: range.error, field: range.field })
+    const router = await portal.findRouter(store, query.router_id)
+    if (!router) return res.status(404).json({ error: 'unknown router_id' })
+    res.json({ rows: await outagesFor(store, router.router_id, { since: range.since }) })
   }
 }
 
@@ -452,6 +468,7 @@ const ROUTES = [
   ['put', '/api/portal/config/:router_id', putRouterPortalConfig],
   ['get', '/api/portal/usage', getPortalUsage],
   ['get', '/api/portal/health', getPortalHealth],
+  ['get', '/api/portal/outages', getPortalOutages],
 ]
 
 export function registerPortal(app, deps) {

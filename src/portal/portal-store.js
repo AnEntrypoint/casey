@@ -7,6 +7,7 @@ export const TABLE = Object.freeze({
   events: 'router_events',
   settings: 'router_settings',
   health: 'router_health',
+  outages: 'router_outages',
   usage: 'router_usage',
   admin: 'router_admin',
   adminLog: 'router_admin_log',
@@ -241,7 +242,7 @@ export async function deleteRouter(store, routerId) {
   const row = await findRouter(store, routerId)
   if (!row) refuse('unknown router_id ' + routerId, 404)
   if (row.last_seen || row.serial) refuse('router_id ' + routerId + ' has checked in; refusing to delete')
-  for (const table of [TABLE.admin, TABLE.adminLog, TABLE.health, TABLE.events, TABLE.usage, TABLE.settings]) {
+  for (const table of [TABLE.admin, TABLE.adminLog, TABLE.health, TABLE.outages, TABLE.events, TABLE.usage, TABLE.settings]) {
     const [used] = await store.t.list(table, { router_id: routerId }, { limit: 1 })
     if (used) refuse('router_id ' + routerId + ' has rows in ' + table + '; refusing to delete')
   }

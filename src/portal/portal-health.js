@@ -1,4 +1,6 @@
 import { TABLE, ACTOR, isoOrNull } from './portal-store.js'
+import { effectiveSettings } from './portal-config.js'
+import { recordOutages } from './portal-outages.js'
 
 export const HEARTBEAT_BYTES_MAX = 8192
 export const HEALTH_ROWS_MAX = 500
@@ -36,8 +38,13 @@ const parseHealthJson = (json) => {
 }
 
 export async function recordHealth(store, router, health, now = new Date().toISOString()) {
+  const prev = await latestHealthRow(store, router.router_id)
   await store.t.create(TABLE.health, { router_id: router.router_id, ts: now, health_json: JSON.stringify(health) }, ACTOR)
   await store.t.update(TABLE.routers, router.id, { last_seen: now }, ACTOR)
+  if (prev) {
+    const settings = await effectiveSettings(store, router.router_id)
+    await recordOutages(store, router, prev, { ts: now, health }, { idleHeartbeatS: settings.idle_heartbeat_interval_s })
+  }
   return now
 }
 

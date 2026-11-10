@@ -210,4 +210,9 @@ export function retentionDays(env = process.env) {
   return Number.isFinite(days) && days > 0 ? days : 90
 }
 
+export function outageRetentionDays(env = process.env) {
+  const days = Number(env.PORTAL_OUTAGE_RETENTION_DAYS)
+  return Number.isFinite(days) && days > 0 ? days : 365
+}
+
 export { SCHEMA, SETTING_KEYS, ROUTER_KEYS, TEXT_PLACEHOLDERS }
