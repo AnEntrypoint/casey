@@ -66,7 +66,7 @@ Running lint through a pipe in the agent's shell is rewritten by the rtk output 
 
 `npm install` runs `postinstall` -> `install-freddie-deps.mjs`, `link-deps.mjs`, `install-hooks.mjs` (tolerant; a failure continues the install degraded), then `scan-deps.mjs` (its exit code passes straight through); if a step failed, run `node bin/casey.js doctor`. `npm run lint` is the dependency-free gate to run before pushing (gate list in `scripts/lint.mjs`); `gui-check` is NOT part of it. No automated test suite; verification is manual/live.
 
-`.github/workflows/secrets.yml` runs gitleaks only (full history, with the same `.gm` pathspec exclusion) on push/PR; the tracked `hooks/pre-push` runs `npm run lint` before a push (skips when node or the scripts are absent; `git push --no-verify` escapes).
+The pre-commit hook (`npm run install-hooks`) runs gitleaks on staged changes; the tracked `hooks/pre-push` runs `npm run lint` before a push (skips when node or the scripts are absent; `git push --no-verify` escapes).
 
 `bin/casey.js` loads `.env` BEFORE it dynamically imports `bin/casey-cli.mjs`. `--help`/`-h` is answered from `USAGE` BEFORE the handler runs, and every one-shot command ends through `closeAndExit` (releases the sqlite handle first).
 
