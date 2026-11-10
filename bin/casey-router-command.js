@@ -19,8 +19,8 @@ export async function cmdRouter({ flags, rest }) {
   if (sub === 'create') {
     const bundle = loadBundle()
     if (!bundle) { say(bad('router provisioning is not configured (config/router-bundle.yml).')); await closeAndExit(store, 1) }
-    const checked = checkRouterInput({ name: flags.name, site: flags.site, router_id: flags.id, uplink_ssid: flags['uplink-ssid'] })
-    if (checked.error) { say(bad(`usage: casey router create --name <label> --site <site> --uplink-ssid <ssid> [--id <router_id>] (${checked.error})`)); await closeAndExit(store, 1) }
+    const checked = checkRouterInput({ name: flags.name, site: flags.site, router_id: flags.id, uplink: flags.uplink, uplink_ssid: flags['uplink-ssid'] })
+    if (checked.error) { say(bad(`usage: casey router create --name <label> --site <site> [--uplink lte | --uplink-ssid <ssid>] [--id <router_id>] (${checked.error})`)); await closeAndExit(store, 1) }
     try {
       const made = await provisionRouter(store, checked.value, { bundle, base: publicBase() })
       console.log(green(`created router "${made.row.name}" (router_id: ${made.row.router_id}, site: ${made.row.site})`))

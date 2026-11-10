@@ -3,8 +3,9 @@ import { newWgKeyPair, allocateTunnelIp } from './portal-admin.js'
 import { bootstrapScript, uplinkPassphraseFrom, UPLINK_PASSPHRASE_ENV } from './router-provisioning.js'
 
 export async function provisionRouter(store, input, { bundle, base, env = process.env }) {
-  const uplinkPassphrase = uplinkPassphraseFrom(env)
-  if (!uplinkPassphrase) throw new RouterRefusal(`uplink passphrase is not configured: the ${UPLINK_PASSPHRASE_ENV} secret is missing or not 8 to 63 printable characters`, 503)
+  const lte = input.uplink === 'lte'
+  const uplinkPassphrase = lte ? '' : uplinkPassphraseFrom(env)
+  if (!lte && !uplinkPassphrase) throw new RouterRefusal(`uplink passphrase is not configured: the ${UPLINK_PASSPHRASE_ENV} secret is missing or not 8 to 63 printable characters`, 503)
   const keys = newWgKeyPair()
   const tunnelIp = await allocateTunnelIp(store)
   const { row, token } = await createRouter(store, {
@@ -21,6 +22,7 @@ export async function provisionRouter(store, input, { bundle, base, env = proces
     base,
     token,
     routerId: row.router_id,
+    uplink: lte ? 'lte' : 'wifi',
     uplinkSsid: input.uplinkSsid,
     uplinkPassphrase,
     wgPrivateKey: keys.priv,
