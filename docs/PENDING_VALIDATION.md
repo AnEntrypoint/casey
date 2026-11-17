@@ -36,3 +36,41 @@ Status key: OPEN = applies, not started. N/A = the skill row is for marketing pa
 
 - Design rows above are OPEN and have not been checked through playwriter. Nothing in this pass changed a view.
 - The VM bind delay has not been measured after the boot fix ships. Measure from the uhh journal: systemd start versus the first dashboard listen.
+
+## Design pass: staff console (2026-11-17)
+
+Baseline measured through playwriter on production before these changes (test admin login; axe-core WCAG 2 A/AA from deps/design vendor; overflow; target sizes). Views: case list, map, case detail, 16 panels (metrics, resolved map, disease reports, distribution, activity, handover, offline, team, contacts, routers, areas, nudges, secretary, feedback, external links, view as), settings modal, account menu, help overlay. Field app: not covered (the test login is an admin; a field-role login is needed).
+
+### Changes
+
+| Change | View | Row closed | Status |
+|---|---|---|---|
+| Account trigger has an accessible name at every width: visible name aria-hidden, visually hidden copy (`.ds-sr-only`) carries the label | Every view (appbar), account menu, help overlay | Keyboard and names: axe button-name on phone (1 per view) | Changed; verify after deploy |
+| Guardrail toggle ("Show what needs a check") 44px tall on phone | Case list (phone), case detail (phone) | Touch floor 44px on phone (AGENTS.md) | Changed; verify after deploy |
+| Handover refs 24px minimum on desktop, inline-flex | Shift handover | Target size 24px (WCAG 2.2 AA minimum) | Changed; verify after deploy |
+
+### Rows checked and held (no change needed)
+
+- Horizontal overflow: 0 px at 1440 and 390 for all views above (overflow row).
+- Contrast, WCAG 2 AA via axe color-contrast: 0 violations in all views above. axe skips elements over images and with no computed background, so this is an automated check, not a full contrast audit.
+- Focus visible: row, ref and handoff controls have :focus-visible rules in app.css.
+- Motion: urgency pulse has a prefers-reduced-motion rule (app.css); case rows drop their transition under reduced motion.
+- One h1 per panel (heading row).
+
+### Rows open (applies, not done)
+
+- Typography and spacing system: one scale and one spacing step across panels. OPEN: not audited beyond overflow.
+- Equal left and right edges: alignment of content to the panel gutters not measured. OPEN.
+- State design, empty, loading, error: panel-load and panel-error exist; each panel's empty and loading state was not seen. OPEN per panel.
+- Target size, desktop 24px: contacts (52 controls under 24px at 1440 in the account and help views, 69 in contacts), handover (69 under 24px, mostly refs). OPEN: checkbox and row controls need their own layout change.
+- Target size, phone 44px: list checkboxes (case-row-cbwrap is 44px), contacts (76 under 44px), secretary (109 under 44px), guardrail toggles fixed. OPEN for the rest.
+- Help overlay: pressing ? did not produce role=dialog in the audit. OPEN: confirm the overlay markup and its focus trap.
+- Field app: not covered. OPEN: needs a field-role login.
+- Checker and gate per view: run through playwriter (axe + overflow + targets). The baseline is recorded above; the post-deploy run is the witness.
+
+### Rows not applicable to a console
+
+- Marketing copy lint and voice (copy-lint, copy voice card): applies to the public site, not staff console copy.
+- Hero dealing, moments, scenes, shader effects, WebGL, photograph sets and credits: marketing-page rows.
+- Section-per-screen height and one-heading-per-section rules: they describe a landing page; the console's panels are scrollable tools.
+- Palette and type deal (start.mjs, deal.mjs): the console takes its palette from the deployment brand (brand.js).
