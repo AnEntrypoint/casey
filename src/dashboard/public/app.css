@@ -137,7 +137,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 
   .ds-247420 .app-side-toggle, .ds-247420 .app-status-toggle { padding: 0; }
   .ds-247420 .ds-dialog-x, .ds-247420 .ds-dialog-close, .ds-247420 .ds-icon-btn { min-height: 44px; min-width: 44px; }
-  .ds-247420 .ds-ho-ref, .ds-247420 .ds-map-unresolved-row { min-height: 44px; }
+  .ds-247420 .ds-ho-ref, .ds-247420 .ds-map-unresolved-row, .ds-247420 .ds-guardrail-toggle-btn { min-height: 44px; }
   .ds-247420 .case-row-cbwrap { min-width: 44px; min-height: 44px; }
   .ds-247420 .ds-filter-pill, #casey-preview-bar button { min-height: 44px; }
 }
@@ -538,6 +538,11 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-ho-ref {
   font-weight: 600; font-size: var(--fs-sm); color: var(--accent-ink);
   cursor: pointer; border-radius: var(--r-hair);
+  min-height: 24px; display: inline-flex; align-items: center;
+}
+.ds-sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 .ds-ho-ref:hover { text-decoration: underline; }
 .ds-ho-ref:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: 2px; }
