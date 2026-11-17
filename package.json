@@ -13,6 +13,7 @@
   "scripts": {
     "start": "node bin/casey.js up",
     "lint": "node scripts/lint.mjs",
+    "test": "node --test test/*.test.mjs",
     "scan-deps": "node scripts/scan-deps.mjs",
     "gui-check": "node scripts/gui-check.mjs",
     "check-submodules": "node scripts/check-submodules.mjs",
