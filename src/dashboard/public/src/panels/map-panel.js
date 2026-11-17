@@ -37,7 +37,9 @@ function onMountCanvas(el) {
 }
 
 function mapLegend() {
-    return h('div', { class: 'ds-map-legend', role: 'group', tabindex: '0', 'aria-label': word('ui.map_panel_key_aria') },
+    return h('details', { class: 'ds-map-legend', open: !window.matchMedia('(max-width: 1280px)').matches },
+        h('summary', { class: 'ds-map-legend-toggle' }, word('ui.map_panel_key_toggle')),
+        h('div', { class: 'ds-map-legend-body', role: 'group', tabindex: '0', 'aria-label': word('ui.map_panel_key_aria') },
         ...Object.entries(STATUS_TOKEN).map(([k, tok]) =>
             h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', 'data-status-token': tok }), stageLabel(k))),
         h('span', { key: 'urgent', class: 'ds-map-legend-item' },
@@ -53,7 +55,7 @@ function mapLegend() {
         h('span', { key: 'ov-overdue', class: 'ds-map-legend-item' },
             h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-overdue' }), word('ui.map_panel_legend_overdue')),
         h('span', { key: 'ov-report', class: 'ds-map-legend-item' },
-            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-report' }), word('ui.map_panel_legend_report')));
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-report' }), word('ui.map_panel_legend_report'))));
 }
 
 function mapStateNote() {

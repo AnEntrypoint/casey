@@ -18,7 +18,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .app-two-pane.has-active > .case-detail-pane { position: fixed; inset: 0; z-index: var(--z-raised); background: var(--bg); }
 }
 
-/* Plain media twins of the @container rules above, so the panes stack at narrow widths without container-type on an ancestor. */
 @media (max-width: 900px) {
   .app-two-pane { flex-direction: column; }
   .app-two-pane > .case-list-pane { flex: 1 1 auto; }
@@ -398,11 +397,15 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 
 .ds-map-canvas { overflow: hidden; }
 .ds-map-legend {
-  display: flex; gap: var(--space-3); flex-wrap: wrap;
   font-size: var(--fs-micro); color: var(--fg-2);
   margin: var(--space-2) 0; padding: var(--space-2) var(--space-3);
   background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-1);
 }
+.ds-map-legend-body { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+.ds-map-legend-toggle { cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-2); min-height: 2rem; font-weight: 600; color: var(--fg); list-style: none; }
+.ds-map-legend-toggle::-webkit-details-marker { display: none; }
+.ds-map-legend-toggle::before { content: "+"; display: inline-block; width: 1ch; }
+.ds-map-legend[open] > .ds-map-legend-toggle::before { content: "-"; }
 .ds-map-legend-sw { display: inline-block; width: 9px; height: 9px; border-radius: var(--r-pill); margin-right: var(--space-1); vertical-align: middle; }
 .ds-map-legend-item { display: inline-flex; align-items: center; }
 
@@ -658,7 +661,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-247420 .ds-appbar .ds-action-glyph { display: inline-flex; flex: 0 0 auto; }
 
 @media (max-width: 900px) {
-
   .ds-247420 .app-crumb { flex-wrap: wrap; }
   .ds-247420 .app-crumb > * { min-width: 0; }
   .ds-247420 .app-crumb > .crumb-right {
@@ -667,64 +669,48 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
     display: block;
   }
   .ds-247420 .ds-appbar {
-    display: grid;
-
-    grid-template-columns: repeat(auto-fit, minmax(5.75rem, 1fr));
-    gap: var(--space-1);
-    width: 100%;
-
+    --appbar-ctrl-h: 2.75rem;
+    flex-wrap: wrap;
     overflow-x: visible;
-
-    grid-auto-rows: 1fr;
+    row-gap: var(--space-1);
+    width: 100%;
   }
-
-  .ds-247420 .ds-appbar > *,
-  .ds-247420 .ds-appbar .ds-action-row > * { height: 100%; }
-
+  .ds-247420 .ds-appbar .ds-action-row { display: contents; }
   .ds-247420 .ds-appbar .ds-action-common,
   .ds-247420 .ds-appbar .ds-action-rare { display: flex; }
-  .ds-247420 .ds-appbar .btn,
-  .ds-247420 .ds-appbar .btn-primary,
-  .ds-247420 .ds-appbar .btn-ghost,
+  .ds-247420 .ds-appbar .btn:not(.btn-sm):not(.btn-lg),
+  .ds-247420 .ds-appbar .btn-primary:not(.btn-sm):not(.btn-lg),
+  .ds-247420 .ds-appbar .btn-ghost:not(.btn-sm):not(.btn-lg),
   .ds-247420 .ds-appbar .ds-attn-lead,
-    .ds-247420 .ds-appbar .ds-icon-btn,
   .ds-247420 .ds-appbar .ds-dropdown-trigger {
+    white-space: nowrap;
+    padding: 0 var(--space-2);
+    font-size: var(--fs-sm);
+  }
+  .ds-247420 .ds-appbar .ds-icon-btn { padding: 0; }
+  .ds-247420 .ds-appbar .ds-action-glyph { display: inline-flex; }
+}
 
-    height: 100%;
-    min-height: 3.25rem;
+@media (max-width: 700px) {
+  .ds-247420 .ds-appbar {
+    display: grid;
+    grid-template-columns: 1.3fr 1.3fr 0.7fr 1.1fr;
+    gap: var(--space-1);
+  }
+  .ds-247420 .ds-appbar > .ds-attn-lead { grid-column: 1 / -1; }
+  .ds-247420 .ds-appbar .ds-account-name { display: none; }
+  .ds-247420 .ds-appbar > * { min-width: 0; }
+  .ds-247420 .ds-appbar .btn:not(.btn-sm):not(.btn-lg),
+  .ds-247420 .ds-appbar .btn-primary:not(.btn-sm):not(.btn-lg),
+  .ds-247420 .ds-appbar .btn-ghost:not(.btn-sm):not(.btn-lg),
+  .ds-247420 .ds-appbar .ds-attn-lead,
+  .ds-247420 .ds-appbar .ds-dropdown-trigger {
     width: 100%;
-    flex-direction: column;
     justify-content: center;
-
-    white-space: normal;
-    overflow-wrap: anywhere;
-
-    gap: var(--space-hair);
-    padding: var(--space-1);
     text-align: center;
-    font-size: var(--fs-micro);
-    line-height: 1.1;
-  }
-  .ds-247420 .ds-appbar .ds-action-glyph { display: block; }
-
-  .ds-247420 .ds-appbar .ds-action-label,
-  .ds-247420 .ds-appbar .ds-attn-lead .ds-action-label {
     white-space: normal;
-    overflow-wrap: anywhere;
-    font-size: var(--fs-nano);
     line-height: 1.15;
-    max-width: 100%;
-  }
-
-  .ds-247420 .ds-appbar .btn-ghost,
-    .ds-247420 .ds-appbar .ds-icon-btn,
-  .ds-247420 .ds-appbar .ds-dropdown-trigger,
-  .ds-247420 .ds-appbar .ds-attn-lead {
     padding: var(--space-1);
-    width: 100%;
-  }
-  .ds-247420 .ds-appbar .ds-action-row {
-    display: contents;
   }
 }
 
@@ -841,9 +827,11 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 }
 
 .ds-247420 .ds-appbar .ds-appbar-more { display: none; }
-@media (max-width: 414px) {
+@media (max-width: 1280px) {
   .ds-247420 .ds-appbar .ds-appbar-more { display: flex; }
   .ds-247420 .ds-appbar:not(.is-more-open) .ds-appbar-overflow { display: none; }
+  .ds-247420 .ds-appbar.is-more-open { flex-wrap: wrap; overflow-x: visible; row-gap: var(--space-1); width: 100%; }
+  .ds-247420 .app-crumb:has(.ds-appbar.is-more-open) > .crumb-right { flex: 1 1 0; min-width: 0; }
 }
 
 #casey-preview-bar { position: sticky; top: 0; z-index: var(--z-raised); display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); align-items: center; justify-content: center; padding: var(--space-2) var(--space-4); background: var(--ink); color: var(--paper); font-size: var(--fs-sm); }
@@ -854,10 +842,33 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 
 @media (max-width: 700px) {
   .ds-map-chrome > .ds-map-legend { max-height: 22vh; left: var(--space-2); right: var(--space-2); bottom: var(--space-2); max-width: none; }
+  .ds-map-legend-toggle { min-height: 44px; }
+  .ds-247420 .ds-search-clear { min-width: 44px; min-height: 44px; }
+  .ds-247420 { --app-status-h: 2.5rem; }
+  .ds-247420 .app-status { height: auto; flex-wrap: wrap; row-gap: 0; align-content: center; padding-top: var(--space-hair); padding-bottom: var(--space-hair); }
+  .ds-247420 .app-status .item { white-space: normal; overflow: visible; text-overflow: clip; }
   .ds-alert { flex-wrap: wrap; }
 }
 
-/* The app-bar control height is set on the same element as the base rule, so this comes after it and wins on touch screens. */
 @media (pointer: coarse) {
   .ds-247420 .ds-appbar { --appbar-ctrl-h: 2.75rem; }
+}
+
+@media (max-width: 700px) {
+  .ds-247420 { --app-status-h: 4rem; --phone-bar-h: 6.5rem; }
+  .ds-247420 .ds-appbar {
+    position: fixed; left: 0; right: 0; bottom: var(--app-status-h); z-index: var(--z-header);
+    box-sizing: border-box; width: 100%; max-height: 60vh; overflow-y: auto;
+    padding: var(--space-1) var(--space-2) var(--space-2);
+    background: var(--bg-2); border-top: 1px solid var(--border);
+  }
+  .ds-247420 footer.app-status {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--z-header);
+    height: var(--app-status-h); min-height: var(--app-status-h); background: var(--bg-2);
+  }
+  .ds-247420 .app-body { padding-bottom: calc(var(--phone-bar-h) + var(--app-status-h)); }
+  .ds-247420 .ds-appbar.is-more-open { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .ds-app-root:has(.app-two-pane.has-active) .ds-appbar,
+  .ds-app-root:has(.app-two-pane.has-active) footer.app-status { display: none; }
+  .ds-app-root:has(.app-two-pane.has-active) .app-body { padding-bottom: 0; }
 }

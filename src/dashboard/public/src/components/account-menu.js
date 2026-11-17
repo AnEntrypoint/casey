@@ -92,7 +92,7 @@ export function AccountMenu() {
   const label = state.currentUser ? (state.currentUser.display_name || state.currentUser.username) : word('ui.account_menu_account');
   return Dropdown({
     ariaLabel: word('ui.account_menu_aria'),
-    trigger: () => [Icon('members', { size: 16 }), h('span', {}, label)],
+    trigger: () => [Icon('members', { size: 16 }), h('span', { class: 'ds-account-name' }, label)],
     items,
     onSelect,
   });

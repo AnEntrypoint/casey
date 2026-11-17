@@ -52,6 +52,10 @@ Imperatives for the operator console. Root `AGENTS.md` covers the access ladder,
 - Fetch only through `api()` (`FETCH_TIMEOUT_MS`); offline is a RESOLVED 503, never infer link health from settling; cache only whoami/branding/config; polls gate on `state.authed`; list ladder max `ATTENTION_POLL_MS`; tab title via `setBaseTitle`.
 - Map: tile URL from the shell meta, never hardcoded OSM; frame BEFORE `tileLayer`; skip `invalidateSize` while hidden; marker colour = status, border = provenance, size+ring = urgency, rebuild only on signature change; keep `RETRY_MIN_GAP_MS`, `INFLIGHT_STALE_MS` and clear `inFlight` in `finally`; never rename `reportedDiseaseNames`.
 - Panels: `panel-load` sets `loaded` on failure too and keeps its generation counter; `known-values` is synchronous; `vocabulary.js` never spells "casey", "case" or tier names.
+- Map key is `details.ds-map-legend` with a `Key` summary (`ui.map_panel_key_toggle`): open above 1280px, closed at or below, so the map shows through. Its summary stays a 44px target on phone.
+- Keyboard: `j k o Enter c e / n ?` plus chords `g m` (map) and `g r` (reports list), with a 1.2 s window, all in `keyboard.js`. Each new key also goes in `components/help-overlay.js` and `help_overlay_key_*` in the deployment vocabulary.
+- A filtered-empty case list offers "Clear search and filters" (`clearAllFilters` in `views/case-list-view.js`). An empty state offers an action, not only text.
+- The account name is `.ds-account-name`, hidden on phone; the trigger keeps its aria label.
 -> recall {query:"casey console data safety setActiveId poll offline conditional get map marker panel-load"}
 
 ## Shell document (public/index.html)
@@ -66,6 +70,10 @@ Imperatives for the operator console. Root `AGENTS.md` covers the access ladder,
 - Ground off `data-casey-theme` with `--paper`/`--ink`, never `--bg`; keep the `.ds-247420` prefix on btn-link, dropdown, h2/button and `.app-chrome`/`.app-status` rules; text contrast 4.5:1 (`--fg-2`/`--fg-3`, `--danger-ink`; pin Leaflet control text to `--ink`).
 - Rail never `overflow:hidden` without an inner scroller; phone map/list `display:none`, never unmount; `.ds-map-shell` chrome keeps `pointer-events:none`; phone rules last; gutters collapse at 480px.
 - Urgency is size, ring and a short flag, never hue alone; pulse bounded to about 6 s with a reduced-motion rule; 44px touch floor outranks `.btn-sm`; `td` uses `overflow-wrap:break-word`, never `anywhere`.
+- Appbar: up to 1280px the attention lead, the primary action and the account stay visible; the rest sit behind `.ds-appbar-more` (More / Fewer). An expanded bar (`.is-more-open`) wraps at full width and never scrolls sideways.
+- Phone (max-width 700px): the appbar is a fixed bottom bar above the fixed status footer (`--phone-bar-h` 6.5rem, `--app-status-h` 4rem on `.ds-247420`), and `.app-body` pads by both. Both hide while a case sheet is open (`.app-two-pane.has-active`, via `:has()`) so the reply box is never covered. The phone overrides sit at the end of app.css.
+- Kit specificity: `.btn-primary:not(.btn-sm):not(.btn-lg)` gets its padding from a 480px kit rule at (0,5,0); appbar overrides must use the same `:not` pair or they lose.
+- The phone status footer wraps (height auto around the 44px status toggle) so `Replies are not sent from this screen` is never clipped.
 -> recall {query:"casey dashboard stylesheet rules theme contrast rail urgency touch"}
 
 - `GET /api/reports/files[/:name]` serves only `casey-digest-YYYY-MM.(csv|txt)` from `<store.dataDir>/digests` (checked after decoding; attachment, nosniff) and is on the viewer allowlist because the digests are k-floored aggregates; field logins stay refused by the `roleGate` fence.

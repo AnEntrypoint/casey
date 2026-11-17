@@ -5,7 +5,11 @@ import { closePanelRoute } from './route.js';
 let handlers = {
   moveDown: () => {}, moveUp: () => {}, openHighlighted: () => {}, claim: () => {},
   focusReply: () => {}, focusSearch: () => {}, newCase: () => {}, back: () => {},
+  goMap: () => {}, goReports: () => {},
 };
+
+const CHORD_WINDOW_MS = 1200;
+let chordArmed = false;
 
 export function registerKeyboardHandlers(partial) { Object.assign(handlers, partial); }
 
@@ -39,7 +43,13 @@ export function onGlobalKeyDown(e) {
   }
   if (e.key !== 'Escape' && modalIsOpen()) return;
   if (e.key !== 'Escape' && isActivatableTarget(document.activeElement)) return;
+  if (chordArmed) {
+    chordArmed = false;
+    if (e.key === 'm') { e.preventDefault(); handlers.goMap(); return; }
+    if (e.key === 'r') { e.preventDefault(); handlers.goReports(); return; }
+  }
   switch (e.key) {
+    case 'g': chordArmed = true; setTimeout(() => { chordArmed = false; }, CHORD_WINDOW_MS); break;
     case 'j': handlers.moveDown(); break;
     case 'k': handlers.moveUp(); break;
     case 'o': handlers.openHighlighted(); break;

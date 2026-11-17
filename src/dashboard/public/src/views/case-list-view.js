@@ -1,5 +1,5 @@
 import * as webjsx from 'webjsx';
-import { state, schedule, setMineOnly, setCases } from '../state.js';
+import { state, schedule, setMineOnly, setCases, setFilt } from '../state.js';
 import { tagList, isMine, FILTERED_EMPTY_TEXT } from '../format.js';
 import * as api from '../api.js';
 import { loadRoster } from '../api-roles.js';
@@ -186,6 +186,12 @@ function listChips() {
       : null);
 }
 
+function clearAllFilters() {
+  attentionOnly = false;
+  setMineOnly(false);
+  setFilt({ q: '', status: '', channel: '', source: '', fv: {} });
+}
+
 function listBody(shown) {
   if (state.inboxMode) {
     return h('div', { class: 'ds-case-list-empty empty' },
@@ -198,7 +204,8 @@ function listBody(shown) {
   }
   if (!shown.length) {
     return h('div', { class: 'ds-case-list-empty empty' },
-      FILTERED_EMPTY_TEXT);
+      h('p', { key: 'msg' }, FILTERED_EMPTY_TEXT),
+      Btn({ key: 'clear', variant: 'ghost', size: 'sm', onClick: clearAllFilters, children: word('ui.case_list_view_clear_all') }));
   }
   return shown.length > VIRTUALIZE_THRESHOLD
     ? VirtualizedCaseList({ cases: shown, expandedGuardrails: expandedGuardrailId, onToggleGuardrails: toggleGuardrails })

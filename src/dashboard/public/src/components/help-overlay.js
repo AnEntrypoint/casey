@@ -63,6 +63,8 @@ export function HelpOverlay({ open, onClose, onShowOnboarding } = {}) {
                 KeyRow({ k: 'c', desc: word('ui.help_overlay_key_claim') }),
                 KeyRow({ k: 'e', desc: word('ui.help_overlay_key_reply') }),
                 KeyRow({ k: '/', desc: word('ui.help_overlay_key_search') }),
+                KeyRow({ k: 'g m', desc: word('ui.help_overlay_key_map') }),
+                KeyRow({ k: 'g r', desc: word('ui.help_overlay_key_reports') }),
                 KeyRow({ k: 'n', desc: word('ui.help_overlay_key_new') }),
                 KeyRow({ k: 'Esc', desc: word('ui.help_overlay_key_back') }),
                 KeyRow({ k: '?', desc: word('ui.help_overlay_key_help') })

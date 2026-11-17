@@ -3,7 +3,7 @@ import { state, setSchedule, setConfig, setHealth, setDegradedTurns, openModal, 
 import { App, registerModalBody, registerPanelBody } from './views/app-view.js';
 import { checkSession } from './auth.js';
 import { installGlobalKeyboard, registerKeyboardHandlers } from './keyboard.js';
-import { initRouteSync, applyRouteToState, currentRoute, closeCaseRoute } from './route.js';
+import { initRouteSync, applyRouteToState, currentRoute, closeCaseRoute, setHomeViewRoute, closePanelRoute } from './route.js';
 import { installClientLog, forwardRoute } from './client-log.js';
 import { applyView, decodeView } from './saved-views.js';
 import { initTheme } from './components/account-menu.js';
@@ -121,6 +121,8 @@ registerKeyboardHandlers({
   },
   focusReply: () => { const el = document.querySelector('.casey-reply-box textarea, textarea[name=reply]'); if (el) el.focus(); },
   newCase: () => promptNewCase(),
+  goMap: () => { closePanelRoute(); setHomeViewRoute('map'); },
+  goReports: () => { closePanelRoute(); setHomeViewRoute('cases'); },
 });
 installGlobalKeyboard();
 
