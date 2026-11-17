@@ -541,7 +541,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   min-height: 24px; display: inline-flex; align-items: center;
 }
 .ds-sr-only {
-  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; overflow: hidden;
   clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 .ds-ho-ref:hover { text-decoration: underline; }
