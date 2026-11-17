@@ -89,7 +89,7 @@ export function getHealth({ store, llmStatus, receiveStatus, queueStatus, runSwe
     } catch { queue = null }
     let degradationRate = null
     try {
-      degradationRate = await calculateDegradationRate(store, { hours: 1 })
+      degradationRate = await degradationRateMemo(store)
     } catch {  }
     res.json({
       ...view, source: s.source, model, url, degraded: !!s.degraded,
@@ -261,8 +261,21 @@ export function getConfig({ store, authed, SAST_TZ, resolveWhatsappAdapter, fmtP
   }
 }
 
-const ATTENTION_OPEN_TTL_MS = 5000
+const ATTENTION_OPEN_TTL_MS = 15000
 const attentionOpenMemo = new WeakMap()
+const DEGRADATION_TTL_MS = 60000
+const degradationMemo = new WeakMap()
+
+function degradationRateMemo(store) {
+  const hit = degradationMemo.get(store)
+  if (hit && Date.now() - hit.at < DEGRADATION_TTL_MS) return hit.promise
+  const promise = calculateDegradationRate(store, { hours: 1 }).catch((e) => {
+    degradationMemo.delete(store)
+    throw e
+  })
+  degradationMemo.set(store, { at: Date.now(), promise })
+  return promise
+}
 
 function openCasesMemo(store, isOpenCase) {
   const hit = attentionOpenMemo.get(store)
