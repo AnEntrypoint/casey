@@ -1,0 +1,13 @@
+tiers:
+  reporter: reporter
+  field: field_worker
+  specialist: specialist
+  operator: operator
+tier_labels:
+  reporter: Reporter
+  field: Field worker
+  specialist: Specialist
+  operator: Operator
+admin_only_tiers: [operator]
+observation_form: test_form
+tool_names: {}
