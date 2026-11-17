@@ -3,7 +3,7 @@ import { installLogScrub } from '../src/log-scrub.js'
 import { WORKER_MSG, ipcSend } from '../src/supervisor-ipc.js'
 import { makeSendReply } from './send-reply.js'
 import { resolveServingChannels } from './worker-channels.js'
-import { bootServingCasey } from './worker-boot.js'
+import { openServingCasey, finishServingCasey } from './worker-boot.js'
 import { startWorkerDashboard } from './worker-dashboard.js'
 import { createRuntimeChannel } from './worker-runtime-events.js'
 import { installWorkerRuntimeIo } from './worker-ipc.js'
@@ -41,7 +41,8 @@ async function main() {
   const forked = typeof process.send === 'function'
 
   const channels = resolveServingChannels(flags, forked)
-  const casey = await bootServingCasey(channels)
+  const boot = await openServingCasey(channels)
+  const { casey, brain } = boot
 
   const dashPort = Number(flags.port || 4000)
   const sendReply = makeSendReply(casey)
@@ -49,12 +50,13 @@ async function main() {
 
   const dash = await startWorkerDashboard({
     casey, port: dashPort, sendReply,
-    llmStatus: casey.resilientStatus,
-    callLLM: casey.resilientCallLLM,
+    llmStatus: brain.status,
+    callLLM: brain.callLLM,
     runtimeStatus: runtime.runtimeStatus,
     forked,
   })
 
+  await finishServingCasey(boot)
   installWorkerRuntimeIo({ casey, dash, forked, runtime })
 }
 
