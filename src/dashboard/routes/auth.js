@@ -9,6 +9,7 @@ import { registerPublicSiteAssets } from './public-site.js'
 import { RUNTIME_STATES } from './operations.js'
 import { roleGate, roleOf, expectedRefGuard } from '../roles.js'
 import { getSetPassword, postSetPassword } from './set-password.js'
+import { createPasswordReset } from './password-reset.js'
 
 export function sessionMiddleware({ store, parseCookies, verifySession, COOKIE_NAME, getAccount }) {
   return async (req, res, next) => {
@@ -659,6 +660,9 @@ export function registerAuth(app, deps) {
 
   app.get('/set-password', getSetPassword())
   app.post('/api/set-password', postSetPassword(deps))
+  const passwordReset = createPasswordReset({ store })
+  app.get('/forgot-password', passwordReset.getForgotPassword())
+  app.post('/api/password-reset/request', passwordReset.postRequest())
 
   mountRoutes(app, deps, ROUTES)
 
