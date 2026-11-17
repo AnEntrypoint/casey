@@ -19,7 +19,11 @@ function hit(req) {
 
 const limited = (b) => b.requests > MAX_REQUESTS || b.failures >= MAX_FAILURES
 
-const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+export const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+
+export function documentHtml({ title, body }) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>${esc(title)}</title><style>body{font-family:system-ui,sans-serif;margin:0;padding:16px;background:#f4f6f9;color:#1a1f29}main{max-width:420px;margin:24px auto}label{display:block;margin-top:8px}input,button{display:block;width:100%;box-sizing:border-box;font:inherit;padding:10px;margin:6px 0 14px}button{min-height:44px}.err{color:#8a1c1c}</style></head><body><main>${body}</main></body></html>`
+}
 
 const MESSAGES = {
   invalid: 'This link is not valid. Ask your administrator for a new one.',
@@ -42,7 +46,7 @@ function pageHtml({ token = '', error = '', done = false }) {
 <input id="pw2" type="password" name="new_password_confirm" minlength="8" required autocomplete="new-password">
 <button type="submit">Save password</button>
 </form>`
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Set your password</title><style>body{font-family:system-ui,sans-serif;margin:0;padding:16px;background:#f4f6f9;color:#1a1f29}main{max-width:420px;margin:24px auto}label{display:block;margin-top:8px}input,button{display:block;width:100%;box-sizing:border-box;font:inherit;padding:10px;margin:6px 0 14px}button{min-height:44px}.err{color:#8a1c1c}</style></head><body><main>${body}</main></body></html>`
+  return documentHtml({ title: 'Set your password', body })
 }
 
 export function getSetPassword() {
