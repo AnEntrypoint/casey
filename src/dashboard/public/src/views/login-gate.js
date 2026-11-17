@@ -159,7 +159,8 @@ export function LoginGate() {
       loginField({ key: 'user', label: word('ui.login_gate_username'), value: local.username, onInput: (v) => { local.username = v; schedule(); }, name: 'username', autocomplete: 'username' }),
       loginField({ key: 'pass', label: word('ui.login_gate_password'), type: 'password', value: local.password, onInput: (v) => { local.password = v; schedule(); }, name: 'password', autocomplete: 'current-password' }),
       messageNode,
-      submitButton(word('ui.login_gate_login_button'), word('ui.login_gate_logging_in'))
+      submitButton(word('ui.login_gate_login_button'), word('ui.login_gate_logging_in')),
+      h('p', { key: 'forgot', class: 'ds-login-links' }, h('a', { href: '/forgot-password' }, 'Forgot password?'))
     )
   );
 }
