@@ -73,12 +73,16 @@ export class Casey {
     r.lastInboundAt = Date.now()
   }
 
-  async init() {
+  async initStore() {
     this.log = this.opts.log || makeLogger()
-
     this.store = createCaseStore({ config: this.opts.config, log: this.log })
     await this.store.init()
     setCaseStore(this.store)
+    return this.store
+  }
+
+  async init() {
+    if (!this.store) await this.initStore()
 
     const handler = makeCaseHandler(this.store, {
       callLLM: this.opts.callLLM || null,
@@ -606,6 +610,12 @@ export class Casey {
     await this.store?.close()
     resetCaseStore()
   }
+}
+
+export async function createCaseyStore(opts) {
+  const c = new Casey(opts)
+  await c.initStore()
+  return c
 }
 
 export async function createCasey(opts) {
