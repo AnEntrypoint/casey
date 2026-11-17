@@ -1,8 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { fileURLToPath } from 'node:url'
 import express from 'express'
-import { createPasswordReset, RESET_ACK } from '../src/dashboard/routes/password-reset.js'
-import { issueSetupToken, redeemSetupToken, SETUP_TTL_HOURS } from '../src/dashboard/auth.js'
+
+process.env.CASEY_CONFIG_DIR = fileURLToPath(new URL('./fixtures/config', import.meta.url))
+const { createPasswordReset, RESET_ACK } = await import('../src/dashboard/routes/password-reset.js')
+const { issueSetupToken, redeemSetupToken, SETUP_TTL_HOURS } = await import('../src/dashboard/auth.js')
 
 const clone = (v) => structuredClone(v)
 
