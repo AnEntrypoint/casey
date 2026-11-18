@@ -37,7 +37,7 @@ function onMountCanvas(el) {
 }
 
 function mapLegend() {
-    return h('details', { class: 'ds-map-legend', open: !window.matchMedia('(max-width: 1280px)').matches },
+    return h('details', { class: 'ds-map-legend', open: false },
         h('summary', { class: 'ds-map-legend-toggle' }, word('ui.map_panel_key_toggle')),
         h('div', { class: 'ds-map-legend-body', role: 'group', tabindex: '0', 'aria-label': word('ui.map_panel_key_aria') },
         ...Object.entries(STATUS_TOKEN).map(([k, tok]) =>
