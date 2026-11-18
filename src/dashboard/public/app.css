@@ -869,6 +869,16 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .ds-247420 .ds-appbar .ds-action-label { white-space: nowrap; }
 }
 
+.ds-247420.ds-247420 h2,
+.ds-247420.ds-247420 h3 {
+  color: var(--fg);
+  letter-spacing: -0.01em;
+}
+.ds-247420 table td,
+.ds-247420 table th {
+  font-variant-numeric: tabular-nums;
+}
+
 #casey-preview-bar { position: sticky; top: 0; z-index: var(--z-raised); display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); align-items: center; justify-content: center; padding: var(--space-2) var(--space-4); background: var(--ink); color: var(--paper); font-size: var(--fs-sm); }
 #casey-preview-bar button { background: transparent; color: inherit; border: 1px solid currentColor; border-radius: var(--r-2); padding: var(--space-1) var(--space-3); font: inherit; cursor: pointer; }
 
