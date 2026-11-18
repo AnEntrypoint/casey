@@ -21,6 +21,8 @@ export const DEFAULT_MAX_CACHE_BYTES = 256 * 1024 * 1024
 const MIN_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 const UPSTREAM_TIMEOUT_MS = Number(process.env.CASEY_TILE_TIMEOUT_MS) || 15000
+const UPSTREAM_ATTEMPTS = Number(process.env.CASEY_TILE_ATTEMPTS) || 3
+const UPSTREAM_RETRY_MS = 400
 
 const MAX_Z = 19
 
@@ -171,7 +173,16 @@ async function fetchUpstream(z, x, y, { etag, lastModified, referer }) {
   if (ref) headers.Referer = ref
   if (etag) headers['If-None-Match'] = etag
   else if (lastModified) headers['If-Modified-Since'] = lastModified
-  const res = await fetch(url, { headers, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) })
+  let res
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      res = await fetch(url, { headers, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) })
+      break
+    } catch (e) {
+      if (attempt >= UPSTREAM_ATTEMPTS) throw e
+      await new Promise(r => setTimeout(r, UPSTREAM_RETRY_MS * attempt))
+    }
+  }
   if (res.status === 304) return { status: 304, headers: res.headers }
   if (!res.ok) return { status: res.status, headers: res.headers }
   const buf = Buffer.from(await res.arrayBuffer())
@@ -249,7 +260,7 @@ export function registerTiles(app, deps) {
     } catch (e) {
       cache.upstreamFailures += 1
       if (stored) return sendTile(res, stored.png, stored.meta, 'stale')
-      logLine({ level: 'error', msg: 'tile_upstream_unreachable', key: t.key, upstream: TILE_URL, error: e?.message || String(e) })
+      logLine({ level: 'error', msg: 'tile_upstream_unreachable', key: t.key, upstream: TILE_URL, error: e?.message || String(e), cause: e?.cause?.code || null })
       return res.status(502).json({ error: 'the map service could not be reached from this dashboard' })
     }
   })
