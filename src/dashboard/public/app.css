@@ -863,6 +863,12 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .ds-map-chrome > .ds-map-legend:not([open]) { right: auto; width: max-content; }
 }
 
+@media (max-width: 480px) {
+  .ds-247420 .ds-appbar .ds-action-common { flex: 0 0 auto; }
+  .ds-247420 .ds-appbar .ds-action-common .btn,
+  .ds-247420 .ds-appbar .ds-action-label { white-space: nowrap; }
+}
+
 #casey-preview-bar { position: sticky; top: 0; z-index: var(--z-raised); display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); align-items: center; justify-content: center; padding: var(--space-2) var(--space-4); background: var(--ink); color: var(--paper); font-size: var(--fs-sm); }
 #casey-preview-bar button { background: transparent; color: inherit; border: 1px solid currentColor; border-radius: var(--r-2); padding: var(--space-1) var(--space-3); font: inherit; cursor: pointer; }
 
