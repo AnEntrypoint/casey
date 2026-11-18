@@ -556,7 +556,7 @@ const LOGIN_WINDOW_MS = 15 * 60e3
 const loginFails = (k, now) => { const l = (LOGIN_FAILS.get(k) || []).filter(t => now - t < LOGIN_WINDOW_MS); if (l.length) LOGIN_FAILS.set(k, l); else LOGIN_FAILS.delete(k); return l }
 const DECOY = { salt: 'decoy-salt-0000000000000000000000', hash: '00'.repeat(64) }
 
-export function postLogin({ store, findAccountForLogin, verifyPassword, issueSession, sessionCookieHeader, markLogin, markOnboarded }) {
+export function postLogin({ store, findAccountForLogin, verifyPassword, issueSession, sessionCookieHeader, markLogin, markOnboarded, markTipsDismissed }) {
   return async (req, res) => {
     const { username, password } = req.body || {}
     const now = Date.now()
@@ -576,6 +576,7 @@ export function postLogin({ store, findAccountForLogin, verifyPassword, issueSes
     const token = issueSession(acct.id, { epoch: Number(acct.session_epoch) || 0 })
     res.set('Set-Cookie', sessionCookieHeader(token))
     if (!acct.onboarded_at && acct.last_login_at) await markOnboarded(store, acct.id).catch(() => {})
+    if (!acct.tips_dismissed_at && acct.last_login_at) await markTipsDismissed(store, acct.id).catch(() => {})
     markLogin(store, acct.id).catch(() => {})
     res.json({ ok: true, username: acct.username, display_name: acct.display_name, role: roleOf(acct) })
   }
@@ -592,7 +593,17 @@ export function getWhoami() {
   return (req, res) => {
     if (!req.caseyAccount) return res.json({ authed: false })
     const a = req.caseyAccount
-    res.json({ authed: true, ...(req.caseyViewAs ? { view_as: { by: req.caseyViewAs.by } } : {}), username: a.username, display_name: a.display_name, role: roleOf(a), contact_linked: !!String(a.contact_phone || '').trim(), must_change_password: a.must_change_password === '1', onboarded: !!a.onboarded_at })
+    res.json({ authed: true, ...(req.caseyViewAs ? { view_as: { by: req.caseyViewAs.by } } : {}), username: a.username, display_name: a.display_name, role: roleOf(a), contact_linked: !!String(a.contact_phone || '').trim(), must_change_password: a.must_change_password === '1', onboarded: !!a.onboarded_at, tips_dismissed: !!a.tips_dismissed_at })
+  }
+}
+
+export function postTipsDismissed({ store, markTipsDismissed }) {
+  return async (req, res) => {
+    if (!req.caseyAccount) return res.status(401).json({ error: 'unauthorized' })
+    try {
+      await markTipsDismissed(store, req.caseyAccount.id)
+      res.json({ ok: true })
+    } catch (e) { res.status(500).json({ error: e.message }) }
   }
 }
 
@@ -652,6 +663,7 @@ const ROUTES = [
   ['post', '/api/logout', postLogout, { raw: true }],
   ['get', '/api/whoami', getWhoami, { raw: true }],
   ['post', '/api/onboarding/complete', postOnboardingComplete, { raw: true }],
+  ['post', '/api/tips/dismiss', postTipsDismissed, { raw: true }],
   ['get', '/api/branding', getBranding, { raw: true }],
   ['post', '/api/change-password', postChangePassword, { raw: true }],
 ]

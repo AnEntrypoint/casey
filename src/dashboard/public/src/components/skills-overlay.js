@@ -25,7 +25,6 @@ export function saveSkills(operatorId, o) {
 }
 
 export function skillsDone(o) { return SKILLS.every((s) => o[s.id]); }
-export function skillsDismissed(operatorId) { return loadSkills(operatorId).__dismissed === true; }
 
 
 export function SkillsOverlay({ open, operatorId, onClose, onAllDone } = {}) {

@@ -41,7 +41,7 @@ import { refreshFieldLists, fieldMapShown } from './views/field-app.js';
 import { resetFieldCase } from './views/field-case.js';
 
 import { OnboardingOverlay, onboarded, markOnboarded } from './components/onboarding-overlay.js';
-import { SkillsOverlay, skillsDismissed } from './components/skills-overlay.js';
+import { SkillsOverlay } from './components/skills-overlay.js';
 import { HelpOverlay, helpSeen, markHelpSeen } from './components/help-overlay.js';
 
 const root = document.getElementById('app');
@@ -81,11 +81,16 @@ registerModalBody('stats', StatsPanel);
 registerModalBody('settings', SettingsPanel);
 registerModalBody('help', () => HelpOverlay({ open: true, onClose: closeModal, onShowOnboarding: () => openModal('onboarding') }));
 registerModalBody('onboarding', () => OnboardingOverlay({ open: true, onClose: () => { markOnboarded(); closeModal(); } }));
+function dismissTips() {
+  if (state.currentUser) state.currentUser.tips_dismissed = true;
+  api.postTipsDismissed().catch(() => {});
+  closeModal();
+}
 registerModalBody('skills', () => SkillsOverlay({
   open: true,
   operatorId: state.currentUser && state.currentUser.username,
-  onClose: closeModal,
-  onAllDone: closeModal,
+  onClose: dismissTips,
+  onAllDone: dismissTips,
 }));
 
 registerOpenIntakeNew(promptNewCase);
@@ -130,8 +135,7 @@ function maybeShowOnboarding() {
   if (isFieldRole() || isViewerRole()) return;
   if (!onboarded()) { openModal('onboarding'); return; }
   if (!helpSeen()) markHelpSeen();
-  const opId = state.currentUser && state.currentUser.username;
-  if (opId && !skillsDismissed(opId)) openModal('skills');
+  if (!state.currentUser?.tips_dismissed) openModal('skills');
 }
 
 async function loadCaseyConfig() {

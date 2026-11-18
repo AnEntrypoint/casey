@@ -204,6 +204,7 @@ export const logout = async () => {
 };
 export const logoutEverywhere = () => post('/api/logout-everywhere');
 export const postOnboardingComplete = () => post('/api/onboarding/complete', {});
+export const postTipsDismissed = () => post('/api/tips/dismiss', {});
 
 export const fetchConfig = async () => {
   try {
