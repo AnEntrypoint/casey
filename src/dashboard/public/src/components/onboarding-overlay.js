@@ -2,17 +2,18 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Lede } from '/design/src/components/shell/atoms.js';
 import { Dialog } from './dialog-shell.js';
 import { queueName } from '../map-model.js';
+import { state } from '../state.js';
+import { postOnboardingComplete } from '../api.js';
 import { word } from '../words.js';
 const h = webjsx.createElement;
 
-const KEY = 'casey_onboarded';
-
 export function onboarded() {
-    try { return localStorage.getItem(KEY) === '1'; } catch { return false; }
+    return !!(state.currentUser && state.currentUser.onboarded);
 }
 
 export function markOnboarded() {
-    try { localStorage.setItem(KEY, '1'); } catch {  }
+    if (state.currentUser) state.currentUser.onboarded = true;
+    postOnboardingComplete().catch(() => {});
 }
 
 export function OnboardingOverlay({ open, onClose } = {}) {

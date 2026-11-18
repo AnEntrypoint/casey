@@ -277,6 +277,10 @@ export async function markLogin(store, id, { now = Date.now() } = {}) {
   return store.t.update('operator_account', id, { last_login_at: new Date(now).toISOString() }, SYSTEM)
 }
 
+export async function markOnboarded(store, id, { now = Date.now() } = {}) {
+  return store.t.update('operator_account', id, { onboarded_at: new Date(now).toISOString() }, SYSTEM)
+}
+
 function writeBootstrapPasswordFile(store, password) {
   const dataDir = store.dataDir
   fs.mkdirSync(dataDir, { recursive: true })
