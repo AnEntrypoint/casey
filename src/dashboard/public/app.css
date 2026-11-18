@@ -848,6 +848,9 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 
 .ds-247420.ds-247420 {
   --fg-3: color-mix(in oklab, var(--fg) 66%, var(--bg));
+  --fs-pico: 0.75rem;
+  --fs-nano: 0.8125rem;
+  --fs-micro: 0.8125rem;
 }
 .ds-247420 .ds-filter-pill,
 .ds-247420 .ds-badge,
