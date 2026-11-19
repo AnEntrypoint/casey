@@ -60,7 +60,7 @@ export function ActivityPanel() {
     const body = loader.slot(() => {
         const ev = (state._activity && state._activity.events) || [];
         return ev.length
-            ? h('div', {}, ...ev.map((e, i) => ActivityRow(e, i)))
+            ? h('div', { class: 'ds-activity-list' }, ...ev.map((e, i) => ActivityRow(e, i)))
             : Alert({ kind: 'info', children: word('ui.activity_panel_no_matches') });
     });
     return Panel({ children: [filterRow, body] });

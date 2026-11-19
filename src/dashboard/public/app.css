@@ -1031,3 +1031,32 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-247420 .ds-area-item .row {
   padding-block: var(--space-2);
 }
+
+@media (max-width: 700px) {
+  .ds-247420 .ds-offline-table table,
+  .ds-247420 .ds-stats-table table {
+    table-layout: fixed;
+    width: 100%;
+  }
+  .ds-247420 .ds-offline-table th,
+  .ds-247420 .ds-offline-table td,
+  .ds-247420 .ds-stats-table th,
+  .ds-247420 .ds-stats-table td {
+    padding-inline: var(--space-1);
+    overflow-wrap: break-word;
+    white-space: normal;
+  }
+  .ds-247420 .ds-activity-list .ds-log-row {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    gap: var(--space-1) var(--space-2);
+    align-items: baseline;
+  }
+  .ds-247420 .ds-activity-list .ds-log-text,
+  .ds-247420 .ds-activity-list .ds-log-meta {
+    grid-column: 1 / -1;
+  }
+  .ds-247420 .ds-activity-list .ds-log-meta {
+    margin-left: 0;
+  }
+}

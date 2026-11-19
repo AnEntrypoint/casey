@@ -39,10 +39,10 @@ export function StatsPanel() {
         const j = state._stats;
         const modes = j ? Object.keys(j.by_mode || {}) : [];
         if (!modes.length) return Alert({ kind: 'info', children: word('ui.stats_panel_none') });
-        return Table({
+        return h('div', { class: 'ds-stats-table' }, Table({
             headers: [word('ui.stats_panel_h_source'), word('ui.stats_panel_h_count'), word('ui.stats_panel_h_fields'), word('ui.stats_panel_h_visit_ready'), word('ui.stats_panel_h_essential')],
             rows: modes.map((m) => statRow(m, j.by_mode[m])),
-        });
+        }));
     });
     return Panel({ title: word('ui.stats_panel_title'), children: [body] });
 }

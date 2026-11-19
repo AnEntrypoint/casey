@@ -29,11 +29,11 @@ export function OfflinePanel() {
         const capped = j.total > rows.length;
         return h('div', {},
             capped ? Alert({ kind: 'info', children: word('ui.offline_panel_capped', { shown: rows.length, total: j.total }) }) : null,
-            Table({
+            h('div', { class: 'ds-offline-table' }, Table({
                 headers: [word('ui.offline_panel_h_ref'), word('ui.offline_panel_h_subject'), word('ui.offline_panel_h_channel'), word('ui.offline_panel_h_owner'), word('ui.offline_panel_h_last_event')],
                 rows: rows.map((r) => [r.ref || '', r.subject || word('ui.offline_panel_no_subject'), channelLabel(r.channel), (r.assignee && r.assignee !== 'agent') ? r.assignee : '', fmtTime(r.last_event_at)]),
                 onRowClick: (i) => { if (rows[i].id) setActiveId(rows[i].id); },
-            }));
+            })));
     });
     return Panel({ children: [body] });
 }
