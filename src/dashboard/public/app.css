@@ -975,3 +975,23 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   color: var(--fg);
   font-weight: 600;
 }
+
+.ds-247420 .ds-account-chip {
+  display: none;
+}
+@media (min-width: 1024px) {
+  .ds-247420 .ds-account-name { display: none; }
+  .ds-247420 .ds-account-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--sa-gold);
+    font-size: var(--fs-micro);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--fg);
+  }
+}

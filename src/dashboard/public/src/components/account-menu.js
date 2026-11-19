@@ -73,8 +73,18 @@ export function LogoutEverywhereConfirmDialog() {
   });
 }
 
+function initialsOf(name) {
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return '?';
+  const letters = words.length > 1 ? [words[0], words[1]].map((w) => Array.from(w)[0]) : Array.from(words[0]).slice(0, 2);
+  return letters.join('').toUpperCase();
+}
+
 export function AccountMenu() {
+  const label = state.currentUser ? (state.currentUser.display_name || state.currentUser.username) : word('ui.account_menu_account');
   const items = [
+    { id: 'account-name', label, glyph: Icon('members', { size: 14 }), disabled: true },
+    { separator: true },
     { id: 'theme', label: state.theme === 'herd' ? word('ui.account_menu_theme_dark') : word('ui.account_menu_theme_light'), glyph: Icon(state.theme === 'herd' ? 'moon' : 'sun', { size: 14 }) },
     { id: 'help', label: word('ui.account_menu_help'), glyph: Icon('help', { size: 14 }) },
     { id: 'feedback', label: word('ui.account_menu_feedback'), glyph: Icon('thread', { size: 14 }) },
@@ -89,10 +99,9 @@ export function AccountMenu() {
     else if (id === 'logout') doLogout();
     else if (id === 'logout-everywhere') openLogoutEverywhereConfirm();
   };
-  const label = state.currentUser ? (state.currentUser.display_name || state.currentUser.username) : word('ui.account_menu_account');
   return Dropdown({
     ariaLabel: word('ui.account_menu_aria'),
-    trigger: () => [Icon('members', { size: 16 }), h('span', { class: 'ds-account-name', 'aria-hidden': 'true' }, label), h('span', { class: 'ds-sr-only' }, label)],
+    trigger: () => [Icon('members', { size: 16 }), h('span', { class: 'ds-account-name', 'aria-hidden': 'true' }, label), h('span', { class: 'ds-account-chip', title: label, 'aria-hidden': 'true' }, initialsOf(label)), h('span', { class: 'ds-sr-only' }, label)],
     items,
     onSelect,
   });
