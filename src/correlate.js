@@ -2,9 +2,20 @@
 
 import { parseReportTolerant as parseReport } from './timestamp.js'
 import { REPORT_CONCEPT as K } from './report-concepts.js'
+import { loadDomainConfig } from './config-loader.js'
 
-const STOP = new Set(['the', 'a', 'an', 'of', 'at', 'in', 'on', 'near', 'by', 'and',
-  'farm', 'plaas', 'area', 'district', 'town', 'next', 'to', 'road', 'r', 'n'])
+const BASE_STOP = ['the', 'a', 'an', 'of', 'at', 'in', 'on', 'near', 'by', 'and',
+  'area', 'district', 'town', 'next', 'to', 'road', 'r', 'n']
+
+function packStopwords() {
+  const list = loadDomainConfig().pack?.correlation?.stopwords ?? []
+  if (!Array.isArray(list) || !list.every((w) => typeof w === 'string' && w.length > 0 && w === w.trim().toLowerCase())) {
+    throw new Error('pack.cjs correlation.stopwords must list lowercase words')
+  }
+  return list
+}
+
+const STOP = new Set([...BASE_STOP, ...packStopwords()])
 
 export function tokens(s) {
   return new Set(
