@@ -24,7 +24,9 @@ export function brandConfig() {
     tokens[name] = value
   }
   const overlay = path.join(cfg.dir, 'public')
-  return Object.freeze({ tokens: Object.freeze(tokens), overlayDir: existsSync(overlay) ? overlay : null })
+  const anchor = cfg.brand?.design_theme_anchor
+  if (anchor !== undefined && (typeof anchor !== 'string' || anchor.length === 0)) throw new Error('brand.yml design_theme_anchor must be text')
+  return Object.freeze({ tokens: Object.freeze(tokens), overlayDir: existsSync(overlay) ? overlay : null, designThemeAnchor: anchor ?? null })
 }
 
 export function applyBrandTokens(text, tokens) {

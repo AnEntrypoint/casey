@@ -5,6 +5,7 @@ import { generalAreaFor } from '../../areas.js'
 import { BRAND, TYPE_SCALE_CSS } from '../brand.js'
 import { parseReport } from '../../timestamp.js'
 import { mountRoutes } from './register.js'
+import { designStylesheetRoute } from '../design-stylesheet.js'
 import { registerPublicSiteAssets } from './public-site.js'
 import { RUNTIME_STATES } from './operations.js'
 import { roleGate, roleOf, expectedRefGuard } from '../roles.js'
@@ -669,7 +670,7 @@ const ROUTES = [
 ]
 
 export function registerAuth(app, deps) {
-  const { store, express, path, DESIGN_DIR, LEAFLET_DIR, MARKERCLUSTER_DIR, esc, PUBLIC_SITE_ROOT } = deps
+  const { store, express, path, DESIGN_DIR, DESIGN_OVERLAY_DIR, DESIGN_THEME_ANCHOR, LEAFLET_DIR, MARKERCLUSTER_DIR, esc, PUBLIC_SITE_ROOT } = deps
 
   app.use(sessionMiddleware(deps))
   app.use(csrfGuard())
@@ -694,6 +695,7 @@ export function registerAuth(app, deps) {
   app.use(roleGate(deps))
   app.use(expectedRefGuard(deps))
 
+  app.get('/design/dist/247420.css', designStylesheetRoute(DESIGN_DIR, DESIGN_OVERLAY_DIR, DESIGN_THEME_ANCHOR))
   app.use('/design', express.static(DESIGN_DIR))
   app.use('/vendor/leaflet', express.static(LEAFLET_DIR))
   app.use('/vendor/leaflet.markercluster', express.static(MARKERCLUSTER_DIR))

@@ -381,7 +381,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
 
   const deps = {
     PUBLIC_SITE_ROOT,
-    store, express, path, DESIGN_DIR, LEAFLET_DIR, MARKERCLUSTER_DIR,
+    store, express, path, DESIGN_DIR, DESIGN_OVERLAY_DIR: BRAND_CONFIG.overlayDir, DESIGN_THEME_ANCHOR: BRAND_CONFIG.designThemeAnchor, LEAFLET_DIR, MARKERCLUSTER_DIR,
     COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
     issueSession, verifySession, findAccountByUsername, findAccountForLogin, verifyPassword,
     markLogin, markOnboarded, markTipsDismissed, getAccount, listAccounts, createAccount, setAccountDisabled, setAccountContactPhone,
