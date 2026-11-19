@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { existsSync } from 'node:fs'
 import { AlertLog, AlertGate, ALERT_TAG } from '../src/alert-log.js'
-import { fmtTimeSAST } from '../src/format.js'
+import { fmtTimeLocal } from '../src/format.js'
 import { bold, dim, green, red, cyan, ok, bad, warn, say } from './casey-cli-ui.js'
 
 const CONDITION_LABEL = {
@@ -78,10 +78,10 @@ export async function cmdAlerts({ flags }) {
       webhook_source: hook,
       standing: standing.map(s => ({
         condition: s.condition, since: s.since,
-        since_sast: s.since ? fmtTimeSAST(s.since) : null,
+        since_sast: s.since ? fmtTimeLocal(s.since) : null,
         for_ms: s.since ? Math.max(0, now - s.since) : null,
       })),
-      entries: items.map(e => ({ ...e, t_sast: fmtTimeSAST(e.at || Date.parse(e.t) || null) })),
+      entries: items.map(e => ({ ...e, t_sast: fmtTimeLocal(e.at || Date.parse(e.t) || null) })),
       showing: items.length,
       total,
       corrupt_lines: corrupt,
@@ -101,7 +101,7 @@ export async function cmdAlerts({ flags }) {
   else {
     console.log(bold(`\nstanding now (${standing.length})`))
     for (const s of standing) {
-      const since = s.since ? `${fmtTimeSAST(s.since)}  (${mins(now - s.since)} min)` : 'unknown'
+      const since = s.since ? `${fmtTimeLocal(s.since)}  (${mins(now - s.since)} min)` : 'unknown'
       console.log(`  ${bad(conditionLabel(s.condition))}\t${dim('since ' + since)}`)
     }
   }
@@ -109,7 +109,7 @@ export async function cmdAlerts({ flags }) {
   console.log(bold(`\nrecent (${items.length} of ${total})`))
   if (!items.length) console.log(dim('  nothing has fired yet.'))
   for (const e of items) {
-    const when = dim('[' + (fmtTimeSAST(e.at || Date.parse(e.t) || null) || 'no time') + ']')
+    const when = dim('[' + (fmtTimeLocal(e.at || Date.parse(e.t) || null) || 'no time') + ']')
     const evt = e.event === 'cleared' ? green('cleared') : red('raised ')
     console.log(`  ${when} ${evt} ${bold(conditionLabel(e.condition) || 'unrecorded condition')}\t${dim(e.ref || '')}`)
     if (e.detail) console.log(`      ${e.detail}`)

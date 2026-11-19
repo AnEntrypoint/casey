@@ -1,7 +1,7 @@
 import { caseyText } from '../src/deployment-text.js'
 
 import { createCaseStore } from '../src/case-store.js'
-import { hostTimezone, hostIsSAST, SAST_TZ } from '../src/format.js'
+import { hostTimezone, hostIsLocal, LOCAL_TZ } from '../src/format.js'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { ROOT, bold, dim, green, red, cyan, ok, bad, warn, pkgVersion, hasCreds, partialCreds, portFree } from './casey-cli-ui.js'
@@ -216,7 +216,7 @@ export async function cmdDoctor({ flags }) {
     console.log(bad('CASEY_COOKIE_SECURE=0 with an https CASEY_PUBLIC_URL - the dashboard session cookie is being sent WITHOUT the Secure flag on a deployment that declares itself publicly reachable over TLS; unset it (Secure is the default) or set it to 1'))
     problems++
   }
-  console.log(hostIsSAST() ? ok(caseyText("bin/casey-setup.js#tz-ok", [SAST_TZ])) : warn(caseyText("bin/casey-setup.js#tz-warn", [hostTimezone() || 'unknown', SAST_TZ])))
+  console.log(hostIsLocal() ? ok(caseyText("bin/casey-setup.js#tz-ok", [LOCAL_TZ])) : warn(caseyText("bin/casey-setup.js#tz-warn", [hostTimezone() || 'unknown', LOCAL_TZ])))
   const alertHook = process.env.CASEY_ALERT_WEBHOOK || process.env.CASEY_HANDOFF_WEBHOOK
   const alertLogFile = path.join(process.cwd(), 'data', 'alerts', 'alerts.jsonl')
   console.log(alertHook

@@ -3,7 +3,7 @@ import { deleteRouter, listRouters, rotateRouterToken } from '../src/portal/port
 import { provisionRouter } from '../src/portal/router-lifecycle.js'
 import { loadBundle, checkRouterInput } from '../src/portal/router-provisioning.js'
 import { publicBase } from '../src/portal/portal-config.js'
-import { fmtTimeSAST } from '../src/format.js'
+import { fmtTimeLocal } from '../src/format.js'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
 
 async function openStore() {
@@ -38,7 +38,7 @@ export async function cmdRouter({ flags, rest }) {
     const routers = await listRouters(store)
     if (!routers.length) { console.log('no routers yet.'); console.log(dim('  run ' + cyan('casey router create --name <label>') + ' to add one.')); await closeAndExit(store, 0) }
     for (const r of routers) {
-      const seen = r.last_seen ? fmtTimeSAST(Math.floor(Date.parse(r.last_seen) / 1000)) : null
+      const seen = r.last_seen ? fmtTimeLocal(Math.floor(Date.parse(r.last_seen) / 1000)) : null
       console.log(`${bold(r.name)}\t${r.router_id}\t${dim(r.site || 'no site')}\t${dim(r.serial || 'no serial')}\t${dim(seen || 'never seen')}`)
     }
     await closeAndExit(store, 0)

@@ -3,7 +3,7 @@ import { createCaseStore } from '../src/case-store.js'
 import { TIER_ORDER, resolveTierValue, atLeast, tierLabel, TIER } from '../src/contact-tiers.js'
 import { createInvite, createInvites, listInvites, revokeInvite, normalizeMsisdn } from '../src/role-invites.js'
 import { mapRole } from '../src/team-import.js'
-import { fmtPhone27, fmtTimeSAST } from '../src/format.js'
+import { fmtPhone27, fmtTimeLocal } from '../src/format.js'
 import { TIER_LABELS } from '../src/store/report-shape.js'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
 import { cliText } from './casey-cli-text.js'
@@ -143,13 +143,13 @@ export async function cmdRoles({ flags, rest }) {
           for (const i of invs) console.log(bold(i.code) + dim(`   ${i.label}`))
           console.log(green(`${invs.length} one-time code${invs.length === 1 ? '' : 's'} for ${tier}`) + dim('   (shown once; only their hashes are stored)'))
         }
-        console.log(dim(`  each expires ${fmtTimeSAST(Math.floor(invs[0].expires_at / 1000))} and works for ${invs[0].max_uses} use(s).`))
+        console.log(dim(`  each expires ${fmtTimeLocal(Math.floor(invs[0].expires_at / 1000))} and works for ${invs[0].max_uses} use(s).`))
         console.log(dim('  each person sends exactly their code, and nothing else, to the bot number on WhatsApp.'))
         await closeAndExit(store, 0)
       }
       const inv = await createInvite(store, base)
       console.log(green(`one-time code for ${tier}: `) + bold(inv.code) + dim('   (shown once; only its hash is stored)'))
-      console.log(dim(`  expires ${fmtTimeSAST(Math.floor(inv.expires_at / 1000))}, ${inv.max_uses} use(s).`))
+      console.log(dim(`  expires ${fmtTimeLocal(Math.floor(inv.expires_at / 1000))}, ${inv.max_uses} use(s).`))
       console.log(dim('  the person sends exactly that code, and nothing else, to the bot number on WhatsApp.'))
       await closeAndExit(store, 0)
     } catch (e) { await fail(e.message) }
@@ -159,7 +159,7 @@ export async function cmdRoles({ flags, rest }) {
     const list = await listInvites(store)
     if (flags.json) { console.log(JSON.stringify(list, null, 2)); await closeAndExit(store, 0) }
     if (!list.length) console.log(dim('no invites yet.'))
-    for (const i of list) console.log(`${bold(i.id)}\t${i.tier}\t${i.status === 'active' ? green(i.status) : dim(i.status)}\t${i.uses}/${i.max_uses}\t${dim(i.label || '')}\t${dim('by ' + i.created_by)}\t${dim('expires ' + fmtTimeSAST(Math.floor(i.expires_at / 1000)))}`)
+    for (const i of list) console.log(`${bold(i.id)}\t${i.tier}\t${i.status === 'active' ? green(i.status) : dim(i.status)}\t${i.uses}/${i.max_uses}\t${dim(i.label || '')}\t${dim('by ' + i.created_by)}\t${dim('expires ' + fmtTimeLocal(Math.floor(i.expires_at / 1000)))}`)
     await closeAndExit(store, 0)
   }
 

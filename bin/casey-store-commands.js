@@ -1,6 +1,6 @@
 
 import { createCaseStore } from '../src/case-store.js'
-import { fmtTimeSAST, fmtPhone27, isOpenCase } from '../src/format.js'
+import { fmtTimeLocal, fmtPhone27, isOpenCase } from '../src/format.js'
 import { rankAttention } from '../src/attn.js'
 import { parseReport, tsMs } from '../src/timestamp.js'
 import { randomBytes } from 'node:crypto'
@@ -48,7 +48,7 @@ export async function cmdCases({ flags }) {
   }
   for (const cr of cases) {
     const contact = cr.external_id ? dim(fmtPhone27(cr.external_id)) : ''
-    const age = dim(fmtTimeSAST(cr.created_at) || '(no date)')
+    const age = dim(fmtTimeLocal(cr.created_at) || '(no date)')
     console.log(`${bold(cr.ref)}\t[${cr.status}]\t${cr.priority}\t${cr.channel}\t${contact}\t${cr.subject || ''}\t${age}`)
   }
   const total = await store.countCases(where).catch(() => cases.length)
@@ -63,7 +63,7 @@ export async function cmdShow({ rest }) {
   const caseRow = await store.getCase(id) || await store.getCaseByRef(id)
   if (!caseRow) { say(bad(`no case "${id}".`)); say(dim(`  list cases with ${cyan('casey cases')}.`)); await closeAndExit(store, 1) }
   console.log(`${bold(caseRow.ref)}  [${caseRow.status}]  ${caseRow.priority}  ${caseRow.channel}/${fmtPhone27(caseRow.external_id)}`)
-  console.log(`opened: ${fmtTimeSAST(caseRow.created_at) || dim('(no date)')}`)
+  console.log(`opened: ${fmtTimeLocal(caseRow.created_at) || dim('(no date)')}`)
   console.log(`subject: ${caseRow.subject}\nsummary: ${caseRow.summary}\ntags: ${caseRow.tags}`)
   const report = parseReport(caseRow)
   const { VISIT_CRITICAL: VC } = await import('../src/case-health.js')
@@ -78,7 +78,7 @@ export async function cmdShow({ rest }) {
   if (!filled.length) console.log(dim('  (no additional fields filled)'))
   console.log(dim('--- timeline ---'))
   for (const e of await store.listEvents(caseRow.id)) {
-    const ts = fmtTimeSAST(e.created_at)
+    const ts = fmtTimeLocal(e.created_at)
     console.log(`  ${dim('[' + (ts || 'no time') + ']')} ${e.kind}/${e.actor}: ${e.text}`)
   }
   await closeAndExit(store, 0)
@@ -98,7 +98,7 @@ export async function cmdAttention({ flags }) {
   console.log(bold(`${total} case${total === 1 ? '' : 's'} need attention`) + (limit ? dim(`  (showing ${items.length})`) : '') + '\n')
   for (const x of items) {
     const contact = x.c.external_id ? dim(fmtPhone27(x.c.external_id)) : ''
-    const when = dim(fmtTimeSAST(x.c.updated_at || x.c.created_at) || '(no date)')
+    const when = dim(fmtTimeLocal(x.c.updated_at || x.c.created_at) || '(no date)')
     console.log(`${bold(x.c.ref)}\t${red('score ' + x.score)}\t[${x.c.status}]\t${x.c.channel}\t${contact}`)
     console.log(`  ${x.reason}\n  ${dim('last activity: ' + when)}`)
   }
@@ -109,7 +109,7 @@ export async function cmdHandover({ flags, rest }) {
   const store = await openStore()
   if (flags['start-shift'] || rest.includes('start')) {
     const m = await store.startShift('cli')
-    console.log(green(`shift started ${fmtTimeSAST(Math.floor(m.ts / 1000))}`))
+    console.log(green(`shift started ${fmtTimeLocal(Math.floor(m.ts / 1000))}`))
     console.log(dim('  the next handover digest scopes "since now".'))
     await closeAndExit(store, 0)
   }
@@ -131,7 +131,7 @@ export async function cmdHandover({ flags, rest }) {
     }, null, 2))
     await closeAndExit(store, 0)
   }
-  console.log(bold('casey shift handover') + dim(`  since ${since ? fmtTimeSAST(Math.floor(since / 1000)) : 'start of records'}`) + '\n')
+  console.log(bold('casey shift handover') + dim(`  since ${since ? fmtTimeLocal(Math.floor(since / 1000)) : 'start of records'}`) + '\n')
   console.log(bold(`needs attention (${items.length})`))
   for (const x of items) console.log(`  ${bold(x.c.ref)}\t${x.c.assignee ? dim('@' + x.c.assignee) : red('unowned')}\t${x.reason}`)
   console.log(bold(`\nopen handoffs not yet taken (${handoffs.length})`))
@@ -139,7 +139,7 @@ export async function cmdHandover({ flags, rest }) {
   console.log(bold(`\nunsent drafts (${drafts.length})`))
   for (const c of drafts) console.log(`  ${bold(c.ref)}\t${c.subject || ''}`)
   console.log(bold(`\ntouched this shift (${touched.length})`))
-  for (const c of touched) console.log(`  ${dim(fmtTimeSAST(Math.floor((c.last_event_at || c.updated_at || c.created_at || 0) / 1000)) || '(no date)')}  ${bold(c.ref)}\t${c.subject || ''}`)
+  for (const c of touched) console.log(`  ${dim(fmtTimeLocal(Math.floor((c.last_event_at || c.updated_at || c.created_at || 0) / 1000)) || '(no date)')}  ${bold(c.ref)}\t${c.subject || ''}`)
   console.log(dim(`\n  stamp a new shift with ${cyan('casey handover start')}.`))
   await closeAndExit(store, 0)
 }
@@ -310,7 +310,7 @@ async function reportIncompleteErasures(store) {
   }
   say(bad(`${open.length} erasure${open.length === 1 ? '' : 's'} started and never completed.`))
   for (const p of open) {
-    console.log(`${bold(p.contactId)}\tstarted ${fmtTimeSAST(Math.floor((p.ts || 0) / 1000)) || '(no time)'}\tby ${p.by || 'system'}`)
+    console.log(`${bold(p.contactId)}\tstarted ${fmtTimeLocal(Math.floor((p.ts || 0) / 1000)) || '(no time)'}\tby ${p.by || 'system'}`)
     console.log(dim(`  ${(p.caseIds || []).length} case(s), ${(p.siblingIds || []).length} other contact row(s) for the same person`))
     console.log(dim('  re-run it (erasure is idempotent, and the plan above is what a re-run recovers the sibling rows from):'))
     console.log(dim('    ') + cyan(`casey erase-contact ${p.contactId} --yes --reason "completing an interrupted erasure"`))
@@ -552,7 +552,7 @@ export async function cmdOperators({ flags, rest }) {
     if (!accounts.length) { console.log('no operator accounts yet.'); console.log(dim('  run ' + cyan('casey operators add <username>') + ' to create one.')); await closeAndExit(store, 0) }
     for (const a of accounts) {
       const status = a.disabled === '1' ? red('[disabled]') : green('[active]')
-      const seen = a.last_login_at ? fmtTimeSAST(Math.floor(Date.parse(a.last_login_at) / 1000)) : null
+      const seen = a.last_login_at ? fmtTimeLocal(Math.floor(Date.parse(a.last_login_at) / 1000)) : null
       console.log(`${bold(a.username)}\t${a.role === 'secretary' ? 'operator (stored as legacy secretary)' : a.role}\t${status}\t${a.display_name || ''}\t${dim(seen || 'never logged in')}`)
     }
     await closeAndExit(store, 0)

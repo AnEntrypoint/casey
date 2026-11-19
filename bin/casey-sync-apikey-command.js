@@ -1,6 +1,6 @@
 import { createCaseStore } from '../src/case-store.js'
 import { createApiKey, listApiKeys, revokeApiKey } from '../src/sync/api-key-auth.js'
-import { fmtTimeSAST } from '../src/format.js'
+import { fmtTimeLocal } from '../src/format.js'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
 
 const VALID_SCOPES = ['read:cases', 'read:links', 'write:links', 'import:records']
@@ -46,7 +46,7 @@ export async function cmdSyncApiKey({ flags, rest }) {
     if (!keys.length) { console.log('no sync API keys yet.'); console.log(dim('  run ' + cyan('casey sync-apikey create --label <name> --scope ...') + ' to create one.')); await closeAndExit(store, 0) }
     for (const k of keys) {
       const status = k.disabled === '1' ? red('[revoked]') : green('[active]')
-      const seen = k.last_used_at ? fmtTimeSAST(Math.floor(Date.parse(k.last_used_at) / 1000)) : null
+      const seen = k.last_used_at ? fmtTimeLocal(Math.floor(Date.parse(k.last_used_at) / 1000)) : null
       console.log(`${bold(k.label)}\t${k.id}\t${k.key_prefix}...\t${status}\t${k.scopes}\t${dim(seen || 'never used')}`)
     }
     await closeAndExit(store, 0)
