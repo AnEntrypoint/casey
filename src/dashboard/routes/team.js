@@ -11,6 +11,7 @@ import { ROLE_TIER_KEY } from '../../domain-roles.js'
 import { parseReport } from '../../timestamp.js'
 import { loadAreas, resolveArea, statedArea } from '../../areas.js'
 import { buildTeamMetrics, DEFAULT_STUCK_HOURS } from '../../ranger-metrics.js'
+import { caseyText } from '../../deployment-text.js';
 
 const ROLE_LABEL = Object.fromEntries(Object.entries(ROLE_TIER_KEY).map(([role, tierKey]) => [role, TIER_LABELS[TIER[tierKey]]]))
 const NUDGE_CASE_CAP = 300
@@ -33,7 +34,7 @@ export function getTeamMembers({ store, authed, listAccounts }) {
     for (const a of await listAccounts(store)) {
       if (a.disabled === '1' || !FIELD_ROLES.includes(a.role)) continue
       const alias_of = contactKeyByPhone.get(normalizeMsisdn(a.contact_phone)) || undefined
-      members.push({ key: a.username, name: a.display_name || a.username, role: ROLE_LABEL[a.role], via: 'Dashboard login', ...(alias_of ? { alias_of } : {}) })
+      members.push({ key: a.username, name: a.display_name || a.username, role: ROLE_LABEL[a.role], via: caseyText("src/dashboard/routes/team.js#w0"), ...(alias_of ? { alias_of } : {}) })
     }
     members.sort((x, y) => x.name.localeCompare(y.name))
     res.json({ members })
@@ -100,8 +101,8 @@ export function getNudges({ store, authed, isOpenCase, UNCLAIMED_ASSIGNEE, listA
       people.delete(drop.key); byPhone.set(p.digits, keep)
     }
     const out = [...people.values()].filter(p => p.cases.length).map(p => {
-      const refs = p.cases.map(c => `${c.ref}${c.missing.length ? ` (still needed: ${c.missing.join(', ')})` : ''}`).join('; ')
-      const text = `Hi ${p.name}, a quick check on the ${p.cases.length === 1 ? 'report' : 'reports'} assigned to you: ${refs}. Please send an update when you can. Thank you.`
+      const refs = p.cases.map(c => `${c.ref}${c.missing.length ? caseyText("src/dashboard/routes/team.js#w1", [c.missing.join(', ')]) : ''}`).join('; ')
+      const text = caseyText("src/dashboard/routes/team.js#w2", [p.name, p.cases.length === 1 ? 'report' : 'reports', refs])
       const { digits, ...rest } = p
       return { ...rest, wa_link: waLink(digits, text) }
     })

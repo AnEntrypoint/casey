@@ -1,12 +1,13 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { loadDomainConfig } from '../config-loader.js'
+import { caseyText } from '../deployment-text.js';
 
 export const NEUTRAL_TOKENS = Object.freeze({
   THEME_LIGHT: 'light',
   THEME_DARK: 'dark',
   THEME_LEGACY: '{}',
-  FONT_SANS: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+  FONT_SANS: caseyText("src/dashboard/brand-tokens.js#w0"),
   FONT_FACES: '',
   FONT_PRELOADS: '',
 })

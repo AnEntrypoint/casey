@@ -45,10 +45,10 @@ export function csrfGuard() {
     if (!req.caseyAccount || !STATE_CHANGING.has(req.method)) return next()
     const origin = req.get('origin') || req.get('referer')
     if (!origin) return next()
-    if (origin === 'null') return req.get('sec-fetch-site') === 'same-origin' ? next() : res.status(403).json({ error: 'invalid origin' })
+    if (origin === 'null') return req.get('sec-fetch-site') === 'same-origin' ? next() : res.status(403).json({ error: caseyText("src/dashboard/routes/auth.js#w0") })
     let originHost
-    try { originHost = new URL(origin).host } catch { return res.status(403).json({ error: 'invalid origin' }) }
-    if (originHost !== req.get('host')) return res.status(403).json({ error: 'cross-origin request rejected' })
+    try { originHost = new URL(origin).host } catch { return res.status(403).json({ error: caseyText("src/dashboard/routes/auth.js#w1") }) }
+    if (originHost !== req.get('host')) return res.status(403).json({ error: caseyText("src/dashboard/routes/auth.js#w2") })
     next()
   }
 }
@@ -73,8 +73,8 @@ const PUBLIC_FIELDS = (() => {
   return [...shown.filter(f => f.critical_for_visit).map(row), ...shown.filter(f => !f.critical_for_visit).map(row)]
 })()
 
-const CRITICAL_GROUP_TITLE = vocabWord('form.group_critical', 'Needed for a field visit')
-const UNSECTIONED_GROUP_TITLE = vocabWord('form.group_other', 'More detail')
+const CRITICAL_GROUP_TITLE = vocabWord('form.group_critical', caseyText("src/dashboard/routes/auth.js#w3"))
+const UNSECTIONED_GROUP_TITLE = vocabWord('form.group_other', caseyText("src/dashboard/routes/auth.js#w4"))
 const PUBLIC_GROUPS = (() => {
   const groups = []
   const critical = PUBLIC_FIELDS.filter(f => f.critical)
@@ -90,16 +90,16 @@ const PUBLIC_GROUPS = (() => {
 })()
 
 const ERROR_SENTENCES = {
-  need_ref_or_phone: () => 'Please enter your reference number, or your phone number.',
-  ref_unknown: (ref, esc) => `We could not find the reference "${esc(ref)}". Please check it against your messages, or enter your phone number instead.`,
+  need_ref_or_phone: () => caseyText("src/dashboard/routes/auth.js#w5"),
+  ref_unknown: (ref, esc) => caseyText("src/dashboard/routes/auth.js#w6", [esc(ref)]),
   phone_shape: () => caseyText("src/dashboard/routes/auth.js#phone-shape"),
-  frozen: () => `This ${ENTITY} is not taking updates on this page at the moment. Reply on the same app you first reported from and the team will get it.`,
-  save_failed: () => 'Your answers were not saved. They are still in the boxes below, so you can press Send details again. If it keeps failing, reply on the app you first reported from instead.',
-  unexpected: () => `This page could not finish that. Your answers are still in the boxes below -- press Send details to try again. If it keeps failing, reply on the app you first reported from and your ${ENTITY} will still reach the team.`,
+  frozen: () => caseyText("src/dashboard/routes/auth.js#w7", [ENTITY]),
+  save_failed: () => caseyText("src/dashboard/routes/auth.js#w8"),
+  unexpected: () => caseyText("src/dashboard/routes/auth.js#w9", [ENTITY]),
 }
 function errorSentence(code, ref, esc, retryAfter) {
   if (code === 'rate') {
-    return `This connection has made too many requests in the last minute -- in some areas many phones share one connection. Please wait about ${retryAfter} seconds and try again.`
+    return caseyText("src/dashboard/routes/auth.js#w10", [retryAfter])
   }
   const fn = ERROR_SENTENCES[code]
   return fn ? fn(ref, esc) : ERROR_SENTENCES.unexpected()
@@ -116,7 +116,7 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
   const vcFilled = PUBLIC_FIELDS.filter(f => f.critical && report[f.key] != null && String(report[f.key]).trim() !== '').length
   const allFilled = vcTotal === 0 || vcFilled >= vcTotal
   const progressBar = (caseRow && vcTotal > 0) ? `<div class="progress-wrap">
-      <div class="progress-label">${allFilled ? 'All details needed for a field visit are filled. Thank you.' : `Needed for a field visit: ${vcFilled} of ${vcTotal} filled`}</div>
+      <div class="progress-label">${allFilled ? caseyText("src/dashboard/routes/auth.js#w12") : caseyText("src/dashboard/routes/auth.js#w13", [vcFilled, vcTotal])}</div>
       <div class="progress-track" aria-hidden="true"><div class="progress-bar${allFilled ? ' done' : ''}" style="width:${Math.round(vcFilled/vcTotal*100)}%"></div></div>
     </div>` : ''
   const fieldHtml = ({ key, label, hint, multiline, critical, options = [] }) => {
@@ -128,8 +128,8 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
     const listed = options.find(o => o.toLowerCase() === String(report[key] || '').trim().toLowerCase())
     const otherOn = !!String(report[key] || '').trim() && !listed
     const inp = options.length
-      ? `<select id="${id}" name="${esc(key)}"${describedBy}><option value="">${esc(vocabWord('ui.pick_one', 'Choose one'))}</option>${options.map(o => `<option value="${esc(o)}"${listed === o ? ' selected' : ''}>${esc(o.charAt(0).toUpperCase() + o.slice(1))}</option>`).join('')}<option value="${OTHER_CHOICE}"${otherOn ? ' selected' : ''}>${esc(vocabWord('ui.other_write_it', 'Other (write it)'))}</option></select>`
-        + `<label class="other-lab" for="${id}-other">${esc(vocabWord('form.other_write_label', 'If Other, write it here'))}</label><input id="${id}-other" type="text" name="${esc(key)}__other" value="${otherOn ? val : ''}" maxlength="500">`
+      ? `<select id="${id}" name="${esc(key)}"${describedBy}><option value="">${esc(vocabWord('ui.pick_one', caseyText("src/dashboard/routes/auth.js#w15")))}</option>${options.map(o => `<option value="${esc(o)}"${listed === o ? ' selected' : ''}>${esc(o.charAt(0).toUpperCase() + o.slice(1))}</option>`).join('')}<option value="${OTHER_CHOICE}"${otherOn ? ' selected' : ''}>${esc(vocabWord('ui.other_write_it', caseyText("src/dashboard/routes/auth.js#w17")))}</option></select>`
+        + `<label class="other-lab" for="${id}-other">${esc(vocabWord('form.other_write_label', caseyText("src/dashboard/routes/auth.js#w19")))}</label><input id="${id}-other" type="text" name="${esc(key)}__other" value="${otherOn ? val : ''}" maxlength="500">`
       : multiline
       ? `<textarea id="${id}" name="${esc(key)}" rows="3"${placeholder}${describedBy} maxlength="${FIELD_MAXLEN}">${val}</textarea>`
       : `<input id="${id}" type="text" name="${esc(key)}"${placeholder}${describedBy} value="${val}" maxlength="500">`
@@ -148,16 +148,16 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
   }).join('')
   const heldNote = held > 0
     ? (held === 1
-      ? ' One of your answers was for a question we already have an answer to. An update sent without a reference number can add what is missing but cannot change what is already recorded, so if that answer is wrong, reply on the app you first reported from and say so.'
-      : ` ${held} of your answers were for questions we already have answers to. An update sent without a reference number can add what is missing but cannot change what is already recorded, so if any of them are wrong, reply on the app you first reported from and say so.`)
+      ? caseyText("src/dashboard/routes/auth.js#w26")
+      : caseyText("src/dashboard/routes/auth.js#w27", [held]))
     : ''
   const cutNote = cut > 0
-    ? ` ${cut} of your answers ${cut === 1 ? 'was' : 'were'} longer than the ${FIELD_MAXLEN} characters a field holds, so the end ${cut === 1 ? 'was' : 'were'} cut off. Send anything that is missing as a message on the app you first reported from.`
+    ? caseyText("src/dashboard/routes/auth.js#w28", [cut, cut === 1 ? 'was' : 'were', FIELD_MAXLEN, cut === 1 ? 'was' : 'were'])
     : ''
   const banner = done
     ? (none
       ? `<div class="banner ok" role="status">We found your ${esc(ENTITY)}. You did not fill in any answers this time, so nothing on it has changed.</div>`
-      : `<div class="banner ok" role="status">Your answers are saved on ${esc(ENTITY === 'report' ? 'your report' : `your ${ENTITY}`)}. Keep your reference -- you can come back to this page and add more at any time.${heldNote}${cutNote}</div>`)
+      : `<div class="banner ok" role="status">Your answers are saved on ${esc(ENTITY === 'report' ? caseyText("src/dashboard/routes/auth.js#w31") : `your ${ENTITY}`)}. Keep your reference -- you can come back to this page and add more at any time.${heldNote}${cutNote}</div>`)
     : err ? `<div class="banner err" id="form-err" role="alert">${errorSentence(err, ref, esc, retryAfter)}</div>` : ''
   const caseInfo = caseRow
     ? `<div class="case-info"><strong>Reference: ${esc(caseRow.ref)}</strong> &ndash; ${esc(caseRow.subject || `Field ${ENTITY}`)}
@@ -170,7 +170,7 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
       <input id="f-find-ref" type="text" name="ref" value="${esc(ref)}" maxlength="50" aria-describedby="f-find-ref-hint">
       <div class="hint" id="f-find-ref-hint">Copy it from the message you were sent when you first reported. If you do not have it, enter your phone number below instead.</div></div>
       <div class="field"><label for="f-find-phone">Or your phone number</label>
-      <input id="f-find-phone" type="tel" name="phone" value="${esc(phone)}" placeholder="${esc(EXAMPLE_LOCAL)}" maxlength="30" autocomplete="tel" aria-describedby="${err === 'phone_shape' ? 'f-find-phone-hint form-err' : 'f-find-phone-hint'}"${err === 'phone_shape' ? ' aria-invalid="true"' : ''}>
+      <input id="f-find-phone" type="tel" name="phone" value="${esc(phone)}" placeholder="${esc(EXAMPLE_LOCAL)}" maxlength="30" autocomplete="tel" aria-describedby="${err === 'phone_shape' ? caseyText("src/dashboard/routes/auth.js#w36") : 'f-find-phone-hint'}"${err === 'phone_shape' ? ' aria-invalid="true"' : ''}>
       <div class="hint" id="f-find-phone-hint">${caseyText("src/dashboard/routes/auth.js#phone-hint", [esc(ENTITY)])}</div></div>
       </section>`
   return `<!doctype html><html lang="en"><head>
@@ -410,14 +410,14 @@ export function postReport({ store, esc }) {
         const validPhone = phoneDigitsOk(phoneRaw)
         if (!validPhone) return rejected('phone_shape')
         const normPhone = TRUNK_PREFIX && COUNTRY_CODE && phoneRaw.startsWith(TRUNK_PREFIX) ? '+' + COUNTRY_CODE + phoneRaw.slice(TRUNK_PREFIX.length) : phoneRaw
-        const { case: nc, created } = await store.findOrCreateCase({ channel: 'web', external_id: normPhone, contact: { phone: normPhone }, subject: `Field ${ENTITY} via web form` })
+        const { case: nc, created } = await store.findOrCreateCase({ channel: 'web', external_id: normPhone, contact: { phone: normPhone }, subject: caseyText("src/dashboard/routes/auth.js#w38", [ENTITY]) })
         found = nc
         openedHere = created === true
         if (openedHere) {
           try {
             await store.updateCase(nc.id, { tags: mergeTag(nc.tags, 'intake_mode:public_form') }, { id: 'contact', role: 'contact' })
           } catch {  }
-          await store.appendEvent(nc.id, { kind: 'note', actor: 'system', text: 'Case created via public web form (phone number entry)' })
+          await store.appendEvent(nc.id, { kind: 'note', actor: 'system', text: caseyText("src/dashboard/routes/auth.js#w39") })
         }
       }
       let cut = 0
@@ -445,7 +445,7 @@ export function postReport({ store, esc }) {
         if (mergeResult.error === 'observe') return rejected('frozen', { caseRow: ownRow, showRef: ownRef })
         if (mergeResult.error) return rejected('save_failed', { caseRow: ownRow, showRef: ownRef })
         const changedFields = Object.keys(incoming).map((k) => fieldLabel(k) || k).join(', ')
-        await store.appendEvent(found.id, { kind: 'action', actor: 'contact', text: `contact updated ${ENTITY} via web form: ${changedFields}`, data: incoming })
+        await store.appendEvent(found.id, { kind: 'action', actor: 'contact', text: caseyText("src/dashboard/routes/auth.js#w40", [ENTITY, changedFields]), data: incoming })
         try {
           await store.updateCase(found.id, { tags: mergeTag(found.tags, 'intake_mode:public_form') }, { id: 'contact', role: 'contact' })
         } catch {  }
@@ -563,14 +563,14 @@ export function postLogin({ store, findAccountForLogin, verifyPassword, issueSes
     const pairKey = `${String(username || '').trim().toLowerCase().slice(0, 60)}|${req.ip}`
     const ipKey = `ip|${req.ip}`
     if (loginFails(pairKey, now).length >= 10 || loginFails(ipKey, now).length >= 60) {
-      return res.status(429).json({ error: 'too many attempts; wait a few minutes and try again' })
+      return res.status(429).json({ error: caseyText("src/dashboard/routes/auth.js#w41") })
     }
     const acct = await findAccountForLogin(store, username)
     const ok = acct ? verifyPassword(password, acct.password_salt, acct.password_hash) : (verifyPassword(password, DECOY.salt, DECOY.hash), false)
     if (!acct || acct.disabled === '1' || !ok) {
       for (const k of [pairKey, ipKey]) LOGIN_FAILS.set(k, [...loginFails(k, now), now])
       if (LOGIN_FAILS.size > 5000) for (const k of LOGIN_FAILS.keys()) loginFails(k, now)
-      return res.status(401).json({ error: 'invalid username or password' })
+      return res.status(401).json({ error: caseyText("src/dashboard/routes/auth.js#w42") })
     }
     LOGIN_FAILS.delete(pairKey)
     const token = issueSession(acct.id, { epoch: Number(acct.session_epoch) || 0 })
@@ -629,7 +629,7 @@ export function postChangePassword({ store, verifyPassword, changePassword, issu
     try {
       const { current_password, new_password } = req.body || {}
       if (!verifyPassword(current_password, req.caseyAccount.password_salt, req.caseyAccount.password_hash)) {
-        return res.status(401).json({ error: 'current password is incorrect' })
+        return res.status(401).json({ error: caseyText("src/dashboard/routes/auth.js#w43") })
       }
       const { epoch } = await changePassword(store, req.caseyAccount.id, new_password)
       res.set('Set-Cookie', sessionCookieHeader(issueSession(req.caseyAccount.id, { epoch })))
@@ -651,7 +651,7 @@ export function authGate() {
     if (!req.caseyAccount && req.method === 'GET' && req.path.startsWith('/admin/')) return res.redirect(302, '/')
     if (!req.caseyAccount) return res.status(401).json({ error: 'unauthorized' })
     if (req.caseyAccount.must_change_password === '1' && req.path !== '/api/change-password') {
-      return res.status(403).json({ error: 'must change password before continuing', code: 'must_change_password' })
+      return res.status(403).json({ error: caseyText("src/dashboard/routes/auth.js#w44"), code: 'must_change_password' })
     }
     next()
   }

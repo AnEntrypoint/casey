@@ -36,10 +36,10 @@ export function postContactTier({ store, authed, isAdmin, actingOperator }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     try {
       const { tier } = req.body || {}
-      if (!TIER_ORDER.includes(tier)) return res.status(400).json({ error: `tier must be one of ${TIER_ORDER.map(t => `"${t}"`).join(', ')}` })
-      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: `only an admin can make someone ${tier === TIER.operator ? 'an operator' : 'a technician'}` })
+      if (!TIER_ORDER.includes(tier)) return res.status(400).json({ error: caseyText("src/dashboard/routes/contacts.js#w0", [TIER_ORDER.map(t => `"${t}"`).join(', ')]) })
+      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/contacts.js#w1", [tier === TIER.operator ? caseyText("src/dashboard/routes/contacts.js#w2") : 'a technician']) })
       const existing = await store.getContact(req.params.id)
-      if (existing && resolveContactTier(existing) === TIER.operator && tier !== TIER.operator && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can change an operator' })
+      if (existing && resolveContactTier(existing) === TIER.operator && tier !== TIER.operator && !isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/contacts.js#w3") })
       await store.setContactTier(req.params.id, tier, { id: actingOperator(req).id, role: 'operator' })
       const updated = await store.getContact(req.params.id)
       res.json({ contact: publicContact(updated) })
@@ -50,7 +50,7 @@ export function postContactTier({ store, authed, isAdmin, actingOperator }) {
 export function postContactErase({ store, authed, isAdmin, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    if (!isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/contacts.js#w4") })
     try {
       const reason = String(req.body?.reason || '').trim().slice(0, 300)
       const result = await store.eraseContact(req.params.id, { reason, operator: { id: actingOperator(req).id } })
@@ -66,10 +66,10 @@ export function postContactRegister({ store, authed, isAdmin, actingOperator }) 
       const { phone, name, tier } = req.body || {}
       const external_id = normalizeMsisdn(phone)
       if (!external_id) return res.status(400).json({ error: caseyText("src/dashboard/routes/contacts.js#phone-example") })
-      if (!TIER_ORDER.includes(tier) || tier === TIER.reporter) return res.status(400).json({ error: `role must be one of ${TIER_ORDER.filter(t => t !== TIER.reporter).map(t => `"${t}"`).join(', ')}` })
-      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: `only an admin can make someone ${tier === TIER.operator ? 'an operator' : 'a technician'}` })
+      if (!TIER_ORDER.includes(tier) || tier === TIER.reporter) return res.status(400).json({ error: caseyText("src/dashboard/routes/contacts.js#w5", [TIER_ORDER.filter(t => t !== TIER.reporter).map(t => `"${t}"`).join(', ')]) })
+      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/contacts.js#w6", [tier === TIER.operator ? caseyText("src/dashboard/routes/contacts.js#w7") : 'a technician']) })
       const known = (await store.listContacts({ limit: 1000 })).find(k => k.channel === 'whatsapp' && k.external_id === external_id)
-      if (known && resolveContactTier(known) === TIER.operator && tier !== TIER.operator && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can change an operator' })
+      if (known && resolveContactTier(known) === TIER.operator && tier !== TIER.operator && !isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/contacts.js#w8") })
       const contact = await store.registerContact({ channel: 'whatsapp', external_id, display_name: String(name || '').trim().slice(0, 80), tier }, { id: actingOperator(req).id, role: 'operator' })
       res.json({ contact: publicContact(contact) })
     } catch (e) { res.status(400).json({ error: e.message }) }
@@ -94,7 +94,7 @@ export function postRoleInvite({ store, authed, isAdmin, actingOperator }) {
       const opts = { tier, label, ttlHours: ttl_hours, maxUses: max_uses, by: actingOperator(req).id, grantableTiers }
       if (count !== undefined && count !== null && count !== '') {
         const n = typeof count === 'number' || (typeof count === 'string' && /^\s*\d+\s*$/.test(count)) ? Number(count) : NaN
-        if (!Number.isInteger(n) || n < 1 || n > 100) return res.status(400).json({ error: 'How many codes must be a whole number from 1 to 100.' })
+        if (!Number.isInteger(n) || n < 1 || n > 100) return res.status(400).json({ error: caseyText("src/dashboard/routes/contacts.js#w9") })
         if (n > 1) return res.json({ invites: await createInvites(store, { ...opts, count: n }) })
       }
       const invite = await createInvite(store, opts)

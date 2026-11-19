@@ -3,6 +3,7 @@ import * as portal from '../../portal/portal-store.js'
 import * as admin from '../../portal/portal-admin.js'
 import { loadDefaults } from '../../portal/portal-config.js'
 import { mountRoutes } from './register.js'
+import { caseyText } from '../../deployment-text.js';
 
 const PROXY_DROP = new Set(['cookie', 'authorization', 'host', 'connection', 'origin', 'referer', 'accept-encoding', 'keep-alive', 'upgrade', 'proxy-authorization'])
 const PROXY_TIMEOUT_MS = 30e3
@@ -21,7 +22,7 @@ const actorOf = (req) => ({ id: String(req.caseyAccount?.id ?? req.caseyAccount?
 
 function adminOnly(req, res) {
   if (req.caseyAccount?.role === 'admin') return false
-  res.status(403).json({ error: 'This is not available for your login.', code: 'role_forbidden' })
+  res.status(403).json({ error: caseyText("src/dashboard/routes/portal-admin.js#w0"), code: 'role_forbidden' })
   return true
 }
 
@@ -58,7 +59,7 @@ function forwardToRouter(req, res, row, routerId, rest) {
   })
   upstream.on('timeout', () => upstream.destroy(new Error('router did not answer in time')))
   upstream.on('error', () => {
-    if (!res.headersSent) res.status(502).json({ error: 'the router did not answer' })
+    if (!res.headersSent) res.status(502).json({ error: caseyText("src/dashboard/routes/portal-admin.js#w1") })
     else res.destroy()
   })
   req.pipe(upstream)
@@ -70,7 +71,7 @@ function getRouterAdmin({ store }) {
     const router = await portal.findRouterByToken(store, token)
     if (!router) return res.status(401).json({ error: 'unauthorized' })
     const pub = String(req.query.pub || '').replace(/ /g, '+')
-    if (!admin.validWgKey(pub)) return res.status(400).json({ error: 'pub must be a WireGuard public key' })
+    if (!admin.validWgKey(pub)) return res.status(400).json({ error: caseyText("src/dashboard/routes/portal-admin.js#w2") })
     const out = await admin.adminPoll(store, router.router_id, pub, {
       endpoint: process.env.CASEY_ADMIN_HUB_ENDPOINT,
       hubPub: process.env.CASEY_ADMIN_HUB_PUBKEY,
@@ -93,7 +94,7 @@ function postAdminWindow({ store }) {
     if (adminOnly(req, res)) return
     const routerId = String(req.params.router_id || '')
     const minutes = admin.windowMinutes(req.body?.minutes)
-    if (minutes === null) return res.status(400).json({ error: `minutes must be 1 to ${admin.ADMIN_WINDOW_MAX_MIN}` })
+    if (minutes === null) return res.status(400).json({ error: caseyText("src/dashboard/routes/portal-admin.js#w3", [admin.ADMIN_WINDOW_MAX_MIN]) })
     try {
       const until = await admin.setAdminWindow(store, routerId, minutes, actorOf(req))
       res.status(200).json({ router_id: routerId, minutes, until })
@@ -124,7 +125,7 @@ function getAdminPage({ store }) {
     const lines = routers.map((r) => {
       const left = admin.windowRemainingS(byRouter.get(r.router_id))
       const open = left > 0
-      const status = open ? `open, ${Math.ceil(left / 60)} min left` : 'closed'
+      const status = open ? caseyText("src/dashboard/routes/portal-admin.js#w4", [Math.ceil(left / 60)]) : 'closed'
       const actions = open
         ? `<a href="/admin/routers/${esc(encodeURIComponent(r.router_id))}/">Open router admin</a> <button data-close="${esc(r.router_id)}">Close now</button>`
         : [30, 60, 120].map(m => `<button data-open="${esc(r.router_id)}" data-minutes="${m}">${m} min</button>`).join(' ')
@@ -156,12 +157,12 @@ function proxyRouterAdmin({ store }) {
     if (adminOnly(req, res)) return
     const routerId = String(req.params.router_id || '')
     const row = await admin.adminRow(store, routerId)
-    if (!row || admin.windowRemainingS(row) <= 0) return res.status(423).json({ error: 'admin window closed for this router' })
+    if (!row || admin.windowRemainingS(row) <= 0) return res.status(423).json({ error: caseyText("src/dashboard/routes/portal-admin.js#w8") })
     const rest = req.originalUrl.slice(proxyPrefix(routerId).length) || '/'
     forwardToRouter(req, res, row, routerId, rest)
   }
   return (req, res) => handle(req, res).catch(() => {
-    if (!res.headersSent) res.status(500).json({ error: 'admin proxy failed' })
+    if (!res.headersSent) res.status(500).json({ error: caseyText("src/dashboard/routes/portal-admin.js#w9") })
     else res.destroy()
   })
 }

@@ -9,6 +9,7 @@ import { mountRoutes } from './register.js'
 import { isFieldAccount, caseAccess } from '../roles.js'
 import { canQueryCases, resolveTierValue } from '../../contact-tiers.js'
 import { TIER_LABELS } from '../../store/report-shape.js'
+import { caseyText } from '../../deployment-text.js';
 
 const MAP_CASE_CAP = 2000
 
@@ -155,19 +156,19 @@ export function postCaseDispatch({ store, authed, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/map.js#w0") })
     const workerId = String(req.body?.worker_id || '').trim()
-    if (!workerId) return res.status(400).json({ error: 'worker_id is required' })
+    if (!workerId) return res.status(400).json({ error: caseyText("src/dashboard/routes/map.js#w1") })
     const worker = store.getContact ? await store.getContact(workerId).catch(() => null) : null
-    if (!worker) return res.status(404).json({ error: 'worker not found' })
-    if (!canQueryCases(worker.tier)) return res.status(400).json({ error: `selected contact is a ${TIER_LABELS[resolveTierValue(worker.tier)]} and cannot be dispatched to` })
+    if (!worker) return res.status(404).json({ error: caseyText("src/dashboard/routes/map.js#w2") })
+    if (!canQueryCases(worker.tier)) return res.status(400).json({ error: caseyText("src/dashboard/routes/map.js#w3", [TIER_LABELS[resolveTierValue(worker.tier)]]) })
     const op = actingOperator(req)
     const note = String(req.body?.note || '').trim().slice(0, 500)
-    const label = worker.display_name || 'a field worker'
+    const label = worker.display_name || caseyText("src/dashboard/routes/map.js#w4")
     await store.updateCase(c.id, { tags: mergeTag(c.tags, 'dispatch-suggested') }, op)
     await store.appendEvent(c.id, {
       kind: 'action', actor: 'operator',
-      text: `Dispatch suggested: ${label}${note ? ` -- ${note}` : ''}`,
+      text: caseyText("src/dashboard/routes/map.js#w5", [label, note ? ` -- ${note}` : '']),
       data: { dispatch_worker_id: worker.id, by: op.id, note: note || null },
     })
     res.json({ ok: true })

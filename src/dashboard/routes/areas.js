@@ -14,10 +14,11 @@ import {
   relocateCase, resolveArea, statedArea, wrongAreaCases,
 } from '../../areas.js'
 import { assigneeNamer } from '../assignee-names.js'
+import { caseyText } from '../../deployment-text.js';
 
 const staffOnly = (req, res) => {
   if (isStaffAccount(req.caseyAccount)) return true
-  res.status(403).json({ error: 'This is not available for your login.', code: 'role_forbidden' })
+  res.status(403).json({ error: caseyText("src/dashboard/routes/areas.js#w0"), code: 'role_forbidden' })
   return false
 }
 
@@ -97,7 +98,7 @@ export function deleteArea({ store, authed, actingOperator }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     if (!staffOnly(req, res)) return
     const areas = await loadAreas(store)
-    if (!findArea(areas, req.params.id)) return res.status(404).json({ error: 'no such area' })
+    if (!findArea(areas, req.params.id)) return res.status(404).json({ error: caseyText("src/dashboard/routes/areas.js#w1") })
     const op = actingOperator(req)
     await removeArea(store, req.params.id, op.name || op.id)
     res.json({ ok: true })
@@ -109,7 +110,7 @@ export function postRelocate({ store, authed, actingOperator }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     if (!staffOnly(req, res)) return
     const c = await store.getCase(req.params.id)
-    if (!c || c.channel === 'system') return res.status(404).json({ error: 'not found' })
+    if (!c || c.channel === 'system') return res.status(404).json({ error: caseyText("src/dashboard/routes/areas.js#w2") })
     const b = req.body || {}
     const op = actingOperator(req)
     const out = await relocateCase(store, c.id, {
@@ -127,7 +128,7 @@ export function postHandoff({ store, authed, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
-    if (!c || c.channel === 'system') return res.status(404).json({ error: 'not found' })
+    if (!c || c.channel === 'system') return res.status(404).json({ error: caseyText("src/dashboard/routes/areas.js#w3") })
     const op = actingOperator(req)
     const note = typeof req.body?.note === 'string' ? req.body.note : ''
     const out = await handoffToSpecialist(store, c.id, { by: op.name || op.id, user: op, data: { by: op.id }, note })
@@ -140,7 +141,7 @@ export function postWithdrawHandoff({ store, authed, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
-    if (!c || c.channel === 'system') return res.status(404).json({ error: 'not found' })
+    if (!c || c.channel === 'system') return res.status(404).json({ error: caseyText("src/dashboard/routes/areas.js#w4") })
     const op = actingOperator(req)
     const reason = typeof req.body?.reason === 'string' ? req.body.reason : ''
     const out = await withdrawHandoff(store, c.id, { by: op.name || op.id, user: op, data: { by: op.id }, reason, byRanger: true })
@@ -157,21 +158,21 @@ export function getMyDay({ store, authed, findAccountByUsername }) {
     let keys = []; let contact = null; let tier = ''; let name = ''; let responder
     if (!isStaffAccount(acct)) {
       const asked = String(req.query.ranger || '').trim()
-      if (asked && asked !== acct.username && !(acct._contact && asked === `contact:${acct._contact.id}`)) return res.status(403).json({ error: 'You can see your own day only.', code: 'role_forbidden' })
+      if (asked && asked !== acct.username && !(acct._contact && asked === `contact:${acct._contact.id}`)) return res.status(403).json({ error: caseyText("src/dashboard/routes/areas.js#w5"), code: 'role_forbidden' })
       contact = acct._contact || await resolveContact(store, acct)
       keys = [acct.username, ...(contact ? await keysForContact(store, contact) : [])]
       tier = contact?.tier || (isSpecialist(acct) ? TIER.specialist : TIER.field)
       name = acct.display_name || acct.username
     } else {
       const key = String(req.query.ranger || '').trim()
-      if (!key) return res.status(400).json({ error: 'Choose which ranger to look at.' })
+      if (!key) return res.status(400).json({ error: caseyText("src/dashboard/routes/areas.js#w6") })
       if (isContactAssignee(key)) {
         contact = await store.getContact(contactIdOfAssignee(key)).catch(() => null)
-        if (!contact) return res.status(404).json({ error: 'no such team member' })
+        if (!contact) return res.status(404).json({ error: caseyText("src/dashboard/routes/areas.js#w7") })
         keys = await keysForContact(store, contact); tier = contact.tier; name = staffLabel(contact)
       } else {
         const a = await findAccountByUsername(store, key)
-        if (!a) return res.status(404).json({ error: 'no such team member' })
+        if (!a) return res.status(404).json({ error: caseyText("src/dashboard/routes/areas.js#w8") })
         contact = await resolveContact(store, a)
         keys = [a.username, ...(contact ? await keysForContact(store, contact) : [])]
         tier = contact?.tier || (a.role === SPECIALIST_ROLE ? TIER.specialist : TIER.field)

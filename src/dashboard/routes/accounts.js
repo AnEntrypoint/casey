@@ -1,6 +1,7 @@
 import { mountRoutes } from './register.js'
 import { FIELD_ROLES } from '../roles.js'
 import { resendSetupLink } from '../auth.js'
+import { caseyText } from '../../deployment-text.js';
 
 export const publicAccount = (a) => ({ id: a.id, username: a.username, display_name: a.display_name, role: a.role, contact_phone: a.contact_phone || null, disabled: a.disabled === '1', last_login_at: a.last_login_at || null, setup_email_status: a.setup_email_status || null })
 
@@ -17,7 +18,7 @@ export function getOperators({ authed, actingOperator, getRoster }) {
 export function getAccounts({ store, authed, isAdmin, listAccounts }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    if (!isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/accounts.js#w0") })
     res.json({ accounts: (await listAccounts(store)).map(publicAccount) })
   }
 }
@@ -25,7 +26,7 @@ export function getAccounts({ store, authed, isAdmin, listAccounts }) {
 export function postAccount({ store, authed, isAdmin, createAccount }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    if (!isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/accounts.js#w1") })
     try {
       const { username, password, display_name, role, contact_phone, email } = req.body || {}
       const acct = await createAccount(store, { username, password, displayName: display_name, role, contactPhone: contact_phone, email, setupBaseUrl: requestBase(req) })
@@ -37,7 +38,7 @@ export function postAccount({ store, authed, isAdmin, createAccount }) {
 export function postResendSetup({ store, authed, isAdmin }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    if (!isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/accounts.js#w2") })
     try {
       const acct = await resendSetupLink(store, req.params.id, requestBase(req))
       res.json({ account: publicAccount(acct), setup_email_error: acct.setup_email_error || null })
@@ -48,7 +49,7 @@ export function postResendSetup({ store, authed, isAdmin }) {
 export function postAccountContactPhone({ store, authed, isAdmin, setAccountContactPhone }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    if (!isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/accounts.js#w3") })
     try { await setAccountContactPhone(store, req.params.id, (req.body || {}).contact_phone); res.json({ ok: true }) }
     catch (e) { res.status(400).json({ error: e.message }) }
   }
@@ -57,7 +58,7 @@ export function postAccountContactPhone({ store, authed, isAdmin, setAccountCont
 export function postAccountDisabled(disabled) {
   return ({ store, authed, isAdmin, setAccountDisabled }) => async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    if (!isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/accounts.js#w4") })
     try { await setAccountDisabled(store, req.params.id, disabled); res.json({ ok: true }) }
     catch (e) { res.status(400).json({ error: e.message }) }
   }
@@ -66,7 +67,7 @@ export function postAccountDisabled(disabled) {
 export function postRevokeSessions({ store, authed, isAdmin, revokeAccountSessions }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    if (!isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/accounts.js#w5") })
     try { await revokeAccountSessions(store, req.params.id); res.json({ ok: true }) }
     catch (e) { res.status(400).json({ error: e.message }) }
   }
@@ -88,11 +89,11 @@ export function postLogoutEverywhere({ store, authed, revokeAccountSessions, get
 export function deleteAccountRoute({ store, authed, isAdmin, deleteAccount, getAccount }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    if (!isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/accounts.js#w6") })
     try {
       const target = await getAccount(store, req.params.id)
       await deleteAccount(store, req.params.id)
-      if (target && FIELD_ROLES.includes(target.role)) await store.releaseCasesHeldBy(target.username, 'the login holding it was deleted', { id: 'account-removal', role: 'system' })
+      if (target && FIELD_ROLES.includes(target.role)) await store.releaseCasesHeldBy(target.username, caseyText("src/dashboard/routes/accounts.js#w7"), { id: 'account-removal', role: 'system' })
       res.json({ ok: true })
     }
     catch (e) { res.status(400).json({ error: e.message }) }

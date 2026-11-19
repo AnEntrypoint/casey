@@ -7,6 +7,7 @@ import { inSignOffQueue } from '../signoff-desk.js'
 import { MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMandatoryMinimum, fieldLabel, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, missingSignoffDiagnosis } from '../store/report-shape.js'
 
 import { FIELD_ROLES, SPECIALIST_ROLE, LEAST_PRIVILEGED_FIELD_ROLE } from '../domain-roles.js'
+import { caseyText } from '../deployment-text.js';
 
 export const STAFF_ROLES = ['admin', 'operator', 'secretary']
 export { FIELD_ROLES }
@@ -131,11 +132,11 @@ const VIEWER_ROUTES = [
 
 function viewerGate(req, res, next) {
   const lp = req.path.toLowerCase()
-  if (lp.startsWith('/media')) return deny(res, 404, 'not found')
+  if (lp.startsWith('/media')) return deny(res, 404, caseyText("src/dashboard/roles.js#w0"))
   if (!lp.startsWith('/api/') && lp !== '/api') return next()
   if (req.path === '/api/whoami' || req.path === '/api/logout' || req.path === '/api/change-password' || req.path === '/api/login') return next()
   if (VIEWER_ROUTES.some(([m, re]) => m === req.method && re.test(req.path))) { req.caseyRole = 'viewer'; return next() }
-  return deny(res, 403, 'This is not available for your login.', 'role_forbidden')
+  return deny(res, 403, caseyText("src/dashboard/roles.js#w1"), 'role_forbidden')
 }
 
 export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
@@ -143,9 +144,9 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
     try {
       const acct = req.caseyAccount
       if (!acct) return next()
-      if (req.caseyViewAs && req.method !== 'GET' && !PREVIEW_OK.has(req.path)) return deny(res, 403, 'You are previewing another login: this is read-only. Leave the preview to make changes.', 'preview_read_only')
+      if (req.caseyViewAs && req.method !== 'GET' && !PREVIEW_OK.has(req.path)) return deny(res, 403, caseyText("src/dashboard/roles.js#w2"), 'preview_read_only')
       if (isStaffAccount(acct)) {
-        if (!isAdminAccount(acct) && isAdminOnlyRoute(req.method, req.path)) return deny(res, 403, 'Only an admin can do this.', 'admin_only')
+        if (!isAdminAccount(acct) && isAdminOnlyRoute(req.method, req.path)) return deny(res, 403, caseyText("src/dashboard/roles.js#w3"), 'admin_only')
         return next()
       }
       if (isViewer(acct)) return viewerGate(req, res, next)
@@ -155,11 +156,11 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
       const lp = p.toLowerCase()
       if (lp.startsWith('/media/')) {
         let decoded = ''
-        try { decoded = decodeURIComponent(p) } catch { return deny(res, 404, 'not found') }
+        try { decoded = decodeURIComponent(p) } catch { return deny(res, 404, caseyText("src/dashboard/roles.js#w4")) }
         const m = /^\/media\/([^/\\]+)\/([^/\\]+)$/.exec(decoded)
-        if (!m || m[1] === '.' || m[1] === '..' || m[2] === '.' || m[2] === '..' || decoded.includes('\0')) return deny(res, 404, 'not found')
+        if (!m || m[1] === '.' || m[1] === '..' || m[2] === '.' || m[2] === '..' || decoded.includes('\0')) return deny(res, 404, caseyText("src/dashboard/roles.js#w5"))
         const c = await store.getCase(m[1])
-        return caseAccess(c, acct, { unclaimedKey: UNCLAIMED_ASSIGNEE }) === 'none' ? deny(res, 404, 'not found') : next()
+        return caseAccess(c, acct, { unclaimedKey: UNCLAIMED_ASSIGNEE }) === 'none' ? deny(res, 404, caseyText("src/dashboard/roles.js#w6")) : next()
       }
       if (!lp.startsWith('/api/') && lp !== '/api') return next()
       if (p === '/api/whoami' || p === '/api/logout' || p === '/api/change-password' || p === '/api/login') return next()
@@ -169,44 +170,44 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
         const mm = re.exec(p)
         if (mm) { hit = { rule, id: mm[1] ? decodeURIComponent(mm[1]) : null }; break }
       }
-      if (!hit) return deny(res, 403, 'This is not available for your login.', 'role_forbidden')
+      if (!hit) return deny(res, 403, caseyText("src/dashboard/roles.js#w7"), 'role_forbidden')
       const { rule, id } = hit
       if (rule === 'open') return next()
       if (rule === 'scoped-list') { req.caseyScoped = true; return next() }
-      if (rule.tech && !isSpecialist(acct)) return deny(res, 403, 'Only an animal health technician can do this.', 'role_forbidden')
+      if (rule.tech && !isSpecialist(acct)) return deny(res, 403, caseyText("src/dashboard/roles.js#w8"), 'role_forbidden')
       const c = await store.getCase(id)
       const access = caseAccess(c, acct, { unclaimedKey: UNCLAIMED_ASSIGNEE })
-      if (access === 'none') return deny(res, 404, 'not found')
+      if (access === 'none') return deny(res, 404, caseyText("src/dashboard/roles.js#w9"))
       req.caseyAccess = access
       const b = req.body || {}
       if (rule.access === 'write' && access !== 'write') {
         const signOffMove = rule.transition && isSpecialist(acct) && inSignOffQueue(c, UNCLAIMED_ASSIGNEE)
-        if (!signOffMove) return deny(res, 403, 'This case is not assigned to you, so you can look but not change it.', 'not_assigned')
+        if (!signOffMove) return deny(res, 403, caseyText("src/dashboard/roles.js#w10"), 'not_assigned')
       }
       if (rule.access === 'signoff' && access === 'read' && !(isSpecialist(acct) && inSignOffQueue(c, UNCLAIMED_ASSIGNEE))) {
-        return deny(res, 403, 'This case is not assigned to you, so you can look but not change it.', 'not_assigned')
+        return deny(res, 403, caseyText("src/dashboard/roles.js#w11"), 'not_assigned')
       }
       if (rule.intake && !isSpecialist(acct) && SIGNOFF_DIAGNOSIS_FIELDS.some(k => k in b)) {
-        return deny(res, 403, 'The animal health technician records the diagnosis, when signing the report off.', 'role_forbidden')
+        return deny(res, 403, caseyText("src/dashboard/roles.js#w12"), 'role_forbidden')
       }
       if (rule.patch) {
         const bad = Object.keys(b).filter(k => !PATCH_KEYS_FIELD.has(k))
-        if (bad.length) return deny(res, 403, 'You cannot change who a case is assigned to or how it is handled.', 'role_forbidden')
+        if (bad.length) return deny(res, 403, caseyText("src/dashboard/roles.js#w13"), 'role_forbidden')
         if ('tags' in b) {
           const sys = (list) => list.map(t => String(t).trim().toLowerCase()).filter(t => RESERVED_TAG.test(t)).sort().join('|')
-          if (typeof b.tags !== 'string' || sys(tagList(c)) !== sys(String(b.tags).split(','))) return deny(res, 403, 'Those tags are set by the system itself and cannot be changed by hand.', 'role_forbidden')
+          if (typeof b.tags !== 'string' || sys(tagList(c)) !== sys(String(b.tags).split(','))) return deny(res, 403, caseyText("src/dashboard/roles.js#w14"), 'role_forbidden')
         }
       }
       if (rule.transition && isDoneStatus(b.to) && b.to !== c.status) {
-        if (!isSpecialist(acct)) return deny(res, 403, 'Only an animal health technician can sign a case off.', 'signoff_forbidden')
+        if (!isSpecialist(acct)) return deny(res, 403, caseyText("src/dashboard/roles.js#w15"), 'signoff_forbidden')
         const missing = missingFor(c)
-        if (missing.length) return deny(res, 400, `Cannot sign off yet: still missing ${missing.map(fieldLabel).join(', ')}.`, 'missing_minimum')
+        if (missing.length) return deny(res, 400, caseyText("src/dashboard/roles.js#w16", [missing.map(fieldLabel).join(', ')]), 'missing_minimum')
         const noDiagnosis = missingDiagnosisFor(c, b)
-        if (noDiagnosis.length) return deny(res, 400, `Cannot sign off yet: ${noDiagnosis.map(fieldLabel).join(' and ')} ${noDiagnosis.length === 1 ? 'is' : 'are'} not recorded.`, 'missing_diagnosis')
+        if (noDiagnosis.length) return deny(res, 400, caseyText("src/dashboard/roles.js#w17", [noDiagnosis.map(fieldLabel).join(' and '), noDiagnosis.length === 1 ? 'is' : 'are']), 'missing_diagnosis')
       }
       next()
     } catch (e) {
-      deny(res, 500, 'could not check access', 'gate_error')
+      deny(res, 500, caseyText("src/dashboard/roles.js#w18"), 'gate_error')
     }
   }
 }
@@ -222,10 +223,10 @@ export function expectedRefGuard({ store }) {
       const c = await store.getCase(decodeURIComponent(m[1] || m[3] || m[4]))
       if (!c) return next()
       if (typeof want !== 'string' || want.trim() !== String(c.ref)) {
-        return res.status(409).json({ error: `This screen is showing a different ${REPORT_ENTITY_LABEL} from the one being changed (expected ${String(want).slice(0, 40)}, this is ${c.ref}). Nothing was saved -- reload and open the right one.`, code: 'wrong_case' })
+        return res.status(409).json({ error: caseyText("src/dashboard/roles.js#w19", [REPORT_ENTITY_LABEL, String(want).slice(0, 40), c.ref]), code: 'wrong_case' })
       }
       next()
-    } catch (e) { res.status(500).json({ error: 'could not check which case this is', code: 'gate_error' }) }
+    } catch (e) { res.status(500).json({ error: caseyText("src/dashboard/roles.js#w20"), code: 'gate_error' }) }
   }
 }
 

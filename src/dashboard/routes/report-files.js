@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { mountRoutes } from './register.js'
 import { DIGEST_STATUS_FILE, lastCompletedMonth } from '../../report-digest.js'
+import { caseyText } from '../../deployment-text.js';
 
 export const DIGEST_FILE = /^casey-digest-(\d{4}-\d{2})\.(csv|txt)$/
 
@@ -65,10 +66,10 @@ export function getFile({ store, authed }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const name = req.params.name
     const m = DIGEST_FILE.exec(name)
-    if (!m) return res.status(404).json({ error: 'not found' })
+    if (!m) return res.status(404).json({ error: caseyText("src/dashboard/routes/report-files.js#w0") })
     let body
     try { body = await fs.readFile(path.join(digestsDir(store), name)) } catch (e) {
-      if (e.code === 'ENOENT') return res.status(404).json({ error: 'not found' })
+      if (e.code === 'ENOENT') return res.status(404).json({ error: caseyText("src/dashboard/routes/report-files.js#w1") })
       throw e
     }
     res.setHeader('Content-Type', KINDS[m[2]].type)

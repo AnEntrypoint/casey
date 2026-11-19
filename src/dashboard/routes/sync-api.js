@@ -6,6 +6,7 @@ import { publicExternalLink } from './external-links.js'
 import { verifyApiKey, findByPrefix, touchLastUsed, parseScopes, keyPrefix } from '../../sync/api-key-auth.js'
 import { KINDS } from '../../sync/adapters/base.js'
 import { syncConfig } from '../../sync/sync-config.js'
+import { caseyText } from '../../deployment-text.js';
 
 const SYNC_RATE_WINDOW_MS = Number(process.env.CASEY_SYNC_API_RATE_WINDOW_MS) || 60_000
 const SYNC_RATE_LIMIT = Number(process.env.CASEY_SYNC_API_RATE_LIMIT) || 120
@@ -25,7 +26,7 @@ function makeSyncRateLimiter() {
     if (b.count > SYNC_RATE_LIMIT) {
       const retryAfter = Math.max(1, Math.ceil((SYNC_RATE_WINDOW_MS - (now - b.windowStart)) / 1000))
       res.set('Retry-After', String(retryAfter))
-      return res.status(429).json({ error: 'rate limit exceeded', retry_after_s: retryAfter })
+      return res.status(429).json({ error: caseyText("src/dashboard/routes/sync-api.js#w0"), retry_after_s: retryAfter })
     }
     next()
   }
@@ -52,7 +53,7 @@ function authenticateSyncKey({ store }) {
 function requireScope(scope) {
   return function (req, res, next) {
     if (!req.syncApiKey) return res.status(401).json({ error: 'unauthorized' })
-    if (!req.syncApiKey.scopes.has(scope)) return res.status(403).json({ error: `missing required scope: ${scope}` })
+    if (!req.syncApiKey.scopes.has(scope)) return res.status(403).json({ error: caseyText("src/dashboard/routes/sync-api.js#w1", [scope]) })
     next()
   }
 }
@@ -83,9 +84,9 @@ export function getSyncExternalLinks({ store, clampLimit, offsetOf }) {
 export function postSyncExternalLink({ store }) {
   return async (req, res) => {
     const b = req.body || {}
-    if (!b.local_entity || !['case', 'contact'].includes(b.local_entity)) return res.status(400).json({ error: 'local_entity must be case or contact' })
-    if (!b.local_id) return res.status(400).json({ error: 'local_id is required' })
-    if (!b.external_entity) return res.status(400).json({ error: 'external_entity is required' })
+    if (!b.local_entity || !['case', 'contact'].includes(b.local_entity)) return res.status(400).json({ error: caseyText("src/dashboard/routes/sync-api.js#w2") })
+    if (!b.local_id) return res.status(400).json({ error: caseyText("src/dashboard/routes/sync-api.js#w3") })
+    if (!b.external_entity) return res.status(400).json({ error: caseyText("src/dashboard/routes/sync-api.js#w4") })
     const row = await store.t.create('external_link', {
       system: syncConfig().SYNC_SYSTEM,
       local_entity: b.local_entity, local_id: String(b.local_id),
@@ -104,8 +105,8 @@ export function postSyncImport({ store }) {
   return async (req, res) => {
     const kind = req.body?.kind
     const records = req.body?.records
-    if (!KINDS.includes(kind)) return res.status(400).json({ error: `kind must be one of ${KINDS.join(', ')}` })
-    if (!Array.isArray(records)) return res.status(400).json({ error: 'records must be an array' })
+    if (!KINDS.includes(kind)) return res.status(400).json({ error: caseyText("src/dashboard/routes/sync-api.js#w5", [KINDS.join(', ')]) })
+    if (!Array.isArray(records)) return res.status(400).json({ error: caseyText("src/dashboard/routes/sync-api.js#w6") })
     const dir = path.join(store.dataDir, 'sync-import')
     mkdirSync(dir, { recursive: true })
     const outFile = path.join(dir, `${kind}.json`)

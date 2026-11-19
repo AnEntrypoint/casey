@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { BRAND } from '../brand.js'
 import { withSeverity } from '../../core/log-severity.js'
+import { caseyText } from '../../deployment-text.js';
 
 const DEFAULT_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 
@@ -221,7 +222,7 @@ export function registerTiles(app, deps) {
 
   app.get('/tiles/:z/:x/:y.png', async (req, res) => {
     const t = parseTile(req)
-    if (!t) return res.status(400).json({ error: 'bad tile coordinate' })
+    if (!t) return res.status(400).json({ error: caseyText("src/dashboard/routes/tiles.js#w0") })
 
     const stored = cache.read(t.key)
     const now = Date.now()
@@ -246,7 +247,7 @@ export function registerTiles(app, deps) {
         cache.upstreamFailures += 1
         if (stored) return sendTile(res, stored.png, stored.meta, 'stale')
         logLine({ level: 'warn', msg: 'tile_upstream_status', key: t.key, status: up.status })
-        return res.status(up.status === 404 ? 404 : 502).json({ error: 'tile unavailable upstream' })
+        return res.status(up.status === 404 ? 404 : 502).json({ error: caseyText("src/dashboard/routes/tiles.js#w1") })
       }
       const meta = {
         contentType: up.headers.get('content-type') || 'image/png',
@@ -261,7 +262,7 @@ export function registerTiles(app, deps) {
       cache.upstreamFailures += 1
       if (stored) return sendTile(res, stored.png, stored.meta, 'stale')
       logLine({ level: 'error', msg: 'tile_upstream_unreachable', key: t.key, upstream: TILE_URL, error: e?.message || String(e), cause: e?.cause?.code || null })
-      return res.status(502).json({ error: 'the map service could not be reached from this dashboard' })
+      return res.status(502).json({ error: caseyText("src/dashboard/routes/tiles.js#w2") })
     }
   })
 

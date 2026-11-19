@@ -1,5 +1,6 @@
 import { findAccountForLogin, issueSetupLink, SETUP_TTL_HOURS } from '../auth.js'
 import { documentHtml, esc } from './set-password.js'
+import { caseyText } from '../../deployment-text.js';
 
 const WINDOW_MS = 15 * 60e3
 const MAX_IP_REQUESTS = 10
@@ -7,12 +8,12 @@ const ACCOUNT_WINDOW_MS = 60 * 60e3
 const MAX_ACCOUNT_REQUESTS = 3
 const MAX_IDENTIFIER = 254
 
-export const RESET_ACK = `If the details match an active account with an email address on file, a one-time link to set a new password has been sent to that address. The link works once and expires after ${SETUP_TTL_HOURS} hours.`
+export const RESET_ACK = caseyText("src/dashboard/routes/password-reset.js#w0", [SETUP_TTL_HOURS])
 
 const MESSAGES = {
-  limited: 'Too many requests. Wait a few minutes and try again.',
-  missing: 'Enter your username, email address or phone number.',
-  unexpected: 'Something went wrong. Try again in a moment.',
+  limited: caseyText("src/dashboard/routes/password-reset.js#w1"),
+  missing: caseyText("src/dashboard/routes/password-reset.js#w2"),
+  unexpected: caseyText("src/dashboard/routes/password-reset.js#w3"),
 }
 
 const ipOf = (req) => req.ip || req.socket?.remoteAddress || 'unknown'
@@ -35,7 +36,7 @@ ${notice ? `<p role="status">${esc(notice)}</p>` : ''}${error ? `<p class="err" 
 <button type="submit">Send me a link</button>
 </form>
 <p><a href="/">Back to sign in</a></p>`
-  return documentHtml({ title: 'Forgot your password', body })
+  return documentHtml({ title: caseyText("src/dashboard/routes/password-reset.js#w5"), body })
 }
 
 export function createPasswordReset({ store, issueLink = issueSetupLink, now = () => Date.now() }) {

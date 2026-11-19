@@ -1,13 +1,14 @@
 import { mountRoutes } from './register.js'
 import { listPersons, casesOf, renamePerson, mergePersons, normName, cleanName } from '../../phone-persons.js'
 import { parseReport } from '../../timestamp.js'
+import { caseyText } from '../../deployment-text.js';
 
 const SYSTEM = { id: 'casey-agent', role: 'agent' }
 const isText = (v) => typeof v === 'string'
 
 async function contactOr404(store, id, res) {
   const c = await store.getContact(String(id || '')).catch(() => null)
-  if (!c || c.channel === 'system') { res.status(404).json({ error: 'not found' }); return null }
+  if (!c || c.channel === 'system') { res.status(404).json({ error: caseyText("src/dashboard/routes/persons.js#w0") }); return null }
   return c
 }
 
@@ -15,7 +16,7 @@ async function refMatches(store, contact, want, res) {
   if (want == null) return true
   const c = isText(want) ? await store.getCaseByRef(want.trim()).catch(() => null) : null
   if (!c || c.contact_id !== contact.id) {
-    res.status(409).json({ error: 'This screen is showing a different report from the phone being changed. Nothing was saved -- reload and open the right one.' })
+    res.status(409).json({ error: caseyText("src/dashboard/routes/persons.js#w1") })
     return false
   }
   return true
@@ -54,19 +55,19 @@ export function postPersonRename({ store, authed, actingOperator }) {
     try {
       const contact = await contactOr404(store, req.params.id, res); if (!contact) return
       const b = req.body || {}
-      if (!isText(b.person_id) || !b.person_id) return res.status(400).json({ error: 'say which person' })
-      if (b.name == null && b.relation == null) return res.status(400).json({ error: 'give a new name or a new relation' })
-      if ((b.name != null && !isText(b.name)) || (b.relation != null && !isText(b.relation))) return res.status(400).json({ error: 'a name and a relation are text' })
+      if (!isText(b.person_id) || !b.person_id) return res.status(400).json({ error: caseyText("src/dashboard/routes/persons.js#w2") })
+      if (b.name == null && b.relation == null) return res.status(400).json({ error: caseyText("src/dashboard/routes/persons.js#w3") })
+      if ((b.name != null && !isText(b.name)) || (b.relation != null && !isText(b.relation))) return res.status(400).json({ error: caseyText("src/dashboard/routes/persons.js#w4") })
       if (!(await refMatches(store, contact, b.expected_ref, res))) return
       const people = await listPersons(store, contact.id)
       const cur = people.find(p => p.id === b.person_id)
-      if (!cur) return res.status(404).json({ error: 'that person is not recorded behind this phone' })
+      if (!cur) return res.status(404).json({ error: caseyText("src/dashboard/routes/persons.js#w5") })
       if (b.expected_name != null && normName(b.expected_name) !== normName(cur.name)) {
-        return res.status(409).json({ error: `This person is now recorded as "${cur.name}", not "${cleanName(b.expected_name)}". Nothing was saved -- reload and try again.`, current: { name: cur.name } })
+        return res.status(409).json({ error: caseyText("src/dashboard/routes/persons.js#w6", [cur.name, cleanName(b.expected_name)]), current: { name: cur.name } })
       }
       const by = `staff:${actingOperator(req).id}`
       const r = await renamePerson(store, contact.id, cur.id, { name: b.name, relation: b.relation, by })
-      if (!r.ok) return res.status(r.reason === 'name_taken' ? 409 : 400).json({ error: r.reason === 'name_taken' ? 'Someone else on this phone already has that name. Merge them instead if it is the same person.' : r.reason === 'no_name' ? 'that is not a name' : 'could not rename' })
+      if (!r.ok) return res.status(r.reason === 'name_taken' ? 409 : 400).json({ error: r.reason === 'name_taken' ? caseyText("src/dashboard/routes/persons.js#w7") : r.reason === 'no_name' ? caseyText("src/dashboard/routes/persons.js#w8") : caseyText("src/dashboard/routes/persons.js#w9") })
       const synced = r.person.name !== cur.name ? await syncReportedBy(store, await casesOf(store, contact.id, cur.id), r.person.name, cur.name) : 0
       res.json({ ok: true, person: publicPerson(r.person, await casesOf(store, contact.id, cur.id)), reports_updated: synced })
     } catch (e) { res.status(400).json({ error: e.message }) }
@@ -79,17 +80,17 @@ export function postPersonMerge({ store, authed, actingOperator }) {
     try {
       const contact = await contactOr404(store, req.params.id, res); if (!contact) return
       const b = req.body || {}
-      if (!isText(b.keep) || !b.keep || !Array.isArray(b.from) || !b.from.length || b.from.some(x => !isText(x))) return res.status(400).json({ error: 'say which person to keep and which to fold into them' })
+      if (!isText(b.keep) || !b.keep || !Array.isArray(b.from) || !b.from.length || b.from.some(x => !isText(x))) return res.status(400).json({ error: caseyText("src/dashboard/routes/persons.js#w10") })
       if (!(await refMatches(store, contact, b.expected_ref, res))) return
       const people = await listPersons(store, contact.id)
       const keep = people.find(p => p.id === b.keep)
-      if (!keep) return res.status(404).json({ error: 'that person is not recorded behind this phone' })
+      if (!keep) return res.status(404).json({ error: caseyText("src/dashboard/routes/persons.js#w11") })
       const gone = b.from.map(id => people.find(p => p.id === id))
-      if (gone.some(p => !p)) return res.status(404).json({ error: 'that person is not recorded behind this phone' })
+      if (gone.some(p => !p)) return res.status(404).json({ error: caseyText("src/dashboard/routes/persons.js#w12") })
       const moved = []
       for (const g of gone) for (const c of await casesOf(store, contact.id, g.id)) moved.push({ ...c, from: g.name })
       const r = await mergePersons(store, contact.id, keep.id, b.from, { by: `staff:${actingOperator(req).id}` })
-      if (!r.ok) return res.status(400).json({ error: 'could not merge those people' })
+      if (!r.ok) return res.status(400).json({ error: caseyText("src/dashboard/routes/persons.js#w13") })
       let synced = 0
       for (const m of moved) synced += await syncReportedBy(store, [m], keep.name, m.from)
       const after = (await listPersons(store, contact.id)).find(p => p.id === keep.id)
@@ -101,19 +102,19 @@ export function postPersonMerge({ store, authed, actingOperator }) {
 export function postPersonErase({ store, authed, isAdmin, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    if (!isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/persons.js#w14") })
     try {
       const contact = await contactOr404(store, req.params.id, res); if (!contact) return
       const b = req.body || {}
-      if (!isText(b.person_id) || !b.person_id) return res.status(400).json({ error: 'say which person' })
+      if (!isText(b.person_id) || !b.person_id) return res.status(400).json({ error: caseyText("src/dashboard/routes/persons.js#w15") })
       if (!(await refMatches(store, contact, b.expected_ref, res))) return
       const people = await listPersons(store, contact.id)
       const cur = people.find(p => p.id === b.person_id)
-      if (!cur) return res.status(404).json({ error: 'that person is not recorded behind this phone' })
-      if (!isText(b.confirm_name) || normName(b.confirm_name) !== normName(cur.name)) return res.status(400).json({ error: 'type the person\'s name to confirm erasing them' })
+      if (!cur) return res.status(404).json({ error: caseyText("src/dashboard/routes/persons.js#w16") })
+      if (!isText(b.confirm_name) || normName(b.confirm_name) !== normName(cur.name)) return res.status(400).json({ error: caseyText("src/dashboard/routes/persons.js#w17") })
       const reason = isText(b.reason) ? b.reason.trim().slice(0, 300) : ''
       const out = await store.erasePerson(contact.id, cur.id, { reason, operator: { id: actingOperator(req).id } })
-      if (!out.ok) return res.status(400).json({ error: 'could not erase that person' })
+      if (!out.ok) return res.status(400).json({ error: caseyText("src/dashboard/routes/persons.js#w18") })
       res.json({ ok: true, complete: out.complete !== false, reports_scrubbed: out.casesScrubbed.length, reports_failed: out.casesFailed.length, people_left: (await listPersons(store, contact.id)).length })
     } catch (e) { res.status(400).json({ error: e.message }) }
   }

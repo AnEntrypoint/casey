@@ -7,20 +7,21 @@ import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_
 import { KNOWN_VALUE_FIELDS, isKnownValueField, readKnownValues, canonicalizeFieldValue } from '../../field-values.js'
 import { mountRoutes } from './register.js'
 import { assigneeNamer } from '../assignee-names.js'
+import { caseyText } from '../../deployment-text.js';
 
 const SWEEP_DEFAULT_INTERVAL_MS = 15 * 60 * 1000
 
 const LLM_HEALTH_VIEWS = {
-  acptoapi: { ok: true, label: 'AI helper: online', detail: 'Auto-replies are on. Contacts get an instant answer.' },
-  none: { ok: false, label: 'AI helper: offline', detail: 'Auto-replies are paused. No message is sent; messages queue and re-drive once the provider recovers.' },
-  unknown: { ok: false, label: 'AI helper: no answer yet', detail: 'The provider check has not come back, so whether auto-replies are working is not known yet. It usually resolves within a minute of start-up.' },
-  unwired: { ok: false, label: 'AI helper: not visible in dashboard-only mode', detail: 'This console was started with `casey dashboard`, which reads and edits the store but is not attached to the running agent. It cannot see the AI helper, the message channels, the queued-message counts or the supervisor state, it cannot run a sweep, and a reply typed here is recorded on the timeline but NOT sent to the contact. All of that keeps working wherever `casey up` is running. Everything on this screen that reads the store is unaffected.' },
+  acptoapi: { ok: true, label: caseyText("src/dashboard/routes/operations.js#w0"), detail: caseyText("src/dashboard/routes/operations.js#w1") },
+  none: { ok: false, label: caseyText("src/dashboard/routes/operations.js#w2"), detail: caseyText("src/dashboard/routes/operations.js#w3") },
+  unknown: { ok: false, label: caseyText("src/dashboard/routes/operations.js#w4"), detail: caseyText("src/dashboard/routes/operations.js#w5") },
+  unwired: { ok: false, label: caseyText("src/dashboard/routes/operations.js#w6"), detail: caseyText("src/dashboard/routes/operations.js#w7") },
 }
 
 export const RUNTIME_STATES = new Set(['booting', 'healthy', 'restarting', 'degraded', 'stopping', 'stopped', 'standalone'])
 const RUNTIME_LABELS = {
   booting: 'Runtime: starting', healthy: 'Runtime: healthy', restarting: 'Runtime: restarting',
-  degraded: 'Runtime: degraded -- needs attention', stopping: 'Runtime: stopping', stopped: 'Runtime: stopped',
+  degraded: caseyText("src/dashboard/routes/operations.js#w8"), stopping: 'Runtime: stopping', stopped: 'Runtime: stopped',
   standalone: 'Runtime: running', unknown: 'Runtime: unknown',
 }
 
@@ -35,10 +36,10 @@ export function llmHealthView(s) {
   const secs = Number.isFinite(s.lastMs) ? Math.round(s.lastMs / 1000) : null
   return {
     ok: false,
-    label: 'AI helper: slow',
+    label: caseyText("src/dashboard/routes/operations.js#w9"),
     detail: secs != null
-      ? `Auto-replies are working but the AI helper is slow (last turn ${secs}s). Contacts may wait. Check the provider.`
-      : 'Auto-replies are working but the AI helper is slow. Contacts may wait. Check the provider.',
+      ? caseyText("src/dashboard/routes/operations.js#w10", [secs])
+      : caseyText("src/dashboard/routes/operations.js#w11"),
   }
 }
 
@@ -57,10 +58,10 @@ async function gatewayView(receiveStatus) {
     return {
       ok: !deaf,
       state: rs.state,
-      label: deaf ? 'Messages: not connected' : 'Messages: connected',
+      label: deaf ? caseyText("src/dashboard/routes/operations.js#w12") : 'Messages: connected',
       detail: deaf
-        ? 'A message channel is not receiving. Contacts may be sending with no reply. Restart casey or check the connection.'
-        : 'casey is connected and listening for messages.',
+        ? caseyText("src/dashboard/routes/operations.js#w13")
+        : caseyText("src/dashboard/routes/operations.js#w14"),
       channels: rs.channels || {},
     }
   } catch { return null }
@@ -196,16 +197,16 @@ export function getHealthCases({ store, authed }) {
     const byOperator = [...byOperatorMap.values()].sort((a, b) => b.breach_count - a.breach_count)
     const healthCaseCount = cases.length
     const label = healthCaseCount === 0
-      ? 'Cases: all healthy'
+      ? caseyText("src/dashboard/routes/operations.js#w15")
       : healthCaseCount === 1
-        ? 'Cases: 1 needs attention'
-        : `Cases: ${healthCaseCount} need attention`
+        ? caseyText("src/dashboard/routes/operations.js#w16")
+        : caseyText("src/dashboard/routes/operations.js#w17", [healthCaseCount])
     res.json({
       ok: healthCaseCount === 0,
       label,
       detail: healthCaseCount === 0
-        ? 'No cases are breaching guardrails. The team is keeping up.'
-        : `${healthCaseCount} open case(s) are stale, stuck, or waiting for team action.`,
+        ? caseyText("src/dashboard/routes/operations.js#w18")
+        : caseyText("src/dashboard/routes/operations.js#w19", [healthCaseCount]),
       sweep: await sweepStatusView(store),
       case_count: healthCaseCount,
       cases,
@@ -388,7 +389,7 @@ export function putThresholds({ store, authed, actingOperator }) {
     const body = req.body && typeof req.body === 'object' ? req.body : {}
     const { thresholds, applied, rejected } = mergeThresholds(body)
     if (!applied.length) {
-      return res.status(400).json({ error: 'no valid threshold keys in patch', rejected })
+      return res.status(400).json({ error: caseyText("src/dashboard/routes/operations.js#w20"), rejected })
     }
     const accepted = {}
     for (const k of applied) {
@@ -409,7 +410,7 @@ export function putThresholds({ store, authed, actingOperator }) {
 export function postSweep({ authed, runSweep }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    if (!runSweep) return res.status(501).json({ error: 'sweep not available in this mode' })
+    if (!runSweep) return res.status(501).json({ error: caseyText("src/dashboard/routes/operations.js#w21") })
     const result = await runSweep()
     res.json({ ok: true, scanned: result?.scanned ?? null, flagged: result?.flagged ?? null, cleared: result?.cleared ?? null })
   }
@@ -440,7 +441,7 @@ export function getDistribution({ store, authed, isOpenCase }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { buildSymptomDistribution } = await import('../../distribution.js')
     const since = req.query.since ? Number(req.query.since) : null
-    if (req.query.since && !Number.isFinite(since)) return res.status(400).json({ error: 'since must be a unix-seconds number' })
+    if (req.query.since && !Number.isFinite(since)) return res.status(400).json({ error: caseyText("src/dashboard/routes/operations.js#w22") })
     const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
     res.json(buildSymptomDistribution(open, { since }))
   }
@@ -474,7 +475,7 @@ export function getDegradedTurns({ store, authed }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { evData } = await import('../../safe.js')
     const since = req.query.since ? Number(req.query.since) : (Date.now() - 3600_000)
-    if (!Number.isFinite(since)) return res.status(400).json({ error: 'since must be a unix-ms number' })
+    if (!Number.isFinite(since)) return res.status(400).json({ error: caseyText("src/dashboard/routes/operations.js#w23") })
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 1000)
     const { rows, truncated } = await store.listAllEvents({ kind: 'observation', actor: 'system' }, { limit: Math.max(limit * 4, 800) })
     const windowed = rows.filter(e => Number(e.created_at) * 1000 >= since)
@@ -501,9 +502,9 @@ export function getFieldValues({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const field = typeof req.query.field === 'string' ? req.query.field : ''
-    if (!field) return res.status(400).json({ error: 'field required' })
+    if (!field) return res.status(400).json({ error: caseyText("src/dashboard/routes/operations.js#w24") })
     if (!isKnownValueField(field)) {
-      return res.status(400).json({ error: `no known-value list for field: ${field}`, fields: KNOWN_VALUE_FIELDS })
+      return res.status(400).json({ error: caseyText("src/dashboard/routes/operations.js#w25", [field]), fields: KNOWN_VALUE_FIELDS })
     }
     const values = await readKnownValues(store, field)
     res.json({ field, label: fieldLabel(field), count: values.length, values })
@@ -516,7 +517,7 @@ export function postFieldValueCanonicalize({ store, authed, str, callLLM }) {
     const field = str(res, req.body, 'field'); if (field === undefined) return
     const value = str(res, req.body, 'value'); if (value === undefined) return
     if (!isKnownValueField(field)) {
-      return res.status(400).json({ error: `no known-value list for field: ${field}`, fields: KNOWN_VALUE_FIELDS })
+      return res.status(400).json({ error: caseyText("src/dashboard/routes/operations.js#w26", [field]), fields: KNOWN_VALUE_FIELDS })
     }
     const known = await readKnownValues(store, field)
     const r = await canonicalizeFieldValue({ field, value, known, callLLM })

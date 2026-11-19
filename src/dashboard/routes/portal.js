@@ -16,11 +16,11 @@ import * as lifecycle from '../../portal/router-lifecycle.js'
 import * as admin from '../../portal/portal-admin.js'
 import express from 'express'
 
-const BAD_MAC = 'mac must be AA:BB:CC:DD:EE:FF'
+const BAD_MAC = caseyText("src/dashboard/routes/portal.js#w0")
 const RATE_WINDOW_MS = 60e3
 const RATE_KEYS_MAX = 10000
 const ROUTER_LIST_MAX = 500
-const REGISTRATION_CLOSED = 'registration is closed for this router'
+const REGISTRATION_CLOSED = caseyText("src/dashboard/routes/portal.js#w1")
 
 export function makeRateLimit(max, windowMs = RATE_WINDOW_MS) {
   const buckets = new Map()
@@ -46,14 +46,14 @@ async function routerFromBearer(store, req, res) {
 
 function adminDenied(req, res, authed) {
   if (!authed(req)) { res.status(401).json({ error: 'unauthorized' }); return true }
-  if (req.caseyAccount?.role !== 'admin') { res.status(403).json({ error: 'This is not available for your login.', code: 'role_forbidden' }); return true }
+  if (req.caseyAccount?.role !== 'admin') { res.status(403).json({ error: caseyText("src/dashboard/routes/portal.js#w2"), code: 'role_forbidden' }); return true }
   return false
 }
 
 function refusedJson(res, err) {
   if (err instanceof portal.RouterRefusal) return res.status(err.status).json({ error: err.message })
-  console.error('[portal] router request failed', String(err?.message || err))
-  return res.status(500).json({ error: 'router request failed' })
+  console.error(caseyText("src/dashboard/routes/portal.js#w3"), String(err?.message || err))
+  return res.status(500).json({ error: caseyText("src/dashboard/routes/portal.js#w4") })
 }
 
 const finiteOrNull = (value) => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
@@ -64,13 +64,13 @@ export function postRouterRegistration({ store }) {
     const router = await routerFromBearer(store, req, res)
     if (!router) return
     const b = req.body || {}
-    if (b.router_id !== router.router_id) return res.status(403).json({ error: 'router_id does not match the token' })
+    if (b.router_id !== router.router_id) return res.status(403).json({ error: caseyText("src/dashboard/routes/portal.js#w5") })
     const mac = portal.normaliseMac(b.mac)
     if (!mac) return res.status(400).json({ error: BAD_MAC, field: 'mac' })
     const phone = portal.normalisePhone(b.phone)
     if (!phone) return res.status(400).json({ error: caseyText("src/dashboard/routes/portal.js#phone-sa"), field: 'phone' })
     const macRetry = macLimit(mac)
-    if (macRetry) { res.set('Retry-After', String(macRetry)); return res.status(429).json({ error: 'rate limited', retry_after_s: macRetry }) }
+    if (macRetry) { res.set('Retry-After', String(macRetry)); return res.status(429).json({ error: caseyText("src/dashboard/routes/portal.js#w6"), retry_after_s: macRetry }) }
     const effective = await portalSettings.effectiveSettings(store, router.router_id)
     if (!effective.registration_enabled) return res.status(503).json({ error: REGISTRATION_CLOSED })
     await portal.recordRegistration(store, { routerId: router.router_id, mac, phone })
@@ -109,7 +109,7 @@ export function getRouterAsset({ store }) {
     const router = await routerFromBearer(store, req, res)
     if (!router) return
     const name = String(req.params?.name ?? '')
-    if (!ASSET_NAMES.includes(name)) return res.status(404).json({ error: 'not found' })
+    if (!ASSET_NAMES.includes(name)) return res.status(404).json({ error: caseyText("src/dashboard/routes/portal.js#w7") })
     const settings = await portalSettings.effectiveSettings(store, router.router_id)
     res.set('Content-Type', 'text/html; charset=utf-8')
     res.set('Cache-Control', 'no-store')
@@ -122,10 +122,10 @@ export function postRouterHeartbeat({ store }) {
     const router = await routerFromBearer(store, req, res)
     if (!router) return
     const b = req.body || {}
-    if (b.router_id !== router.router_id) return res.status(403).json({ error: 'router_id does not match the token' })
+    if (b.router_id !== router.router_id) return res.status(403).json({ error: caseyText("src/dashboard/routes/portal.js#w8") })
     const parsed = parseHealth(b.health)
     if (parsed.error) return res.status(400).json({ error: parsed.error, field: parsed.field })
-    await purgeIfDue(store).catch(e => { console.error('[portal] retention purge failed', String(e?.message || e)); return 0 })
+    await purgeIfDue(store).catch(e => { console.error(caseyText("src/dashboard/routes/portal.js#w9"), String(e?.message || e)); return 0 })
     await recordHealth(store, router, parsed.health)
     res.status(202).json({ ok: true })
   }
@@ -136,11 +136,11 @@ export function postRouterUsage({ store }) {
     const router = await routerFromBearer(store, req, res)
     if (!router) return
     const b = req.body || {}
-    if (b.router_id !== router.router_id) return res.status(403).json({ error: 'router_id does not match the token' })
-    if (Array.isArray(b.samples) && b.samples.length > USAGE_SAMPLES_MAX) return res.status(413).json({ error: `at most ${USAGE_SAMPLES_MAX} samples per request` })
+    if (b.router_id !== router.router_id) return res.status(403).json({ error: caseyText("src/dashboard/routes/portal.js#w10") })
+    if (Array.isArray(b.samples) && b.samples.length > USAGE_SAMPLES_MAX) return res.status(413).json({ error: caseyText("src/dashboard/routes/portal.js#w11", [USAGE_SAMPLES_MAX]) })
     const parsed = parseUsageSamples(b.samples)
     if (parsed.error) return res.status(400).json({ error: parsed.error, field: parsed.field })
-    await purgeIfDue(store).catch(e => { console.error('[portal] retention purge failed', String(e?.message || e)); return 0 })
+    await purgeIfDue(store).catch(e => { console.error(caseyText("src/dashboard/routes/portal.js#w12"), String(e?.message || e)); return 0 })
     const accepted = await ingestUsage(store, router, parsed.samples)
     res.status(202).json({ ok: true, accepted })
   }
@@ -151,7 +151,7 @@ export function postRouterEvents({ store }) {
     const router = await routerFromBearer(store, req, res)
     if (!router) return
     const b = req.body || {}
-    if (b.router_id !== router.router_id) return res.status(403).json({ error: 'router_id does not match the token' })
+    if (b.router_id !== router.router_id) return res.status(403).json({ error: caseyText("src/dashboard/routes/portal.js#w13") })
     const parsed = portal.parseEvents(b.events)
     if (parsed.error) return res.status(400).json({ error: parsed.error })
     const accepted = await portal.recordEvents(store, router, parsed.events)
@@ -222,7 +222,7 @@ export function putRouterPortalConfig({ store, authed }) {
     if (adminDenied(req, res, authed)) return
     const routerId = String(req.params?.router_id ?? '')
     const router = portal.validRouterId(routerId) ? await portal.findRouter(store, routerId) : null
-    if (!router) return res.status(404).json({ error: 'unknown router_id' })
+    if (!router) return res.status(404).json({ error: caseyText("src/dashboard/routes/portal.js#w14") })
     const checked = portalSettings.checkSettingsPatch((req.body || {}).settings)
     if (checked.error) return res.status(400).json({ error: checked.error, field: checked.field })
     await portalSettings.saveSettings(store, router.router_id, checked.values)
@@ -240,7 +240,7 @@ export function getPortalUsage({ store, authed }) {
     const filter = parseUsageFilter(query)
     if (filter.error) return res.status(400).json({ error: filter.error, field: filter.field })
     const bucket = query.bucket === undefined || query.bucket === '' ? 'hour' : query.bucket
-    if (!BUCKETS.includes(bucket)) return res.status(400).json({ error: 'bucket must be hour or day', field: 'bucket' })
+    if (!BUCKETS.includes(bucket)) return res.status(400).json({ error: caseyText("src/dashboard/routes/portal.js#w15"), field: 'bucket' })
     const now = Date.now()
     const report = await usageReport(store, { ...filter, ...range, bucket })
     const devices = await Promise.all(report.devices.map(async (device) => ({
@@ -264,11 +264,11 @@ export function getPortalOutages({ store, authed }) {
   return async (req, res) => {
     if (adminDenied(req, res, authed)) return
     const query = req.query || {}
-    if (!portal.validRouterId(query.router_id)) return res.status(400).json({ error: 'router_id is required', field: 'router_id' })
+    if (!portal.validRouterId(query.router_id)) return res.status(400).json({ error: caseyText("src/dashboard/routes/portal.js#w16"), field: 'router_id' })
     const range = parseWindow(query)
     if (range.error) return res.status(400).json({ error: range.error, field: range.field })
     const router = await portal.findRouter(store, query.router_id)
-    if (!router) return res.status(404).json({ error: 'unknown router_id' })
+    if (!router) return res.status(404).json({ error: caseyText("src/dashboard/routes/portal.js#w17") })
     res.json({ rows: await outagesFor(store, router.router_id, { since: range.since }) })
   }
 }
@@ -277,11 +277,11 @@ export function getPortalHealth({ store, authed }) {
   return async (req, res) => {
     if (adminDenied(req, res, authed)) return
     const query = req.query || {}
-    if (!portal.validRouterId(query.router_id)) return res.status(400).json({ error: 'router_id is required', field: 'router_id' })
+    if (!portal.validRouterId(query.router_id)) return res.status(400).json({ error: caseyText("src/dashboard/routes/portal.js#w18"), field: 'router_id' })
     const range = parseWindow(query)
     if (range.error) return res.status(400).json({ error: range.error, field: range.field })
     const router = await portal.findRouter(store, query.router_id)
-    if (!router) return res.status(404).json({ error: 'unknown router_id' })
+    if (!router) return res.status(404).json({ error: caseyText("src/dashboard/routes/portal.js#w19") })
     res.json({ rows: await healthRows(store, router.router_id, range) })
   }
 }
@@ -299,7 +299,7 @@ export function getRouterWaPrefixes({ store, waPrefixSource = defaultWaPrefixSou
       res.set('Cache-Control', 'no-store')
       res.status(200).send(waPrefixesText(prefixes))
     } catch {
-      res.status(503).json({ error: 'WhatsApp prefix list is unavailable' })
+      res.status(503).json({ error: caseyText("src/dashboard/routes/portal.js#w20") })
     }
   }
 }
@@ -311,11 +311,11 @@ export function postRouterCycle({ store }) {
     const router = await routerFromBearer(store, req, res)
     if (!router) return
     const body = decodeBody(req.body)
-    if (!body) return res.status(400).json({ error: 'body must be a MessagePack or JSON object', field: 'body' })
-    if (body.r !== router.router_id) return res.status(403).json({ error: 'router_id does not match the token' })
+    if (!body) return res.status(400).json({ error: caseyText("src/dashboard/routes/portal.js#w21"), field: 'body' })
+    if (body.r !== router.router_id) return res.status(403).json({ error: caseyText("src/dashboard/routes/portal.js#w22") })
     const parsed = parseCycle(body)
     if (parsed.error) return res.status(parsed.tooLarge ? 413 : 400).json({ error: parsed.error, field: parsed.field })
-    await purgeIfDue(store).catch(e => { console.error('[portal] retention purge failed', String(e?.message || e)); return 0 })
+    await purgeIfDue(store).catch(e => { console.error(caseyText("src/dashboard/routes/portal.js#w23"), String(e?.message || e)); return 0 })
     const counts = await applyCycle(store, router, parsed.cycle)
     const effective = await portalSettings.effectiveSettings(store, router.router_id)
     const since = parsed.cycle.sync ? parsed.cycle.sync.since : null
@@ -347,7 +347,7 @@ export function postRouterSerial({ store }) {
     const router = await routerFromBearer(store, req, res)
     if (!router) return
     const b = req.body || {}
-    if (b.router_id !== router.router_id) return res.status(403).json({ error: 'router_id does not match the token' })
+    if (b.router_id !== router.router_id) return res.status(403).json({ error: caseyText("src/dashboard/routes/portal.js#w24") })
     try {
       await portal.recordSerial(store, router, b.serial)
       res.status(202).json({ ok: true })
@@ -362,8 +362,8 @@ export function postRouterStatusBatch({ store }) {
     const router = await routerFromBearer(store, req, res)
     if (!router) return
     const body = decodeBody(req.body)
-    if (!body) return res.status(400).json({ error: 'body must be a MessagePack or JSON object', field: 'body' })
-    if (body.r !== router.router_id) return res.status(403).json({ error: 'router_id does not match the token' })
+    if (!body) return res.status(400).json({ error: caseyText("src/dashboard/routes/portal.js#w25"), field: 'body' })
+    if (body.r !== router.router_id) return res.status(403).json({ error: caseyText("src/dashboard/routes/portal.js#w26") })
     const parsed = parseStatusBatch(body)
     if (parsed.error) return res.status(400).json({ error: parsed.error, field: parsed.field })
     res.json(await statusBatch(store, router.router_id, parsed.macs))
@@ -374,7 +374,7 @@ export function postPortalRouter({ store, authed }) {
   return async (req, res) => {
     if (adminDenied(req, res, authed)) return
     const bundle = bootstrap.loadBundle()
-    if (!bundle) return res.status(503).json({ error: 'router provisioning is not configured' })
+    if (!bundle) return res.status(503).json({ error: caseyText("src/dashboard/routes/portal.js#w27") })
     const checked = bootstrap.checkRouterInput(req.body || {}, portal.validRouterId)
     if (checked.error) return res.status(400).json({ error: checked.error, field: checked.field })
     try {
@@ -440,7 +440,7 @@ export function getRouterBundle({ store }) {
     const text = bundle && name === bundle.seed
       ? bootstrap.seedScript({ bundle, base: portalSettings.publicBase(), token: bearer(req), routerId: router.router_id })
       : bootstrap.bundleText(name, { tlsDir: process.env.CASEY_PORTAL_TLS_DIR, bundle })
-    if (text === null) return res.status(404).json({ error: 'not found' })
+    if (text === null) return res.status(404).json({ error: caseyText("src/dashboard/routes/portal.js#w28") })
     res.set('Content-Type', 'text/plain; charset=utf-8')
     res.set('Cache-Control', 'no-store')
     res.status(200).send(text)

@@ -7,6 +7,7 @@ import { UNCLAIMED_ASSIGNEE } from '../case-store.js'
 import { smtpConfig } from '../mail/smtp.js'
 import { appsScriptConfig } from '../mail/apps-script.js'
 import { sendSetupEmail } from '../mail/setup-email.js'
+import { caseyText } from '../deployment-text.js';
 
 export const SETUP_TTL_HOURS = 72
 const SETUP_TABLE = 'account_setup_token'
@@ -194,7 +195,7 @@ export async function issueSetupLink(store, acct, setupBaseUrl = '') {
   } catch (e) {
     status = 'not_sent'
     code = String(e.code || 'send_failed').slice(0, 40)
-    console.warn(`[casey] setup email not sent for account ${acct.id}: ${code}`)
+    console.warn(caseyText("src/dashboard/auth.js#w0", [acct.id, code]))
   }
   await store.t.update('operator_account', acct.id, { setup_email_status: status, setup_email_error: code }, SYSTEM)
   return { status, code, link }
@@ -307,7 +308,7 @@ export async function ensureBootstrapAdmin(store, log = console) {
   }
   log?.warn?.('[casey] no operator accounts found -- created bootstrap admin account', {
     username: 'admin', password_file: passwordPath,
-    note: 'read the password from that file once, log in, set your own password, then delete the file',
+    note: caseyText("src/dashboard/auth.js#w1"),
   })
   return { username: 'admin', passwordPath }
 }

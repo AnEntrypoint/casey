@@ -8,6 +8,7 @@ import { fmtTimeLocal } from '../../format.js'
 import { mountRoutes } from './register.js'
 import { loadDomainConfig } from '../../config-loader.js'
 import { REPORT_CONCEPT as K } from '../../report-concepts.js'
+import { caseyText } from '../../deployment-text.js';
 
 const reportsConfig = loadDomainConfig().dashboard?.reports ?? {}
 const HOME_VIEW = loadDomainConfig().dashboard?.map?.home_view ?? { centre: [0, 0], zoom: 2 }
@@ -23,9 +24,9 @@ export const SUSPECTED = 'suspected'
 export const RULED_OUT = 'ruled_out'
 
 export const statusOf = (report) => normalizeDiagnosisStatus(report[DIAGNOSIS_STATUS_KEY]) || CONFIRMED
-export const NO_CONCLUSION = 'Not stated'
+export const NO_CONCLUSION = caseyText("src/dashboard/routes/reports-map.js#w0")
 const RESOLUTION_KINDS = (reportsConfig.advice_kinds ?? []).map((k) => [k.label, new RegExp(k.pattern, 'i')])
-export const OTHER_CONCLUSION = 'Other advice'
+export const OTHER_CONCLUSION = caseyText("src/dashboard/routes/reports-map.js#w1")
 
 const NEGATED = reportsConfig.negation_pattern ? new RegExp(reportsConfig.negation_pattern, 'gi') : null
 
@@ -64,9 +65,9 @@ export function parseBound(v, endOfDay = false) {
 const isoDate = (sec) => new Date(sec * 1000 + LOCAL_OFFSET_MS).toISOString().slice(0, 10)
 export const monthOf = (sec) => isoDate(sec).slice(0, 7)
 export function periodLabel(w) {
-  if (w.from == null && w.to == null) return 'all time'
+  if (w.from == null && w.to == null) return caseyText("src/dashboard/routes/reports-map.js#w2")
   const today = isoDate(Math.floor(Date.now() / 1000))
-  return `${w.from == null ? 'earliest record' : isoDate(w.from)} to ${w.to == null ? today : isoDate(w.to)} (${TZ_LABEL} dates)`
+  return `${w.from == null ? caseyText("src/dashboard/routes/reports-map.js#w3") : isoDate(w.from)} to ${w.to == null ? today : isoDate(w.to)} (${TZ_LABEL} dates)`
 }
 export function periodOf(sec, grain = 'month') {
   const m = monthOf(sec)
@@ -114,7 +115,7 @@ const districtOf = (areas, report) => {
 export function resolvedRow(c, report, resolvedSec, areas = []) {
   const disease = cleanLabel(report[DISEASE_KEY])
   if (!disease) return null
-  const species = cleanLabel(report[K.kind], 40) || 'Not stated'
+  const species = cleanLabel(report[K.kind], 40) || caseyText("src/dashboard/routes/reports-map.js#w4")
   const area = cleanLabel(statedArea(report), 60)
   const p = coords(c)
   return {
@@ -278,7 +279,7 @@ export function monthStartOf(sec) {
 
 function windowOf(req, res) {
   const from = parseBound(req.query.from), to = parseBound(req.query.to, true)
-  if (Number.isNaN(from) || Number.isNaN(to)) { res.status(400).json({ error: 'from and to must be a date like 2026-03-31 or unix seconds' }); return null }
+  if (Number.isNaN(from) || Number.isNaN(to)) { res.status(400).json({ error: caseyText("src/dashboard/routes/reports-map.js#w5") }); return null }
   return { from, to }
 }
 const stamp = (w) => ({ generated_at: new Date().toISOString(), as_of: w.to == null ? null : new Date(w.to * 1000).toISOString() })
@@ -328,14 +329,14 @@ export function getDiseases({ store, authed }) {
   }
 }
 
-const PRINT_NAMES = { [SPARSE_BUCKET_KEY]: 'Small groups combined', [RARE_LABEL]: `Other diseases, each under ${MIN_AGGREGATE_CELL} cases`, unknown: 'Not stated' }
+const PRINT_NAMES = { [SPARSE_BUCKET_KEY]: caseyText("src/dashboard/routes/reports-map.js#w6"), [RARE_LABEL]: caseyText("src/dashboard/routes/reports-map.js#w7", [MIN_AGGREGATE_CELL]), unknown: caseyText("src/dashboard/routes/reports-map.js#w8") }
 export const printName = (v) => PRINT_NAMES[v] || String(v)
 const STATUS_NAMES = { confirmed: 'Confirmed', suspected: 'Suspected' }
 
 const diseaseRows = (rep) => (rep.rare_diseases == null ? rep.by_disease : [...rep.by_disease, { disease: RARE_LABEL, count: rep.rare_diseases }])
 
 export function diseaseReportBody(rep, { period, region, generated }, { esc, row, tbl }) {
-  const orBelow = (v) => v ?? `fewer than ${rep.k}`
+  const orBelow = (v) => v ?? caseyText("src/dashboard/routes/reports-map.js#w9", [rep.k])
   const list = (head, items, key) => tbl([head, 'Cases'], items.map(x => row([printName(x[key]), x.count])))
   const trendNote = rep.trend?.partial ? `<p>The period ${esc(rep.trend.period)} is not finished, so no change is shown.</p>` : ''
   const trend = rep.trend && rep.trend.diseases.length
@@ -344,15 +345,15 @@ export function diseaseReportBody(rep, { period, region, generated }, { esc, row
     ])))
     : trendNote + `<p>Not enough cases to compare with the period before.</p>`
   const byMonth = rep.by_month.slice().sort((a, b) => String(a.month).localeCompare(String(b.month)))
-  const statusRows = rep.by_status.map(x => row([STATUS_NAMES[x.status] || x.status, x.count])).concat(rep.ruled_out ? [row(['ruled out (not counted above)', rep.ruled_out])] : [])
+  const statusRows = rep.by_status.map(x => row([STATUS_NAMES[x.status] || x.status, x.count])).concat(rep.ruled_out ? [row([caseyText("src/dashboard/routes/reports-map.js#w12"), rep.ruled_out])] : [])
   const totals = tbl(['Measure', 'Cases'], [
-    row(['signed-off cases', orBelow(rep.total)]),
-    row(['signed-off cases with advice recorded', orBelow(rep.with_conclusion)]),
-    row(['signed-off cases with a photo', orBelow(rep.with_photo)]),
-    row(['closed without a diagnosis', region ? 'not shown for one area' : orBelow(rep.closed_without_diagnosis)]),
+    row([caseyText("src/dashboard/routes/reports-map.js#w13"), orBelow(rep.total)]),
+    row([caseyText("src/dashboard/routes/reports-map.js#w14"), orBelow(rep.with_conclusion)]),
+    row([caseyText("src/dashboard/routes/reports-map.js#w15"), orBelow(rep.with_photo)]),
+    row([caseyText("src/dashboard/routes/reports-map.js#w16"), region ? caseyText("src/dashboard/routes/reports-map.js#w17") : orBelow(rep.closed_without_diagnosis)]),
   ])
   return `<h1>Disease report</h1>`
-    + `<p class="meta">Generated ${esc(generated)}. Period: ${esc(period)}, by the date each case was resolved. Area:${esc(region || 'all areas')}. Grouped by ${esc(rep.grain)}.</p>`
+    + `<p class="meta">Generated ${esc(generated)}. Period: ${esc(period)}, by the date each case was resolved. Area:${esc(region || caseyText("src/dashboard/routes/reports-map.js#w20"))}. Grouped by ${esc(rep.grain)}.</p>`
     + `<p class="meta">Groups under ${rep.k} cases are not shown, so rows may not add up to the total.</p>`
     + `<h2>Totals</h2>${totals}`
     + `<h2>Confirmed and suspected</h2>` + tbl(['Status', 'Cases'], statusRows)
@@ -363,7 +364,7 @@ export function diseaseReportBody(rep, { period, region, generated }, { esc, row
     + `<h2>Advice given at sign-off</h2>` + list('Advice', rep.by_conclusion, 'conclusion')
     + `<p class="meta">One case can count under more than one kind of advice, so these rows can add up to more than the cases with advice.</p>`
     + `<h2>By ${esc(rep.grain)}</h2>` + list('Period', byMonth, 'month')
-    + `<p class="meta">Groups of fewer than ${rep.k} cases are combined under "${printName(SPARSE_BUCKET_KEY)}" so no single report can be picked out. No case-level or personal data is included.${rep.truncated ? ' There are more reports than could be loaded, so the figures leave some out.' : ''}</p>`
+    + `<p class="meta">Groups of fewer than ${rep.k} cases are combined under "${printName(SPARSE_BUCKET_KEY)}" so no single report can be picked out. No case-level or personal data is included.${rep.truncated ? caseyText("src/dashboard/routes/reports-map.js#w30") : ''}</p>`
 }
 
 export function getDiseasesPrint(deps) {
@@ -377,7 +378,7 @@ export function getDiseasesPrint(deps) {
     const generated = fmtTimeLocal(Math.floor(Date.now() / 1000))
     const body = diseaseReportBody(rep, { period, region, generated }, { esc, row: printableReportRow, tbl: printableReportTable })
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
-    res.send(printableReport('Disease report', body, '', `Generated ${generated}`))
+    res.send(printableReport(caseyText("src/dashboard/routes/reports-map.js#w31"), body, '', `Generated ${generated}`))
   }
 }
 
@@ -413,7 +414,7 @@ export function getHeat({ store, authed }) {
         if (statusOf(rep) === RULED_OUT) continue
         if (region && labelKey(cleanLabel(statedArea(rep), 60) || 'unknown') !== labelKey(region)) continue
         if (disease && labelKey(cleanLabel(rep[DISEASE_KEY])) !== labelKey(disease)) continue
-        if (species && labelKey(cleanLabel(rep[K.kind], 40) || 'Not stated') !== labelKey(species)) continue
+        if (species && labelKey(cleanLabel(rep[K.kind], 40) || caseyText("src/dashboard/routes/reports-map.js#w32")) !== labelKey(species)) continue
         if (status && (!cleanLabel(rep[DISEASE_KEY]) || statusOf(rep) !== status)) continue
         if (advice && !conclusionKinds(rep[RESOLUTION_KEY]).some(k => labelKey(k) === labelKey(advice))) continue
         pts.push(p)
@@ -490,9 +491,9 @@ export function reportCsvLines(rep, period, csvCell) {
   for (const c of rep.by_conclusion) emit('conclusion', { conclusion: c.conclusion, count: c.count })
   for (const c of rep.by_disease_conclusion) emit('disease_conclusion', { disease: c.disease, conclusion: c.conclusion, count: c.count })
   const note = (text) => emit('note', { note: text })
-  note(`Period: ${period}, by the date each case was resolved. Generated ${fmtTimeLocal(Date.now())}.`)
-  note(`Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under "${printName(SPARSE_BUCKET_KEY)}". No case-level or personal data is included.`)
-  if (rep.truncated) note('There are more reports than this export can load, so the figures leave some out.')
+  note(caseyText("src/dashboard/routes/reports-map.js#w33", [period, fmtTimeLocal(Date.now())]))
+  note(caseyText("src/dashboard/routes/reports-map.js#w34", [MIN_AGGREGATE_CELL, printName(SPARSE_BUCKET_KEY)]))
+  if (rep.truncated) note(caseyText("src/dashboard/routes/reports-map.js#w35"))
   return lines
 }
 

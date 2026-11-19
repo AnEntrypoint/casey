@@ -1,5 +1,6 @@
 import { mountRoutes } from './register.js'
 import { translateEvent, TranslateError, translateModel } from '../../translate.js'
+import { caseyText } from '../../deployment-text.js';
 
 export { translateModel }
 
@@ -9,11 +10,11 @@ export function postTranslateEvent({ store, authed, actingOperator, callLLM }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const acct = req.caseyAccount
-    if (acct && acct.role === 'viewer') return fail(res, 403, 'role_forbidden', 'This is not available for your login.')
+    if (acct && acct.role === 'viewer') return fail(res, 403, 'role_forbidden', caseyText("src/dashboard/routes/translate.js#w0"))
     const c = await store.getCase(req.params.id)
-    if (!c || c.channel === 'system') return res.status(404).json({ error: 'not found' })
+    if (!c || c.channel === 'system') return res.status(404).json({ error: caseyText("src/dashboard/routes/translate.js#w1") })
     const ev = await store.t.get('event', req.params.eventId).catch(() => null)
-    if (!ev || ev.case_id !== c.id) return res.status(404).json({ error: 'message not found on this report' })
+    if (!ev || ev.case_id !== c.id) return res.status(404).json({ error: caseyText("src/dashboard/routes/translate.js#w2") })
     try {
       const out = await translateEvent({ store, caseRow: c, ev, callLLM, rateKey: acct?.id || acct?.username || 'anon', requestedBy: actingOperator ? actingOperator(req).id : null })
       res.json({ event_id: ev.id, english: out.text, language: out.language, cached: out.cached, label: out.label })

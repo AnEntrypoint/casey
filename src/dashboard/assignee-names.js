@@ -1,5 +1,6 @@
 import { isContactAssignee, contactIdOfAssignee, assigneeKeyFor } from '../case-assignment.js'
 import { staffLabel } from '../hooks/staff-outbound.js'
+import { caseyText } from '../deployment-text.js';
 
 export async function assigneeNamer(store, rows, pick = (r) => r?.assignee, { logins = false } = {}) {
   const ids = new Set()
@@ -18,12 +19,12 @@ export async function assigneeNamer(store, rows, pick = (r) => r?.assignee, { lo
   const names = new Map()
   await Promise.all([...ids].map(async (id) => {
     const contact = await store.getContact(id).catch(() => null)
-    names.set(id, contact ? staffLabel(contact) : 'a team member')
+    names.set(id, contact ? staffLabel(contact) : caseyText("src/dashboard/assignee-names.js#w0"))
   }))
   const name = (value) => {
     const v = String(value ?? '').trim()
     if (!isContactAssignee(v)) return loginNames.get(v) ?? value ?? ''
-    return names.get(contactIdOfAssignee(v)) || 'a team member'
+    return names.get(contactIdOfAssignee(v)) || caseyText("src/dashboard/assignee-names.js#w1")
   }
   name.rosterEntries = () => [...names].map(([id, n]) => ({ id: assigneeKeyFor({ id }), name: n }))
   return name

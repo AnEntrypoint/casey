@@ -7,6 +7,7 @@ const brandSlug = () => (BRAND.name || 'casey').toLowerCase().replace(/[^a-z0-9]
 import { evData } from '../../safe.js'
 import { mountRoutes } from './register.js'
 import { assigneeNamer } from '../assignee-names.js'
+import { caseyText } from '../../deployment-text.js';
 
 const reportDays = (req) => Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
 const msToHrs = (ms) => ms == null ? '' : Math.round(ms / 3600000 * 10) / 10
@@ -222,7 +223,7 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeLocal }) {
       ].join(','))
     }
     if (truncated) {
-      lines.push(`# TRUNCATED: more than 100000 events in this window; export a shorter --days range for a complete trail`)
+      lines.push(caseyText("src/dashboard/routes/reports.js#w0"))
       res.setHeader('X-Audit-Truncated', 'true')
     }
     lines.push('# Generated ' + fmtTimeLocal(Date.now()))
@@ -242,15 +243,15 @@ export function getReportHtml(deps) {
     const areaRows = r.by_area.slice(0, 20).map(a => row(a.place, a.count)).join('')
     const areaNote = r.by_area.length > 20 ? `<p class="meta">Showing 20 of ${esc(r.by_area.length)} areas. The CSV export lists all of them.</p>` : ''
     const breachRows = Object.entries(r.breaches).map(([b, n]) => row(b, n)).join('') || row('none', 0)
-    const opHead = printableReportRow(['operator', 'open', 'stale claims', 'replies 24h', 'first reply (hrs)', 'oldest waiting (hrs)'])
+    const opHead = printableReportRow(['operator', 'open', caseyText("src/dashboard/routes/reports.js#w2"), 'replies 24h', caseyText("src/dashboard/routes/reports.js#w3"), caseyText("src/dashboard/routes/reports.js#w4")])
     const opRows = r.by_operator.map(o =>
       printableReportRow([o.name, o.open_assigned, o.stale_claims, o.replies_24h, msToHrs(o.first_reply_ms_median), msToHrs(o.oldest_waiting_ms)])).join('')
       || printableReportRow(['none', '0', '0', '0', '', ''])
-    const title = `${BRAND.name} management report`
+    const title = caseyText("src/dashboard/routes/reports.js#w5", [BRAND.name])
     const body = `<h1>${esc(title)}</h1>`
       + `<p class="meta">Generated ${esc(fmtTimeLocal(Math.floor(r.generated_at / 1000)))}. Covers the last ${esc(r.period_days)} days.</p>`
-      + `<h2>Totals</h2><table>${row('all cases', r.totals.all)}${row('open', r.totals.open)}${row('closed', r.totals.closed)}${row('opened this period', r.opened_this_period)}${row('closed this period', r.closed_this_period)}</table>`
-      + `<h2>Response time</h2><table>${row('median first reply (hours)', msToHrs(r.median_first_response_ms))}${row('p90 first reply (hours)', msToHrs(r.p90_first_response_ms))}</table>`
+      + `<h2>Totals</h2><table>${row(caseyText("src/dashboard/routes/reports.js#w7"), r.totals.all)}${row('open', r.totals.open)}${row('closed', r.totals.closed)}${row(caseyText("src/dashboard/routes/reports.js#w8"), r.opened_this_period)}${row(caseyText("src/dashboard/routes/reports.js#w9"), r.closed_this_period)}</table>`
+      + `<h2>Response time</h2><table>${row(caseyText("src/dashboard/routes/reports.js#w11"), msToHrs(r.median_first_response_ms))}${row(caseyText("src/dashboard/routes/reports.js#w12"), msToHrs(r.p90_first_response_ms))}</table>`
       + `<h2>By stage</h2><table>${stageRows}</table>`
       + `<h2>Hotspots by area</h2><table>${areaRows || row('none', 0)}</table>${areaNote}`
       + `<h2>Team workload</h2><table>${opHead}${opRows}</table>`
@@ -269,8 +270,8 @@ export function getHandover(deps) {
     const secs = (ms) => Math.floor(ms / 1000)
     const row = printableReportRow
     const tbl = printableReportTable
-    const sinceTxt = h.since ? fmtTimeLocal(secs(h.since)) + (h.since_by ? ` (by ${esc(h.since_by)})` : '') : 'start of records'
-    const title = `${BRAND.name} shift handover`
+    const sinceTxt = h.since ? fmtTimeLocal(secs(h.since)) + (h.since_by ? ` (by ${esc(h.since_by)})` : '') : caseyText("src/dashboard/routes/reports.js#w17")
+    const title = caseyText("src/dashboard/routes/reports.js#w18", [BRAND.name])
     const body = `<h1>${esc(title)}</h1>`
       + `<p class="meta">Generated ${esc(fmtTimeLocal(secs(h.generated_at)))}. Covers everything since ${esc(sinceTxt)}.</p>`
       + `<h2>Needs attention (${h.attention.length})</h2>`
@@ -280,7 +281,7 @@ export function getHandover(deps) {
       + `<h2>Unsent drafts (${h.drafts.length})</h2>`
       + tbl(['ref', 'subject', 'channel'], h.drafts.map(a => row([a.ref, a.subject, a.channel])))
       + `<h2>Touched this shift (${h.touched.length})</h2>`
-      + tbl(['when', 'ref', 'subject', 'last action'], h.touched.map(a => row([fmtTimeLocal(secs(a.at)), a.ref, a.subject, `${a.last_kind}${a.last_actor ? ' by ' + a.last_actor : ''}`])))
+      + tbl(['when', 'ref', 'subject', caseyText("src/dashboard/routes/reports.js#w24")], h.touched.map(a => row([fmtTimeLocal(secs(a.at)), a.ref, a.subject, `${a.last_kind}${a.last_actor ? ' by ' + a.last_actor : ''}`])))
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.send(printableReport(title, body))
   }

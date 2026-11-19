@@ -1,5 +1,6 @@
 import { mountRoutes } from './register.js';
 import { fmtPhone27 } from '../../format.js';
+import { caseyText } from '../../deployment-text.js';
 
 export const publicExternalLink = (l) => ({
   id: l.id, system: l.system, local_entity: l.local_entity,
@@ -21,7 +22,7 @@ async function resolveLocalRef(store, l) {
       const named = ct.display_name && ct.display_name !== ct.external_id;
       if (named) return ct.display_name;
       const formatted = fmtPhone27(ct.external_id);
-      return formatted !== String(ct.external_id || '') ? formatted : 'unnamed contact';
+      return formatted !== String(ct.external_id || '') ? formatted : caseyText("src/dashboard/routes/external-links.js#w0");
     }
   } catch {  }
   return null;
@@ -43,8 +44,8 @@ export function postExternalLinkConfirm({ store, authed, actingOperator }) {
     try {
       const user = { id: actingOperator(req).id, role: 'operator' };
       const link = await store.t.get('external_link', req.params.id);
-      if (!link) return res.status(404).json({ error: 'link not found' });
-      if (link.status !== 'proposed') return res.status(400).json({ error: 'link is not in proposed status' });
+      if (!link) return res.status(404).json({ error: caseyText("src/dashboard/routes/external-links.js#w1") });
+      if (link.status !== 'proposed') return res.status(400).json({ error: caseyText("src/dashboard/routes/external-links.js#w2") });
       const confirmed = await store.t.update('external_link', link.id, { status: 'confirmed' }, user);
       res.json({ link: publicExternalLink({ ...link, ...confirmed }) });
     } catch (e) { res.status(400).json({ error: e.message }); }
@@ -57,8 +58,8 @@ export function postExternalLinkReject({ store, authed, actingOperator }) {
     try {
       const user = { id: actingOperator(req).id, role: 'operator' };
       const link = await store.t.get('external_link', req.params.id);
-      if (!link) return res.status(404).json({ error: 'link not found' });
-      if (link.status !== 'proposed') return res.status(400).json({ error: 'link is not in proposed status' });
+      if (!link) return res.status(404).json({ error: caseyText("src/dashboard/routes/external-links.js#w3") });
+      if (link.status !== 'proposed') return res.status(400).json({ error: caseyText("src/dashboard/routes/external-links.js#w4") });
       const rejected = await store.t.update('external_link', link.id, { status: 'rejected' }, user);
       res.json({ link: publicExternalLink({ ...link, ...rejected }) });
     } catch (e) { res.status(400).json({ error: e.message }); }

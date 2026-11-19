@@ -1,4 +1,5 @@
 import { redeemSetupToken } from '../auth.js'
+import { caseyText } from '../../deployment-text.js';
 
 const WINDOW_MS = 15 * 60e3
 const MAX_REQUESTS = 60
@@ -26,12 +27,12 @@ export function documentHtml({ title, body }) {
 }
 
 const MESSAGES = {
-  invalid: 'This link is not valid. Ask your administrator for a new one.',
-  expired: 'This link has expired. Ask your administrator for a new one.',
-  short: 'Use at least 8 characters for your password.',
-  mismatch: 'The two passwords do not match.',
-  limited: 'Too many attempts. Wait a few minutes and try again.',
-  unexpected: 'Something went wrong. Try again in a moment.',
+  invalid: caseyText("src/dashboard/routes/set-password.js#w1"),
+  expired: caseyText("src/dashboard/routes/set-password.js#w2"),
+  short: caseyText("src/dashboard/routes/set-password.js#w3"),
+  mismatch: caseyText("src/dashboard/routes/set-password.js#w4"),
+  limited: caseyText("src/dashboard/routes/set-password.js#w5"),
+  unexpected: caseyText("src/dashboard/routes/set-password.js#w6"),
 }
 
 function pageHtml({ token = '', error = '', done = false }) {
@@ -46,7 +47,7 @@ function pageHtml({ token = '', error = '', done = false }) {
 <input id="pw2" type="password" name="new_password_confirm" minlength="8" required autocomplete="new-password">
 <button type="submit">Save password</button>
 </form>`
-  return documentHtml({ title: 'Set your password', body })
+  return documentHtml({ title: caseyText("src/dashboard/routes/set-password.js#w9"), body })
 }
 
 export function getSetPassword() {

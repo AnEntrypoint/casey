@@ -47,6 +47,7 @@ import {
   getAccount, listAccounts, createAccount, setAccountDisabled, setAccountContactPhone, deleteAccount, changePassword,
   revokeAccountSessions,
 } from './auth.js'
+import { caseyText } from '../deployment-text.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 function resolvePackageDir(pkgName, fallbackRelative, ...subpath) {
@@ -295,7 +296,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   if (!store) throw new Error('createDashboard requires a store instance')
   const app = express()
   const trustProxyHops = Number(process.env.CASEY_TRUST_PROXY_HOPS)
-  if (Number.isFinite(trustProxyHops) && trustProxyHops > 0) app.set('trust proxy', trustProxyHops)
+  if (Number.isFinite(trustProxyHops) && trustProxyHops > 0) app.set(caseyText("src/dashboard/server.js#w4"), trustProxyHops)
   const SHELL_HTML_SOURCE = (() => {
     try { return readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8') } catch { return null }
   })()
@@ -343,8 +344,8 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       if (required) { res.status(400).json({ error: `${field} required` }); return undefined }
       return ''
     }
-    if (typeof v !== 'string') { res.status(400).json({ error: `${field} must be a string` }); return undefined }
-    if (v.length > MAX_LEN) { res.status(413).json({ error: `${field} too long (max ${MAX_LEN})` }); return undefined }
+    if (typeof v !== 'string') { res.status(400).json({ error: caseyText("src/dashboard/server.js#w5", [field]) }); return undefined }
+    if (v.length > MAX_LEN) { res.status(413).json({ error: caseyText("src/dashboard/server.js#w6", [field, MAX_LEN]) }); return undefined }
     return v
   }
 
@@ -353,7 +354,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       try {
         await handler(req, res, next)
       } catch (e) {
-        console.error('[dashboard] handler error', req.method, String(req.path).slice(0, 120), String(e?.stack || e).split('\n').slice(0, 6).join(' | '))
+        console.error(caseyText("src/dashboard/server.js#w7"), req.method, String(req.path).slice(0, 120), String(e?.stack || e).split('\n').slice(0, 6).join(' | '))
         res.status(500).json({ error: e.message })
       }
     }
@@ -433,70 +434,16 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       name: PWA_BRAND, short_name: PWA_BRAND, start_url: SHELL_ENTRY, scope: '/', display: 'standalone',
       background_color: '#ffffff', theme_color: PWA_THEME_COLOR,
       ...(BRAND.description ? { description: BRAND.description } : {}),
-      icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }],
+      icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: caseyText("src/dashboard/server.js#w9") }],
     })
   })
   app.get('/sw.js', (_req, res) => {
     res.setHeader('Content-Type', 'application/javascript')
     res.setHeader('Cache-Control', 'no-cache')
-    res.send(`
-const VERSION = '${SHELL_BUILD_ID}'
-const CACHE = 'casey-shell-' + VERSION
-const PRECACHE = ${JSON.stringify([
+    res.send(caseyText("src/dashboard/server.js#w10", [SHELL_BUILD_ID, JSON.stringify([
       SHELL_ENTRY, '/offline.html', '/icon.svg', '/manifest.json',
       ...SHELL_ASSET_URLS, ...SHELL_MODULE_URLS,
-    ])}
-const SHELL_URLS = new Set(PRECACHE)
-
-self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => Promise.all(PRECACHE.map((u) =>
-    fetch(u)
-      .then((r) => (r && r.ok ? c.put(u, r) : null))
-      .catch(() => null)))))
-  self.skipWaiting()
-})
-
-self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys()
-    .then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-    .then(() => caches.open(CACHE))
-    .then((c) => c.keys().then((rs) => Promise.all(rs
-      .filter((r) => !SHELL_URLS.has(new URL(r.url).pathname))
-      .map((r) => c.delete(r)))))
-    .then(() => self.clients.claim()))
-})
-
-self.addEventListener('fetch', (e) => {
-  const req = e.request
-  if (req.method !== 'GET') return
-  const url = new URL(req.url)
-  if (url.origin !== self.location.origin) return
-  if (req.headers.has('range')) return
-  if (url.pathname.startsWith('/api/')) {
-    e.respondWith(fetch(req).catch(() => new Response(
-      JSON.stringify({ error: 'offline' }),
-      { status: 503, headers: { 'content-type': 'application/json' } })))
-    return
-  }
-  if (${JSON.stringify(!!PUBLIC_SITE_ROOT)} && url.pathname === '/') {
-    e.respondWith(fetch(req).catch(() => caches.open(CACHE).then((c) => c.match(${JSON.stringify(SHELL_ENTRY)})).then((hit) => hit || offlineFallback(req))))
-    return
-  }
-  if (!SHELL_URLS.has(url.pathname)) {
-    e.respondWith(fetch(req).catch(() => offlineFallback(req)))
-    return
-  }
-  e.respondWith(caches.open(CACHE).then((c) => fetch(req).then((res) => {
-    if (res && res.status === 200 && res.type === 'basic') c.put(req, res.clone())
-    return res
-  }).catch(() => c.match(req, { ignoreVary: true }).then((hit) => hit || offlineFallback(req)))))
-})
-
-function offlineFallback(req) {
-  if (req.mode !== 'navigate') return Response.error()
-  return caches.open(CACHE).then((c) => c.match('/offline.html')).then((hit) => hit || Response.error())
-}
-`)
+    ]), JSON.stringify(!!PUBLIC_SITE_ROOT), JSON.stringify(SHELL_ENTRY)]))
   })
   app.get('/offline.html', (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache')
@@ -563,9 +510,9 @@ a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};font-size:var(--fs-body);t
   registerRouterRootFallback(app, deps)
 
   app.use((err, req, res, next) => {
-    if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'invalid request body' })
-    if (!err?.status || err.status >= 500) console.error('[dashboard] unhandled error', req.method, String(req.path).slice(0, 120), String(err?.stack || err).split('\n').slice(0, 6).join(' | '))
-    res.status(err?.status || 500).json({ error: 'internal error' })
+    if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: caseyText("src/dashboard/server.js#w12") })
+    if (!err?.status || err.status >= 500) console.error(caseyText("src/dashboard/server.js#w13"), req.method, String(req.path).slice(0, 120), String(err?.stack || err).split('\n').slice(0, 6).join(' | '))
+    res.status(err?.status || 500).json({ error: caseyText("src/dashboard/server.js#w14") })
   })
 
   const server = app.listen(port)

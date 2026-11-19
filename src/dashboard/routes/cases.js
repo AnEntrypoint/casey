@@ -93,12 +93,12 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
     if (req.query.status) {
       const valid = store.getValidStatuses()
       if (!valid.includes(req.query.status)) {
-        return res.status(400).json({ error: `invalid status: ${req.query.status}`, allowed: valid })
+        return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w0", [req.query.status]), allowed: valid })
       }
       where.status = req.query.status
     }
     if (req.query.channel) {
-      if (typeof req.query.channel !== 'string') return res.status(400).json({ error: 'invalid channel' })
+      if (typeof req.query.channel !== 'string') return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w1") })
       where.channel = req.query.channel
     }
     if (req.query.ref) {
@@ -111,7 +111,7 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
     }
     const words = queryWords(req.query.q ? String(req.query.q).slice(0, 200) : '')
     const doneFilter = field ? String(req.query.state || '') : ''
-    if (doneFilter && doneFilter !== 'open' && doneFilter !== 'closed') return res.status(400).json({ error: 'state must be open or closed' })
+    if (doneFilter && doneFilter !== 'open' && doneFilter !== 'closed') return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w2") })
     const limit = clampLimit(req.query.limit, 50)
     const offset = offsetOf(req.query.offset)
     let cases, total
@@ -161,12 +161,12 @@ export function postCase({ store, authed, str, actingOperator, computeFillRate }
     const normPhone = phone ? normalizeMsisdn(phone) : ''
     const external_id = normPhone || `web-${Date.now()}`
     const contact = { display_name: name || 'operator', name: name || 'operator', phone: phone || '' }
-    const { case: c, created } = await store.findOrCreateCase({ channel: 'web', external_id, contact, subject: subject || 'Field report' })
+    const { case: c, created } = await store.findOrCreateCase({ channel: 'web', external_id, contact, subject: subject || caseyText("src/dashboard/routes/cases.js#w3") })
     if (!created) {
       if (isFieldAccount(req.caseyAccount) && caseAccess(c, req.caseyAccount) === 'none') {
-        return res.status(409).json({ error: 'A report already exists for this contact. Ask an operator to assign it to you.' })
+        return res.status(409).json({ error: caseyText("src/dashboard/routes/cases.js#w4") })
       }
-      return res.status(409).json({ error: 'A case already exists for this contact', existing_id: c.id, existing_ref: c.ref })
+      return res.status(409).json({ error: caseyText("src/dashboard/routes/cases.js#w5"), existing_id: c.id, existing_ref: c.ref })
     }
     const op = actingOperator(req)
     const tags = tagList(c)
@@ -175,7 +175,7 @@ export function postCase({ store, authed, str, actingOperator, computeFillRate }
       await store.updateCase(c.id, { tags: newTags }, op)
     }
     if (isFieldAccount(req.caseyAccount)) await store.updateCase(c.id, { assignee: op.id }, op)
-    await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'case created via dashboard manual intake', data: { by: op.id } })
+    await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: caseyText("src/dashboard/routes/cases.js#w6"), data: { by: op.id } })
     const createdCase = await store.getCase(c.id)
     res.status(201).json(caseListProjection({ ...createdCase, fill_rate: computeFillRate(createdCase.report) }))
   }
@@ -187,11 +187,11 @@ export function getCasesCsv({ store, authed, csvCell, REPORT_KEY_LIST }) {
     const where = {}
     if (req.query.status) {
       const valid = store.getValidStatuses()
-      if (!valid.includes(req.query.status)) return res.status(400).json({ error: `invalid status: ${req.query.status}` })
+      if (!valid.includes(req.query.status)) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w7", [req.query.status]) })
       where.status = req.query.status
     }
     if (req.query.channel) {
-      if (typeof req.query.channel !== 'string') return res.status(400).json({ error: 'invalid channel' })
+      if (typeof req.query.channel !== 'string') return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w8") })
       where.channel = req.query.channel
     }
     const fetched = await store.listCases(where, { limit: 10001, offset: 0 })
@@ -207,7 +207,7 @@ export function getCasesCsv({ store, authed, csvCell, REPORT_KEY_LIST }) {
     })
     const trailer = []
     if (truncated) {
-      trailer.push('# TRUNCATED: more than 10000 cases match; narrow the status or channel filter for a complete export')
+      trailer.push(caseyText("src/dashboard/routes/cases.js#w9"))
       res.setHeader('X-Cases-Truncated', 'true')
     }
     trailer.push('# Generated ' + fmtTimeLocal(Date.now()))
@@ -225,14 +225,14 @@ async function noteNumberReveal(store, c, op) {
   const last = REVEAL_SEEN.get(k)
   if (last && Date.now() - last < REVEAL_WINDOW_MS) return
   REVEAL_SEEN.set(k, Date.now())
-  await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `The reporter's phone number was shown to ${op.name || op.id}, who is working this ${REPORT_ENTITY_LABEL}.`, data: { number_shown_to: op.id } })
+  await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: caseyText("src/dashboard/routes/cases.js#w10", [op.name || op.id, REPORT_ENTITY_LABEL]), data: { number_shown_to: op.id } })
 }
 
 export function getCaseDetail({ store, authed, clampLimit, parseEventData, actingOperator, computeFillRate, parseJsonArraySafe, getRoster, UNCLAIMED_ASSIGNEE }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w11") })
     const limit = clampLimit(req.query.events_limit, 50)
     const { events, total: events_total } = await timelinePageFor(store, c.id, { limit, offset: 0 }, req.caseyAccount, parseEventData)
     const transitions = store.availableTransitions(c, actingOperator(req))
@@ -266,8 +266,8 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
       const missing = missingFor(c)
       const digits = (c.channel === 'whatsapp' || /^\+?\d{9,15}$/.test(String(c.external_id || ''))) ? String(c.external_id || '').replace(/\D/g, '') : ''
       const personFirst = await reporterFirstName(store, c)
-      const text = `Hello${personFirst ? ` ${personFirst}` : ''}, ${op.name} here, following up on your ${REPORT_ENTITY_LABEL} ${c.ref}. Please send a message to our WhatsApp assistant again`
-        + (missing.length ? ` and tell it: ${missing.map(fieldLabel).join(', ')}.` : ' so we can finish it.') + ' Thank you.'
+      const text = caseyText("src/dashboard/routes/cases.js#w12", [personFirst ? ` ${personFirst}` : '', op.name, REPORT_ENTITY_LABEL, c.ref])
+        + (missing.length ? caseyText("src/dashboard/routes/cases.js#w13", [missing.map(fieldLabel).join(', ')]) : caseyText("src/dashboard/routes/cases.js#w14")) + caseyText("src/dashboard/routes/cases.js#w15")
       const contact = c.contact_id ? await store.getContact(c.contact_id).catch(() => null) : null
       const given = String(contact?.display_name || '').trim()
       const first = personFirst || (given && given !== contact?.external_id && !/^[\d+\s()-]+$/.test(given) && !/^web-/.test(given) ? given.split(/\s+/)[0].slice(0, 30) : null)
@@ -289,7 +289,7 @@ export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w16") })
     const incoming = {}
     for (const k of REPORT_KEY_LIST) {
       if (!(k in req.body)) continue
@@ -297,16 +297,16 @@ export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET
       incoming[k] = v
     }
     const unknown = Object.keys(req.body).filter(k => !REPORT_KEY_SET.has(k) && !INTAKE_META_KEYS.has(k))
-    if (unknown.length) return res.status(400).json({ error: `unknown report fields: ${unknown.join(', ')}` })
-    if (!Object.keys(incoming).length) return res.status(400).json({ error: 'no report fields provided' })
-    if (isDone(c) && SIGNOFF_DIAGNOSIS_FIELDS.some(k => k in incoming)) return res.status(409).json({ error: `${SIGNOFF_DIAGNOSIS_FIELDS.map(fieldLabel).join(' and ')} cannot be changed on a finished ${REPORT_ENTITY_LABEL}; reopen it first` })
+    if (unknown.length) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w17", [unknown.join(', ')]) })
+    if (!Object.keys(incoming).length) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w18") })
+    if (isDone(c) && SIGNOFF_DIAGNOSIS_FIELDS.some(k => k in incoming)) return res.status(409).json({ error: caseyText("src/dashboard/routes/cases.js#w19", [SIGNOFF_DIAGNOSIS_FIELDS.map(fieldLabel).join(' and '), REPORT_ENTITY_LABEL]) })
     const op = actingOperator(req)
     const priorReport = parseReport(c)
     if (req.body.expected != null) {
-      if (typeof req.body.expected !== 'object' || Array.isArray(req.body.expected)) return res.status(400).json({ error: 'expected must be an object of field -> prior value' })
+      if (typeof req.body.expected !== 'object' || Array.isArray(req.body.expected)) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w20") })
       const held = (v) => (v == null ? '' : String(v).trim())
       const stale = Object.keys(incoming).filter(k => !APPEND_FIELDS.has(k) && k in req.body.expected && held(priorReport[k]) !== held(req.body.expected[k]))
-      if (stale.length) return res.status(409).json({ error: `this ${REPORT_ENTITY_LABEL} was changed by someone else (${stale.join(', ')}) -- reload and try again`, conflicted_fields: stale })
+      if (stale.length) return res.status(409).json({ error: caseyText("src/dashboard/routes/cases.js#w21", [REPORT_ENTITY_LABEL, stale.join(', ')]), conflicted_fields: stale })
     }
     const result = await store.mergeReport(c.id, incoming, op)
     if (result.error) return res.status(400).json({ error: result.error })
@@ -322,7 +322,7 @@ export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET
     if (Object.keys(corrections).length) data.corrections = corrections
     const canon = canonicalizedNote(req.body.canonicalized, incoming)
     if (canon) data.canonicalized = canon
-    await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: isFieldAccount(req.caseyAccount) ? `recorded report fields on the reporter's behalf (relayed by ${op.name || op.id}): ${Object.keys(incoming).join(', ')}` : `recorded report fields via dashboard: ${Object.keys(incoming).join(', ')}`, data: isFieldAccount(req.caseyAccount) ? { ...data, relayed_by: op.id } : data })
+    await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: isFieldAccount(req.caseyAccount) ? caseyText("src/dashboard/routes/cases.js#w22", [op.name || op.id, Object.keys(incoming).join(', ')]) : caseyText("src/dashboard/routes/cases.js#w23", [Object.keys(incoming).join(', ')]), data: isFieldAccount(req.caseyAccount) ? { ...data, relayed_by: op.id } : data })
     for (const k of Object.keys(incoming)) if (isKnownValueField(k)) invalidateKnownValues(k)
     res.json({ report: result.report, report_fill_rate: computeFillRate(JSON.stringify(result.report)) })
   }
@@ -347,21 +347,21 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
     for (const k of allowed) {
       if (!(k in req.body)) continue
       const v = str(res, req.body, k); if (v === undefined) return
-      if (k === 'autonomy' && !AUTONOMY.has(v)) return res.status(400).json({ error: `invalid autonomy: ${v}` })
-      if (k === 'priority' && !PRIORITY.has(v)) return res.status(400).json({ error: `invalid priority: ${v}` })
-      if (k === 'case_type' && !CASE_TYPE.has(v)) return res.status(400).json({ error: `invalid case_type: ${v}` })
+      if (k === 'autonomy' && !AUTONOMY.has(v)) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w24", [v]) })
+      if (k === 'priority' && !PRIORITY.has(v)) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w25", [v]) })
+      if (k === 'case_type' && !CASE_TYPE.has(v)) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w26", [v]) })
       patch[k] = v
     }
-    if (!Object.keys(patch).length) return res.status(400).json({ error: 'no editable fields' })
+    if (!Object.keys(patch).length) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w27") })
     const patchReason = str(res, req.body, 'reason', { required: false }); if (patchReason === undefined) return
     let prior = await store.getCase(req.params.id)
     if ('tags' in patch) {
       const pendingOf = (list) => list.filter(t => t.startsWith(STOP_PENDING_PREFIX)).sort().join('|')
-      if (pendingOf(tagList(prior)) !== pendingOf(patch.tags.split(',').map(t => t.trim()))) return res.status(403).json({ error: 'That tag is set by the system itself and cannot be changed by hand.' })
+      if (pendingOf(tagList(prior)) !== pendingOf(patch.tags.split(',').map(t => t.trim()))) return res.status(403).json({ error: caseyText("src/dashboard/routes/cases.js#w28") })
     }
     if (req.body && req.body.expected != null) {
       if (typeof req.body.expected !== 'object' || Array.isArray(req.body.expected)) {
-        return res.status(400).json({ error: 'expected must be an object of field -> prior value' })
+        return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w29") })
       }
       const COLUMN_DEFAULT = { autonomy: 'auto', case_type: 'unset' }
       const norm = (v, k) => {
@@ -371,17 +371,17 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
       const stale = Object.keys(patch).filter(k => k in req.body.expected && norm(prior?.[k], k) !== norm(req.body.expected[k], k))
       if (stale.length) {
         return res.status(409).json({
-          error: `this case was changed by someone else (${stale.join(', ')}) -- reload and try again`,
+          error: caseyText("src/dashboard/routes/cases.js#w30", [stale.join(', ')]),
           conflicted_fields: stale,
         })
       }
     }
     if (Object.keys(patch).some(k => k !== 'autonomy' && k !== 'assignee')) {
-      if (prior?.autonomy === 'observe') return res.status(400).json({ error: 'case autonomy is observe; only autonomy and assignee can be changed' })
+      if (prior?.autonomy === 'observe') return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w31") })
     }
     const op = actingOperator(req)
     if ('assignee' in patch) {
-      if (!prior) return res.status(404).json({ error: 'not found' })
+      if (!prior) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w32") })
       const want = String(patch.assignee || '').trim()
       const had = String(prior.assignee || '').trim()
       const target = want === UNCLAIMED_ASSIGNEE ? '' : want
@@ -391,11 +391,11 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
         let contact = null
         if (isContactAssignee(target)) {
           contact = await store.getContact(contactIdOfAssignee(target))
-          if (!contact) return res.status(400).json({ error: 'that team member is not registered' })
-          if (!atLeast(contact.tier, TIER.field)) return res.status(400).json({ error: 'that person is not on the team (they hold no team role), so a report cannot be assigned to them' })
-          if (isOwnConversation(prior, contact)) return res.status(400).json({ error: 'that is this team member\'s own chat with the assistant, not a report to assign to them' })
+          if (!contact) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w33") })
+          if (!atLeast(contact.tier, TIER.field)) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w34") })
+          if (isOwnConversation(prior, contact)) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w35") })
         } else if (target && !(await findAccountByUsername(store, target))) {
-          return res.status(400).json({ error: 'no team member or login by that name' })
+          return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w36") })
         }
         const by = op.name || op.id
         if (held) { await releaseCase({ store, caseRow: prior, by, user: op }); await clearFocusForCase(store, prior.id) }
@@ -403,7 +403,7 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
           await store.updateCase(prior.id, { assignee: target }, op)
           const data = { assignee: target, by }
           if (contact) { data.assigned_contact_id = contact.id; data.assigned_name = contact.display_name || '' }
-          await store.appendEvent(prior.id, { kind: 'action', actor: 'operator', text: 'edited assignee', data })
+          await store.appendEvent(prior.id, { kind: 'action', actor: 'operator', text: caseyText("src/dashboard/routes/cases.js#w37"), data })
         }
         prior = await store.getCase(req.params.id)
       }
@@ -417,10 +417,10 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
     try {
       updated = await store.updateCase(req.params.id, patch, op, prior?._version != null ? { expectedVersion: prior._version } : {})
     } catch (e) {
-      if (e.code === 'conflict') return res.status(409).json({ error: 'this case was changed by someone else -- reload and try again' })
+      if (e.code === 'conflict') return res.status(409).json({ error: caseyText("src/dashboard/routes/cases.js#w38") })
       throw e
     }
-    if (!updated) return res.status(404).json({ error: 'not found' })
+    if (!updated) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w39") })
     store.learnOperatorActivity(op.id, updated).catch(() => {})
     const autonomyChanged = 'autonomy' in patch && prior && prior.autonomy !== patch.autonomy
     if (autonomyChanged) {
@@ -453,11 +453,11 @@ export function postTransition({ store, authed, str, actingOperator }) {
     const to = str(res, req.body, 'to'); if (to === undefined) return
     const reason = str(res, req.body, 'reason', { required: false }); if (reason === undefined) return
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w40") })
     const op = actingOperator(req)
     const legal = store.availableTransitions(c, op)
     if (to !== c.status && !legal.includes(to)) {
-      return res.status(400).json({ error: `cannot transition to '${to}'`, allowed: legal })
+      return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w41", [to]), allowed: legal })
     }
     const given = {}
     if (MANDATORY_MINIMUM_BLOCKED_STATUSES.includes(to) && SIGNOFF_DIAGNOSIS_FIELDS.length && !isDone(c)) {
@@ -467,21 +467,21 @@ export function postTransition({ store, authed, str, actingOperator }) {
       }
       if (DIAGNOSIS_STATUS_KEY in given) {
         const status = normalizeDiagnosisStatus(given[DIAGNOSIS_STATUS_KEY])
-        if (!status) return res.status(400).json({ error: `${fieldLabel(DIAGNOSIS_STATUS_KEY)} must be one of: ${DIAGNOSIS_STATUS_OPTIONS.join(', ')}. Nothing was changed.` })
+        if (!status) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w42", [fieldLabel(DIAGNOSIS_STATUS_KEY), DIAGNOSIS_STATUS_OPTIONS.join(', ')]) })
         given[DIAGNOSIS_STATUS_KEY] = status
       }
       const tooLong = Object.keys(given).filter(k => given[k].length > APPEND_FIELD_MAX_LEN)
-      if (tooLong.length) return res.status(400).json({ error: `${tooLong.map(fieldLabel).join(', ')} is too long to record (over ${APPEND_FIELD_MAX_LEN} characters). Nothing was changed.` })
+      if (tooLong.length) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w43", [tooLong.map(fieldLabel).join(', '), APPEND_FIELD_MAX_LEN]) })
     }
     try {
-      await store.transition(req.params.id, to, { user: op, reason: reason || 'operator override' })
+      await store.transition(req.params.id, to, { user: op, reason: reason || caseyText("src/dashboard/routes/cases.js#w44") })
     } catch (e) {
       return res.status(400).json({ error: e.message })
     }
     if (Object.keys(given).length) {
       const merged = await store.mergeReport(c.id, given, op, { bypassObserve: true, autoAssign: false })
-      if (merged.error) return res.status(400).json({ error: `moved to '${to}' but the diagnosis was not recorded: ${merged.error}` })
-      await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `diagnosis recorded at sign-off: ${Object.keys(given).map(fieldLabel).join(', ')}`, data: { by: op.id, signoff: true, ...given } })
+      if (merged.error) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w45", [to, merged.error]) })
+      await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: caseyText("src/dashboard/routes/cases.js#w46", [Object.keys(given).map(fieldLabel).join(', ')]), data: { by: op.id, signoff: true, ...given } })
     }
     const after = await store.getCase(req.params.id)
     store.learnOperatorActivity(op.id, after).catch(() => {})
@@ -493,41 +493,41 @@ export function postBulk({ store, authed, actingOperator, sendReply }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter(Boolean) : null
-    if (!ids || !ids.length) return res.status(400).json({ error: 'ids must be a non-empty array' })
-    if (ids.length > 500) return res.status(413).json({ error: 'too many ids (max 500 per bulk request)' })
+    if (!ids || !ids.length) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w47") })
+    if (ids.length > 500) return res.status(413).json({ error: caseyText("src/dashboard/routes/cases.js#w48") })
     const action = String(req.body?.action || '')
     const ACTIONS = new Set(['claim', 'transition', 'tag', 'untag', 'note', 'draft_approve', 'draft_discard'])
-    if (!ACTIONS.has(action)) return res.status(400).json({ error: `unknown action '${action}'`, allowed: [...ACTIONS] })
+    if (!ACTIONS.has(action)) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w49", [action]), allowed: [...ACTIONS] })
     const op = actingOperator(req)
     const to = action === 'transition' ? String(req.body?.to || '') : null
-    if (action === 'transition' && !to) return res.status(400).json({ error: 'transition requires a "to" stage' })
+    if (action === 'transition' && !to) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w50") })
     const NOTE_MAX_LEN = 4000
     const tag = (action === 'tag' || action === 'untag') ? String(req.body?.tag || '').trim() : null
-    if ((action === 'tag' || action === 'untag') && !tag) return res.status(400).json({ error: `${action} requires a "tag"` })
-    if ((action === 'tag' || action === 'untag') && /[,]/.test(tag)) return res.status(400).json({ error: 'tag must not contain a comma' })
+    if ((action === 'tag' || action === 'untag') && !tag) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w51", [action]) })
+    if ((action === 'tag' || action === 'untag') && /[,]/.test(tag)) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w52") })
     if ((action === 'tag' || action === 'untag') && tag.length > NOTE_MAX_LEN) {
-      return res.status(413).json({ error: `tag too long (max ${NOTE_MAX_LEN})` })
+      return res.status(413).json({ error: caseyText("src/dashboard/routes/cases.js#w53", [NOTE_MAX_LEN]) })
     }
     const noteText = action === 'note' ? String(req.body?.text || '').trim() : null
-    if (action === 'note' && !noteText) return res.status(400).json({ error: 'note requires non-empty "text"' })
+    if (action === 'note' && !noteText) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w54") })
     if (action === 'note' && noteText.length > NOTE_MAX_LEN) {
-      return res.status(413).json({ error: `text too long (max ${NOTE_MAX_LEN})` })
+      return res.status(413).json({ error: caseyText("src/dashboard/routes/cases.js#w55", [NOTE_MAX_LEN]) })
     }
 
     const results = []
     for (const id of ids) {
       try {
         const c = await store.getCase(id)
-        if (!c) { results.push({ id, ok: false, error: 'not found' }); continue }
+        if (!c) { results.push({ id, ok: false, error: caseyText("src/dashboard/routes/cases.js#w56") }); continue }
         const withVersion = c._version != null ? { expectedVersion: c._version } : {}
         if (action === 'claim') {
           const claimed = await store.updateCase(id, { assignee: op.id }, op, withVersion)
-          await store.appendEvent(id, { kind: 'action', actor: 'operator', text: `Claimed by ${op.name || op.id}`, data: { claimed_by: op.id, bulk: true } })
+          await store.appendEvent(id, { kind: 'action', actor: 'operator', text: caseyText("src/dashboard/routes/cases.js#w57", [op.name || op.id]), data: { claimed_by: op.id, bulk: true } })
           store.learnOperatorActivity(op.id, claimed || c).catch(() => {})
         } else if (action === 'transition') {
           const legal = store.availableTransitions(c, op)
-          if (to !== c.status && !legal.includes(to)) { results.push({ id, ok: false, error: `cannot transition to '${to}'` }); continue }
-          await store.transition(id, to, { user: op, reason: 'operator bulk action' })
+          if (to !== c.status && !legal.includes(to)) { results.push({ id, ok: false, error: caseyText("src/dashboard/routes/cases.js#w58", [to]) }); continue }
+          await store.transition(id, to, { user: op, reason: caseyText("src/dashboard/routes/cases.js#w59") })
           store.learnOperatorActivity(op.id, c).catch(() => {})
         } else if (action === 'tag') {
           if (!tagList(c).includes(tag)) await store.updateCase(id, { tags: mergeTag(c.tags, tag) }, op, withVersion)
@@ -537,25 +537,25 @@ export function postBulk({ store, authed, actingOperator, sendReply }) {
           await store.appendEvent(id, { kind: 'note', actor: 'operator', text: noteText, data: { by: op.id, bulk: true } })
         } else if (action === 'draft_approve') {
           const draft = await pendingDraft(store, c)
-          if (!draft) { results.push({ id, ok: false, error: 'no pending draft' }); continue }
+          if (!draft) { results.push({ id, ok: false, error: caseyText("src/dashboard/routes/cases.js#w60") }); continue }
           const text = draft.text || ''
-          if (!text) { results.push({ id, ok: false, error: 'empty draft' }); continue }
+          if (!text) { results.push({ id, ok: false, error: caseyText("src/dashboard/routes/cases.js#w61") }); continue }
           let delivered = false
           if (sendReply) {
             try { await sendReply(c, text); delivered = true }
-            catch (e) { await store.appendEvent(id, { kind: 'observation', actor: 'system', text: `Failed to send approved draft on channel: ${e.message || 'unknown error'}` }) }
+            catch (e) { await store.appendEvent(id, { kind: 'observation', actor: 'system', text: caseyText("src/dashboard/routes/cases.js#w62", [e.message || caseyText("src/dashboard/routes/cases.js#w63")]) }) }
           }
           await store.appendEvent(id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, from_draft: true, by: op.id, bulk: true } })
           if (delivered) {
             await store.updateCase(id, { tags: dropTag(c.tags, 'draft-pending', 'needs-human') }, op)
           } else {
-            results.push({ id, ok: false, error: 'send failed' }); continue
+            results.push({ id, ok: false, error: caseyText("src/dashboard/routes/cases.js#w64") }); continue
           }
         } else if (action === 'draft_discard') {
           const draft = await pendingDraft(store, c)
-          if (!draft) { results.push({ id, ok: false, error: 'no pending draft' }); continue }
+          if (!draft) { results.push({ id, ok: false, error: caseyText("src/dashboard/routes/cases.js#w65") }); continue }
           await store.updateCase(id, { tags: dropTag(c.tags, 'draft-pending') }, op)
-          await store.appendEvent(id, { kind: 'observation', actor: 'operator', text: 'DRAFT DISCARDED: operator bulk discard.', data: { by: op.id, bulk: true } })
+          await store.appendEvent(id, { kind: 'observation', actor: 'operator', text: caseyText("src/dashboard/routes/cases.js#w66"), data: { by: op.id, bulk: true } })
         }
         results.push({ id, ok: true })
       } catch (e) { results.push({ id, ok: false, error: String(e.message || e).slice(0, 200) }) }
@@ -569,20 +569,20 @@ export function postSnooze({ store, authed, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w67") })
     const op = actingOperator(req)
     const now = Date.now()
     let until = null
     if (req.body && req.body.until != null) {
       const u = Number(req.body.until)
-      if (!Number.isFinite(u)) return res.status(400).json({ error: '"until" must be an epoch-ms number' })
+      if (!Number.isFinite(u)) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w68") })
       until = u
     } else if (req.body && req.body.minutes != null) {
       const m = Number(req.body.minutes)
-      if (!Number.isFinite(m)) return res.status(400).json({ error: '"minutes" must be a number' })
+      if (!Number.isFinite(m)) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w69") })
       until = now + Math.min(Math.max(m, 0), 60 * 24 * 14) * 60000
     } else {
-      return res.status(400).json({ error: 'snooze requires "minutes" or "until"' })
+      return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w70") })
     }
     const tags = tagList(c).filter(t => !t.startsWith('snoozed-until:'))
     const cleared = !(until > now)
@@ -590,7 +590,7 @@ export function postSnooze({ store, authed, actingOperator }) {
     await store.updateCase(c.id, { tags: tags.join(',') }, op)
     await store.appendEvent(c.id, {
       kind: 'action', actor: 'operator',
-      text: cleared ? `Snooze cleared by ${op.name || op.id}` : `Snoozed by ${op.name || op.id} until ${new Date(Math.floor(until)).toISOString()}`,
+      text: cleared ? caseyText("src/dashboard/routes/cases.js#w71", [op.name || op.id]) : caseyText("src/dashboard/routes/cases.js#w72", [op.name || op.id, new Date(Math.floor(until)).toISOString()]),
       data: { by: op.id, snoozed_until: cleared ? null : Math.floor(until) },
     })
     res.json({ ok: true, snoozed_until: cleared ? null : Math.floor(until), cleared })
@@ -601,7 +601,7 @@ export function postUndo({ store, authed, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w73") })
     const op = actingOperator(req)
     const { evData } = await import('../../overview.js')
     const { toDate } = await import('../../format.js')
@@ -630,30 +630,30 @@ export function postUndo({ store, authed, actingOperator }) {
         if (/^Snoozed by/.test(txt)) { target = e; kind = 'snooze'; break }
       }
     }
-    if (!target) return res.status(409).json({ error: 'nothing to undo in the last 120s' })
+    if (!target) return res.status(409).json({ error: caseyText("src/dashboard/routes/cases.js#w74") })
     const d = evData(target)
     let summary = ''
     if (kind === 'transition') {
       const to = d.from
-      if (!to) return res.status(409).json({ error: 'transition has no recorded prior stage' })
+      if (!to) return res.status(409).json({ error: caseyText("src/dashboard/routes/cases.js#w75") })
       const legal = store.availableTransitions(c, op)
       if (to !== c.status && !legal.includes(to)) {
-        return res.status(409).json({ error: `cannot undo: '${to}' is not a legal transition from '${c.status}'`, allowed: legal })
+        return res.status(409).json({ error: caseyText("src/dashboard/routes/cases.js#w76", [to, c.status]), allowed: legal })
       }
       await store.transition(c.id, to, { user: op, reason: 'undo' })
-      summary = `undid transition: back to ${to}`
+      summary = caseyText("src/dashboard/routes/cases.js#w77", [to])
     } else if (kind === 'claim') {
       const prior = d.was || ''
       await store.updateCase(c.id, { assignee: prior }, op)
-      summary = prior ? `undid claim: assignee back to ${prior}` : 'undid claim: assignee cleared'
+      summary = prior ? caseyText("src/dashboard/routes/cases.js#w78", [prior]) : caseyText("src/dashboard/routes/cases.js#w79")
     } else if (kind === 'snooze') {
       const tags = tagList(await store.getCase(c.id)).filter(t => !t.startsWith('snoozed-until:'))
       await store.updateCase(c.id, { tags: tags.join(',') }, op)
-      summary = 'undid snooze'
+      summary = caseyText("src/dashboard/routes/cases.js#w80")
     }
     await store.appendEvent(c.id, {
       kind: 'action', actor: 'operator',
-      text: `Undo by ${op.name || op.id}: ${summary}`,
+      text: caseyText("src/dashboard/routes/cases.js#w81", [op.name || op.id, summary]),
       data: { by: op.id, undo_of: target.id, undo_kind: kind },
     })
     res.json({ ok: true, undone: kind, summary })
@@ -664,13 +664,13 @@ export function postNote({ store, authed, str, REPORT_KEY_SET, actingOperator })
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const text = str(res, req.body, 'text'); if (text === undefined) return
-    if (!text.trim()) return res.status(400).json({ error: 'empty note' })
+    if (!text.trim()) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w82") })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w83") })
     const field = req.body.field && REPORT_KEY_SET.has(req.body.field) ? req.body.field : null
     const op = actingOperator(req)
     const relayed = isFieldAccount(req.caseyAccount) && req.body.relayed === true
-    await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text: relayed ? `Relayed by ${op.name || op.id} (told to them by the reporter, not written by the reporter): ${text}` : text, data: { ...(field ? { field } : {}), by: op.id, ...(relayed ? { relayed: true } : {}) } })
+    await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text: relayed ? caseyText("src/dashboard/routes/cases.js#w84", [op.name || op.id, text]) : text, data: { ...(field ? { field } : {}), by: op.id, ...(relayed ? { relayed: true } : {}) } })
     res.json({ ok: true })
   }
 }
@@ -681,15 +681,15 @@ export function postFlagReply({ store, authed, str, actingOperator }) {
     const eventId = str(res, req.body, 'event_id'); if (eventId === undefined) return
     const reason = typeof req.body.reason === 'string' ? req.body.reason.slice(0, 500) : ''
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w85") })
     const events = await store.listEvents(req.params.id, { limit: 500 })
     const target = events.find(e => e.id === eventId)
-    if (!target) return res.status(404).json({ error: 'event not found on this case' })
-    if (target.kind !== 'outbound') return res.status(400).json({ error: 'only an outbound reply can be flagged' })
+    if (!target) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w86") })
+    if (target.kind !== 'outbound') return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w87") })
     const op = actingOperator(req)
     await store.appendEvent(req.params.id, {
       kind: 'observation', actor: 'operator',
-      text: `FLAGGED REPLY${reason ? `: ${reason}` : ' (no reason given)'}`,
+      text: caseyText("src/dashboard/routes/cases.js#w88", [reason ? `: ${reason}` : caseyText("src/dashboard/routes/cases.js#w89")]),
       data: { flagged_reply: true, flagged_event_id: eventId, flagged_text: (target.text || '').slice(0, 500), reason, by: op.id },
     })
     if (!tagList(c).includes('flagged-reply')) {
@@ -703,7 +703,7 @@ export function getSuggestions({ store, authed, isOpenCase }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w90") })
     const { suggestLinks } = await import('../../correlate.js')
     const pool = (await store.listCases({}, { limit: 200 }))
       .filter(o => o.id !== c.id && isOpenCase(o) && !tagList(o).includes('merged'))
@@ -718,7 +718,7 @@ export function getSiteHistory({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w91") })
     const { suggestLinks } = await import('../../correlate.js')
     const pool = (await store.listCases({}, { limit: 500 }))
       .filter(o => o.id !== c.id && !tagList(o).includes('merged'))
@@ -743,9 +743,9 @@ export function postMerge({ store, authed, str, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const into = str(res, req.body, 'into'); if (into === undefined) return
-    if (!into.trim()) return res.status(400).json({ error: 'no source case to merge' })
+    if (!into.trim()) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w92") })
     const reason = str(res, req.body, 'reason', { required: false }); if (reason === undefined) return
-    const res2 = await store.mergeCases(into, req.params.id, actingOperator(req), { reason: reason || 'operator merge' })
+    const res2 = await store.mergeCases(into, req.params.id, actingOperator(req), { reason: reason || caseyText("src/dashboard/routes/cases.js#w93") })
     if (res2.error) return res.status(400).json({ error: res2.error })
     res.json({ ok: true, movedEvents: res2.movedEvents, alreadyMerged: !!res2.alreadyMerged, ...(res2.reportWasCorrupted ? { reportWasCorrupted: true } : {}) })
   }
@@ -755,10 +755,10 @@ export function postSplit({ store, authed, str, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { event_ids } = req.body
-    if (!Array.isArray(event_ids) || !event_ids.length) return res.status(400).json({ error: 'event_ids must be a non-empty array' })
+    if (!Array.isArray(event_ids) || !event_ids.length) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w94") })
     const subject = str(res, req.body, 'subject', { required: false }); if (subject === undefined) return
     const reason = str(res, req.body, 'reason', { required: false }); if (reason === undefined) return
-    const result = await store.splitCase(req.params.id, event_ids, { subject: subject || '', reason: reason || 'operator split' }, actingOperator(req))
+    const result = await store.splitCase(req.params.id, event_ids, { subject: subject || '', reason: reason || caseyText("src/dashboard/routes/cases.js#w95") }, actingOperator(req))
     if (result.error) return res.status(400).json({ error: result.error })
     res.json({ ok: true, new_case_id: result.newCase?.id, new_case_ref: result.newCase?.ref, moved_events: result.movedEvents })
   }
@@ -769,16 +769,16 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const raw = str(res, req.body, 'text'); if (raw === undefined) return
     const text = raw.trim()
-    if (!text) return res.status(400).json({ error: 'empty reply' })
+    if (!text) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w96") })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
-    if (tagList(c).includes('opted-out')) return res.status(409).json({ error: vocabText('ui.reply_refused_opted_out', 'This person asked us to stop messaging them, so nothing was sent.') })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w97") })
+    if (tagList(c).includes('opted-out')) return res.status(409).json({ error: vocabText('ui.reply_refused_opted_out', caseyText("src/dashboard/routes/cases.js#w98")) })
     const op = actingOperator(req)
     let delivered = false
     if (sendReply) {
       try { await sendReply(c, text); delivered = true }
       catch (e) {
-        await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send operator reply on channel: ${e.message || 'unknown error'}` })
+        await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: caseyText("src/dashboard/routes/cases.js#w99", [e.message || caseyText("src/dashboard/routes/cases.js#w100")]) })
       }
     }
     let claimed = false
@@ -786,13 +786,13 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
       const current = String(c.assignee || '').trim()
       if (!current || current === UNCLAIMED_ASSIGNEE) {
         await store.updateCase(c.id, { assignee: op.id }, op)
-        await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `Claimed by ${op.name || op.id}`, data: { claimed_by: op.id, was: current || null } })
+        await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: caseyText("src/dashboard/routes/cases.js#w101", [op.name || op.id]), data: { claimed_by: op.id, was: current || null } })
         claimed = true
       }
     }
     if (delivered && req.caseyRole && (c.autonomy || 'auto') === 'auto') {
       await store.updateCase(c.id, { autonomy: 'observe' }, op)
-      await store.appendEvent(c.id, { kind: 'autonomy_change', actor: 'operator', text: 'autonomy auto -> observe', data: { from: 'auto', to: 'observe', by: op.name || op.id, reason: 'a team member took over the conversation' } })
+      await store.appendEvent(c.id, { kind: 'autonomy_change', actor: 'operator', text: caseyText("src/dashboard/routes/cases.js#w102"), data: { from: 'auto', to: 'observe', by: op.name || op.id, reason: caseyText("src/dashboard/routes/cases.js#w103") } })
     }
     await appendReplyEvent(store, c, text, op, { delivered, reason: sendReply ? 'send_failed' : 'no_channel' })
     store.learnOperatorActivity(op.id, c).catch(() => {})
@@ -812,18 +812,18 @@ export function postInstruct({ store, authed, str, actingOperator, sendReply, ll
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const raw = str(res, req.body, 'instruction'); if (raw === undefined) return
     const instruction = raw.trim()
-    if (!instruction) return res.status(400).json({ error: 'Say what the reply should tell them.' })
-    if (instruction.length > STAFF_TEXT_MAX_LEN) return res.status(413).json({ error: `instruction too long (max ${STAFF_TEXT_MAX_LEN})` })
+    if (!instruction) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w104") })
+    if (instruction.length > STAFF_TEXT_MAX_LEN) return res.status(413).json({ error: caseyText("src/dashboard/routes/cases.js#w105", [STAFF_TEXT_MAX_LEN]) })
     const expected = req.body.expected_ref == null ? null : str(res, req.body, 'expected_ref', { required: false }); if (expected === undefined) return
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
-    if (expected && expected !== c.ref) return res.status(409).json({ error: 'This record changed while you were typing. Reload it and try again.' })
-    if (tagList(c).includes('opted-out')) return res.status(409).json({ error: vocabText('ui.reply_refused_opted_out', 'This person asked us to stop messaging them, so nothing was sent.') })
-    if (!sendReply || c.channel === 'system') return res.status(409).json({ error: vocabText('ui.outbound_refused_no_channel', 'nothing was sent: this conversation is not attached to a messaging channel right now') })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w106") })
+    if (expected && expected !== c.ref) return res.status(409).json({ error: caseyText("src/dashboard/routes/cases.js#w107") })
+    if (tagList(c).includes('opted-out')) return res.status(409).json({ error: vocabText('ui.reply_refused_opted_out', caseyText("src/dashboard/routes/cases.js#w108")) })
+    if (!sendReply || c.channel === 'system') return res.status(409).json({ error: vocabText('ui.outbound_refused_no_channel', caseyText("src/dashboard/routes/cases.js#w109")) })
     const op = actingOperator(req)
-    await store.appendEvent(c.id, { kind: 'note', actor: 'operator', channel: c.channel, text: `Instruction for the reply: ${instruction}`, data: { instruction: true, by: op.id } })
+    await store.appendEvent(c.id, { kind: 'note', actor: 'operator', channel: c.channel, text: caseyText("src/dashboard/routes/cases.js#w110", [instruction]), data: { instruction: true, by: op.id } })
     const outcome = await draftFromInstruction({ store, log: console, llmStatus, callLLM, caseRow: c, instruction, operator: op })
-    if (!outcome.ok) return res.status(503).json({ error: `The assistant could not write a draft (${outcome.error}). Nothing was sent. Try again, or type the reply yourself.` })
+    if (!outcome.ok) return res.status(503).json({ error: caseyText("src/dashboard/routes/cases.js#w111", [outcome.error]) })
     res.json({ ok: true, drafted: true, recorded: 'draft' })
   }
 }
@@ -832,19 +832,19 @@ export function postDraftApprove({ store, authed, str, actingOperator, sendReply
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w112") })
     const draft = await pendingDraft(store, c)
-    if (!draft) return res.status(409).json({ error: 'no pending draft' })
+    if (!draft) return res.status(409).json({ error: caseyText("src/dashboard/routes/cases.js#w113") })
     let text = draft.text || ''
     if (req.body && typeof req.body.text === 'string' && req.body.text.trim()) {
       const edited = str(res, req.body, 'text', { required: false }); if (edited === undefined) return
       if (edited.trim()) text = edited.trim()
     }
-    if (!text) return res.status(400).json({ error: 'empty draft' })
+    if (!text) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w114") })
     let delivered = false
     if (sendReply) {
       try { await sendReply(c, text); delivered = true }
-      catch (e) { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send approved draft on channel: ${e.message || 'unknown error'}` }) }
+      catch (e) { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: caseyText("src/dashboard/routes/cases.js#w115", [e.message || caseyText("src/dashboard/routes/cases.js#w116")]) }) }
     }
     const op = actingOperator(req)
     await appendReplyEvent(store, c, text, op, { delivered, reason: sendReply ? 'send_failed' : 'no_channel', extra: { from_draft: true } })
@@ -859,14 +859,14 @@ export function postDraftDiscard({ store, authed, str, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w117") })
     const draft = await pendingDraft(store, c)
-    if (!draft) return res.status(409).json({ error: 'no pending draft' })
+    if (!draft) return res.status(409).json({ error: caseyText("src/dashboard/routes/cases.js#w118") })
     const rawReason = str(res, req.body, 'reason', { required: false }); if (rawReason === undefined) return
-    const reason = rawReason.trim() || 'operator discarded'
+    const reason = rawReason.trim() || caseyText("src/dashboard/routes/cases.js#w119")
     const op = actingOperator(req)
     await store.updateCase(c.id, { tags: dropTag(c.tags, 'draft-pending') }, op)
-    await store.appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `DRAFT DISCARDED: ${reason}.`, data: { by: op.id } })
+    await store.appendEvent(c.id, { kind: 'observation', actor: 'operator', text: caseyText("src/dashboard/routes/cases.js#w120", [reason]), data: { by: op.id } })
     res.json({ ok: true })
   }
 }
@@ -880,26 +880,26 @@ function fillLinesHtml(key) {
 }
 
 const HEALTH_WARNING_LABEL = {
-  'health:stale': 'Going cold (no recent activity)',
-  'health:stuck': 'Stuck in this stage too long',
-  'health:unanswered_handoff': 'A person was asked for and not yet answered',
-  'health:abandoned_intake': 'Intake left with on-site facts missing',
-  'health:incomplete_critical': 'Working but visit-critical facts still missing',
-  'health:never_closed': 'Resolved but never closed',
-  'health:timestamp_corrupt': 'Case time data looks wrong',
-  'health:unanswered_handoff_escalated': 'Still waiting for a person, well past the first deadline',
-  'health:unsent_draft': 'A reply is written but nobody has sent it',
-  'health:premature_complete': 'Marked done with facts a field visit needs still blank',
-  'needs-human': 'Waiting for a person to look',
-  'draft-pending': 'Reply written but not sent',
-  'ai-offline': 'Automatic replies are paused',
-  'degraded-turn-seen': 'A reply had to be retried',
+  'health:stale': caseyText("src/dashboard/routes/cases.js#w123"),
+  'health:stuck': caseyText("src/dashboard/routes/cases.js#w124"),
+  'health:unanswered_handoff': caseyText("src/dashboard/routes/cases.js#w125"),
+  'health:abandoned_intake': caseyText("src/dashboard/routes/cases.js#w126"),
+  'health:incomplete_critical': caseyText("src/dashboard/routes/cases.js#w127"),
+  'health:never_closed': caseyText("src/dashboard/routes/cases.js#w128"),
+  'health:timestamp_corrupt': caseyText("src/dashboard/routes/cases.js#w129"),
+  'health:unanswered_handoff_escalated': caseyText("src/dashboard/routes/cases.js#w130"),
+  'health:unsent_draft': caseyText("src/dashboard/routes/cases.js#w131"),
+  'health:premature_complete': caseyText("src/dashboard/routes/cases.js#w132"),
+  'needs-human': caseyText("src/dashboard/routes/cases.js#w133"),
+  'draft-pending': caseyText("src/dashboard/routes/cases.js#w134"),
+  'ai-offline': caseyText("src/dashboard/routes/cases.js#w135"),
+  'degraded-turn-seen': caseyText("src/dashboard/routes/cases.js#w136"),
 }
 const GUARDRAIL_INTERNAL_TAGS = new Set(['needs-human', 'draft-pending', 'unsent_draft', 'ai-offline', 'degraded-turn-seen'])
 const warningKey = (t) => 'ui.warn_' + t.replace(/^health:/, '').replace(/[^a-z0-9]+/g, '_')
 const guardrailWarnings = (c) => tagList(c)
   .filter(t => t.startsWith('health:') || GUARDRAIL_INTERNAL_TAGS.has(t))
-  .map(t => vocabWord(warningKey(t)) || HEALTH_WARNING_LABEL[t] || vocabWord('ui.warn_needs_check', 'Needs a check'))
+  .map(t => vocabWord(warningKey(t)) || HEALTH_WARNING_LABEL[t] || vocabWord('ui.warn_needs_check', caseyText("src/dashboard/routes/cases.js#w137")))
 
 export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableReport }) {
   return async (req, res) => {
@@ -933,12 +933,12 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
         + `table{width:100%}th{width:40%;font-weight:600;vertical-align:top}td{vertical-align:top}`
         + `.maplink{font-size:var(--fs-micro)}.printonly{display:none}.ds-print-warn{break-inside:avoid}`
         + `.act{display:flex;gap:var(--space-2-75);flex-wrap:wrap;margin:var(--space-2-5) 0 var(--space-4)}`
-        + `.act a{background:${BRAND.ground};color:${BRAND.ink};padding:var(--space-2) var(--space-3);border-radius:6px;text-decoration:none;font-size:var(--fs-xs);font-weight:600}`
-        + `.act a:hover{background:${BRAND.hover}}`
-        + `@media print{.act{display:none}.printonly{display:block}}`
+        + caseyText("src/dashboard/routes/cases.js#w140", [BRAND.ground, BRAND.ink])
+        + caseyText("src/dashboard/routes/cases.js#w141", [BRAND.hover])
+        + caseyText("src/dashboard/routes/cases.js#w142")
       const who = await reporterSummary(store, c.contact_id, c.id).catch(() => null)
       const whoLine = who && who.people > 1
-        ? `<p><strong>Reported by:</strong> ${esc(who.reported_by ? who.reported_by.name : 'not recorded')}, shared phone: ${who.people} people</p>` : ''
+        ? `<p><strong>Reported by:</strong> ${esc(who.reported_by ? who.reported_by.name : caseyText("src/dashboard/routes/cases.js#w144"))}, shared phone: ${who.people} people</p>` : ''
       const warnings = guardrailWarnings(c)
       const warnLine = warnings.length
         ? `<div class="ds-print-warn"><p><strong>Warnings:</strong></p><ul>${warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''
@@ -954,8 +954,8 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
 ${mapsUrl ? `<p class="printonly"><strong>Map:</strong> ${esc(mapsUrl)}</p>` : ''}
 ${telLink ? `<p class="printonly"><strong>Phone:</strong> ${esc(phone)}</p>` : ''}
 <table>${rows}</table>`
-      res.type('html').send(printableReport(`Case ${c.ref||c.id} briefing`, body, extraCss))
-    } catch (e) { res.status(500).send('<p>Error: ' + esc(String(e.message || 'unknown error')) + '</p>') }
+      res.type('html').send(printableReport(caseyText("src/dashboard/routes/cases.js#w149", [c.ref||c.id]), body, extraCss))
+    } catch (e) { res.status(500).send('<p>Error: ' + esc(String(e.message || caseyText("src/dashboard/routes/cases.js#w150"))) + '</p>') }
   }
 }
 
@@ -990,12 +990,12 @@ export function postLocation({ store, authed, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const lat = Number(req.body?.lat), lon = Number(req.body?.lon)
-    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return res.status(400).json({ error: 'That position is not valid.' })
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w151") })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w152") })
     const op = actingOperator(req)
     await store.updateCase(c.id, { lat, lon, location_source: 'gps', location_confidence: 100 }, op)
-    await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'location marked from the field', data: { by: op.id, lat, lon } })
+    await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: caseyText("src/dashboard/routes/cases.js#w153"), data: { by: op.id, lat, lon } })
     res.json({ ok: true })
   }
 }
@@ -1004,10 +1004,10 @@ export function postSendBack({ store, authed, str, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
+    if (!c) return res.status(404).json({ error: caseyText("src/dashboard/routes/cases.js#w154") })
     const text = str(res, req.body, 'text', { required: false }); if (text === undefined) return
     const missing = Array.isArray(req.body?.missing) ? req.body.missing.filter(k => typeof k === 'string').slice(0, 20) : []
-    if (!text.trim() && !missing.length) return res.status(400).json({ error: 'Say what is missing so it can be fixed.' })
+    if (!text.trim() && !missing.length) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#w155") })
     const op = actingOperator(req)
     await sendBackToResponder(store, c.id, { by: op.name || op.id, user: op, text, missing, data: { by: op.id } })
     res.json({ ok: true })
