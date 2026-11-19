@@ -118,7 +118,7 @@ well, and may not speak English as a first language. So casey:
 
 ## Several people on one phone
 
-A phone number names a chat, not a person: in rural areas a family, neighbours or a herd boy share one phone. casey keeps one contact per number (one open report per conversation, one STOP per phone) and tracks the people behind it: the model records who is writing with `case_speaker`, each report says who gave it ("Reported by Nomsa (wife), shared phone: 3 people"), the privacy notice is shown once per person, STOP stays per phone but is recorded with the person who asked, and one person can be erased without touching the phone or anyone else on it (`casey erase-contact <contact> --person <name>`). It is a public-contact feature with no schema change; a phone with one known person behaves as it always did. Details: `AGENTS.md`, "Several people on one phone".
+A phone number names a chat, not a person: in some places a family, neighbours or a helper share one phone. casey keeps one contact per number (one open report per conversation, one STOP per phone) and tracks the people behind it: the model records who is writing with `case_speaker`, each report says who gave it ("Reported by Nomsa (wife), shared phone: 3 people"), the privacy notice is shown once per person, STOP stays per phone but is recorded with the person who asked, and one person can be erased without touching the phone or anyone else on it (`casey erase-contact <contact> --person <name>`). It is a public-contact feature with no schema change; a phone with one known person behaves as it always did. Details: `AGENTS.md`, "Several people on one phone".
 
 ## Reporter access tiers
 

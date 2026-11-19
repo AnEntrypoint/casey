@@ -16,39 +16,16 @@ implementation should take, not as code that exists today; the live modules
 are `provenance.js`, `observation.js`, `raw-log.js`, `write-path.js` and
 `pack-schema.js`, reached only via `src/provenance-wire.js`.
 
-## Domain grounding (research notes)
+## Domain grounding
 
-casey's shipped design (AGENTS.md, README.md) already encodes an implicit
-farmer -> field worker/reporter -> operator/district-vet-equivalent ->
-national-authority chain: a reporter (often a field worker relaying what
-they saw, not the animals' owner) messages casey, an operator dashboard
-triages and can hand off, and the case_type taxonomy (outbreak/follow_up/
-lab_sample/import_alert) is casey's own working notion of what a national
-vet service's case categories look like. This subsystem does not invent a
-new chain -- it slots into the one casey already assumes.
-
-- Notifiable/reportable disease alignment: casey's `suspected_disease`
-  codelist (see the `suspected_disease` codelist in the deployment's `pack.cjs`) is a starter list
-  (foot_and_mouth, newcastle, anthrax, rabies) chosen as illustrative
-  examples of WOAH-notifiable diseases; a real deployment MUST replace this
-  codelist with the exact list its national veterinary authority maintains
-  -- this is precisely what a config pack is FOR: a new country/authority
-  ships a new pack, not new code.
-- Species scope: cattle/goat/sheep/poultry/pig/other, matching casey's
-  existing `species` free-text field's implicit scope. A pack can extend
-  this codelist per deployment without an engine change.
-- Languages/literacy: casey's existing `caseSystemPrompt` design (mirror the
-  contact's language, plain warm one-idea-per-sentence, no jargon) is the
-  literacy-appropriate interaction layer this subsystem's stricter data
-  model sits BEHIND -- a field worker never sees "provenance" or
-  "Observation", only their own language's plain words for the report. The
-  vocabulary a worker sees comes from the active config package's
-  `report-fields.yml` and `persona.cjs`, never from this subsystem's own
-  field names (AGENTS.md, "Configuration architecture").
+A deployment's domain grounding (its species and notifiable-condition codelists, its sector
+authority, its languages) is kept in that deployment's own repository, not here. casey's
+provenance layer assumes no domain: codelists and vocabulary come from the deployment's config
+package (`pack.cjs`, `report-fields.yml`, `persona.cjs`).
 
 ## Privacy, ethics, and legal
 
-- **Consent.** A farmer/contact's location and personal data consent should
+- **Consent.** A contact's location and personal data consent should
   be captured as its own provenance-tagged field (`consent: given |
   declined | not_asked`) rather than assumed. A contact who declines
   location consent must still be able to submit a report -- degraded to a
@@ -69,15 +46,15 @@ new chain -- it slots into the one casey already assumes.
   jurisdiction's equivalent law and any cross-border data-transfer rules
   before aggregate data crosses a border (e.g. to a regional authority).
 - **Harm-protection incentive design.** This is upstream of any code this
-  subsystem can write: if reporting a disease triggers uncompensated
-  culling with no recourse, the platform's real function becomes teaching
-  farmers not to report, and no amount of provenance tagging fixes that.
-  A deployment MUST settle its own culling/compensation policy with its
-  veterinary authority before scaling reporting -- this is a governance
+  subsystem can write: if reporting a notifiable condition triggers uncompensated
+  loss with no recourse, the platform's real function becomes teaching
+  contacts not to report, and no amount of provenance tagging fixes that.
+  A deployment MUST settle its own loss-compensation policy with its
+  sector authority before scaling reporting -- this is a governance
   precondition, not a feature request.
 - **Data-sharing agreements.** Before any aggregate export (the data-escrow
   export below, or a routine management report) leaves casey and reaches a
-  veterinary authority, a deployment needs an explicit data-sharing
+  sector authority, a deployment needs an explicit data-sharing
   agreement settled with that authority -- what is shared, at what
   granularity, under what retention. This subsystem's aggregate/report
   surfaces are built assuming such an agreement exists; it does not
@@ -125,7 +102,7 @@ new chain -- it slots into the one casey already assumes.
   correction is not trustworthy, it is just quiet. A deployment running
   this subsystem at scale should define what a public correction
   announcement looks like (e.g. a dashboard "corrections" feed, or a
-  periodic note to the veterinary authority) once real corrections start
+  periodic note to the sector authority) once real corrections start
   accumulating -- the append-only correction chain (`correctsId`) is the
   data source such an announcement would read from.
 
@@ -215,7 +192,7 @@ than an improvisation:
 
 ## Failure and exit planning
 
-- **Data escrow.** A national veterinary authority using casey's aggregate
+- **Data escrow.** A national sector authority using casey's aggregate
   data should be able to receive a full open-format export (every raw
   Observation plus every aggregate, in a format readable without casey
   itself) if a deployment winds down. Because `src/core/raw-log.js`'s
