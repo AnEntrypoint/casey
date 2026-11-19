@@ -7,30 +7,31 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { ROOT, bold, dim, green, yellow, cyan, bad, warn, say, pkgVersion, hasCreds, closeAndExit } from './casey-cli-ui.js'
 import { makeSendReply } from './send-reply.js'
+import { caseyText } from '../src/deployment-text.js';
 
 function resolveChannels(flags) {
   const requested = (flags.channels || 'discord,whatsapp').split(',').map(s => s.trim()).filter(Boolean)
   if (hasCreds('whatsapp') && !process.env.WHATSAPP_APP_SECRET) {
     const idx = requested.indexOf('whatsapp')
     if (idx !== -1 && flags.channels) {
-      say(bad('WHATSAPP_APP_SECRET is required to enable WhatsApp (verify inbound webhook signatures) - refusing to serve unsigned inbound'))
+      say(bad(caseyText("bin/casey-serve.js#w0")))
       process.exit(1)
     }
-    if (idx !== -1) { requested.splice(idx, 1); say(warn('WhatsApp creds present but WHATSAPP_APP_SECRET unset - skipping WhatsApp (set the secret to enable it)')) }
+    if (idx !== -1) { requested.splice(idx, 1); say(warn(caseyText("bin/casey-serve.js#w1"))) }
   }
   const channels = requested.filter(ch => hasCreds(ch))
   const skipped = requested.filter(ch => !hasCreds(ch))
-  if (!channels.length) { say(bad('no channels available - set discord/whatsapp credentials')); process.exit(1) }
+  if (!channels.length) { say(bad(caseyText("bin/casey-serve.js#w2"))); process.exit(1) }
   if (channels.includes('whatsapp') && !process.env.WHATSAPP_VERIFY_TOKEN) {
     const idx = channels.indexOf('whatsapp')
     if (flags.channels) {
-      say(bad('WHATSAPP_VERIFY_TOKEN is required to enable WhatsApp (Meta\'s webhook handshake) - refusing to start'))
+      say(bad(caseyText("bin/casey-serve.js#w3")))
       process.exit(1)
     }
     channels.splice(idx, 1)
     skipped.push('whatsapp')
-    say(warn('WhatsApp creds present but WHATSAPP_VERIFY_TOKEN unset - skipping WhatsApp (set the token to enable it)'))
-    if (!channels.length) { say(bad('no channels available - set discord/whatsapp credentials')); process.exit(1) }
+    say(warn(caseyText("bin/casey-serve.js#w4")))
+    if (!channels.length) { say(bad(caseyText("bin/casey-serve.js#w5"))); process.exit(1) }
   }
   return { channels, skipped }
 }
@@ -40,7 +41,7 @@ async function startAutoUpdate() {
   const interval = Number(process.env.CASEY_AUTO_UPDATE_INTERVAL_MS) || 60_000
   const repoRoot = ROOT
   if (!existsSync(path.join(repoRoot, '.git'))) {
-    console.log(`  auto-update: ${yellow('off')}${dim('   (no git checkout here; a release extract updates by redeploy)')}`)
+    console.log(`  auto-update: ${yellow('off')}${dim(caseyText("bin/casey-serve.js#w6"))}`)
     return null
   }
   let warnedSkip = false
@@ -48,16 +49,16 @@ async function startAutoUpdate() {
     resolve({ err, out: String(stdout || ''), errText: String(stderr || (err && err.message) || '') })))
   const pull = async () => {
     const f = await git(['fetch', '--quiet', 'origin'])
-    if (f.err) { if (!warnedSkip) { warnedSkip = true; console.error(dim('[auto-update] fetch failed (will retry): ' + f.errText.split('\n')[0])) } return }
+    if (f.err) { if (!warnedSkip) { warnedSkip = true; console.error(dim(caseyText("bin/casey-serve.js#w7") + f.errText.split('\n')[0])) } return }
     const m = await git(['merge', '--ff-only', '@{u}'])
     if (m.err) {
-      if (!warnedSkip) { warnedSkip = true; console.log(dim('[auto-update] cannot fast-forward (local changes or diverged); staying on current code, will retry when clean.')) }
+      if (!warnedSkip) { warnedSkip = true; console.log(dim(caseyText("bin/casey-serve.js#w8"))) }
       return
     }
     warnedSkip = false
-    if (/Updating|Fast-forward/.test(m.out)) console.log(green('[auto-update] pulled new code; the worker will reload.'))
+    if (/Updating|Fast-forward/.test(m.out)) console.log(green(caseyText("bin/casey-serve.js#w9")))
   }
-  console.log(`  auto-update: ${green('on')}${dim(`   (fetch + fast-forward every ${Math.round(interval / 1000)}s; the worker reloads on the new code -- opt out: CASEY_AUTO_UPDATE=0)`)}`)
+  console.log(`  auto-update: ${green('on')}${dim(caseyText("bin/casey-serve.js#w10", [Math.round(interval / 1000)]))}`)
   return setInterval(pull, interval)
 }
 
@@ -67,14 +68,14 @@ async function upSupervised(flags, channels, skipped) {
   const workerArgs = ['--channels', channels.join(','), '--port', String(dashPort)]
   const reload = !flags['no-reload']
   const sup = createSupervisor({ workerArgs, reload })
-  console.log(bold('casey up') + dim(`  v${pkgVersion()}`) + dim('  (supervised)'))
-  console.log(`  channels: ${green(channels.join(', '))}` + (skipped.length ? dim(`   (skipped, no creds: ${skipped.join(', ')} - run casey doctor)`) : ''))
-  console.log(`  dashboard: ${cyan(`http://localhost:${dashPort}`)} ${dim('(login required)')}`)
+  console.log(bold(caseyText("bin/casey-serve.js#w11")) + dim(`  v${pkgVersion()}`) + dim('  (supervised)'))
+  console.log(`  channels: ${green(channels.join(', '))}` + (skipped.length ? dim(caseyText("bin/casey-serve.js#w12", [skipped.join(', ')])) : ''))
+  console.log(`  dashboard: ${cyan(`http://localhost:${dashPort}`)} ${dim(caseyText("bin/casey-serve.js#w13"))}`)
   console.log(`  data: ${dim(path.join(process.cwd(), 'data'))}`)
   console.log(reload
-    ? `  live reload: ${green('on')}${dim('   (edits to the source dirs listed below restart the worker automatically; same store, no data lost)')}`
-    : `  live reload: ${yellow('off')}${dim('   (--no-reload: restart manually to pick up code changes)')}`)
-  console.log(dim('  press ctrl-c to stop'))
+    ? caseyText("bin/casey-serve.js#w14", [green('on'), dim(caseyText("bin/casey-serve.js#w15"))])
+    : caseyText("bin/casey-serve.js#w16", [yellow('off'), dim(caseyText("bin/casey-serve.js#w17"))]))
+  console.log(dim(caseyText("bin/casey-serve.js#w18")))
   await sup.start()
   let autoUpdateTimer = null
   const autoUpdate = !flags['no-auto-update'] && process.env.CASEY_AUTO_UPDATE !== '0'
@@ -84,7 +85,7 @@ async function upSupervised(flags, channels, skipped) {
     if (exiting) return
     exiting = true
     if (autoUpdateTimer) clearInterval(autoUpdateTimer)
-    try { await sup.stop() } catch (e) { console.error('shutdown error:', e.message) }
+    try { await sup.stop() } catch (e) { console.error(caseyText("bin/casey-serve.js#w19"), e.message) }
     process.exit(0)
   }
   process.on('SIGINT', shutdown)
@@ -96,7 +97,7 @@ async function upInProcess(flags, channels, skipped) {
   let caseyRef = null
   const brainResilient = makeResilientCallLLM({
     probe: true,
-    onRecover: () => caseyRef?.drainQueuedTurns?.().catch(e => caseyRef?.log?.warn?.('[casey] recovery drain failed', { error: e.message })),
+    onRecover: () => caseyRef?.drainQueuedTurns?.().catch(e => caseyRef?.log?.warn?.(caseyText("bin/casey-serve.js#w20"), { error: e.message })),
   })
   const casey = await createCasey({ channels, callLLM: brainResilient.callLLM, llmStatus: brainResilient.status })
   caseyRef = casey
@@ -109,17 +110,17 @@ async function upInProcess(flags, channels, skipped) {
   try {
     dash = await createDashboard(casey.store, { port: dashPort, sendReply, llmStatus: brainResilient.status, runSweep: () => casey.runSweepOnce(), receiveStatus: () => casey.receiveStatus(), resolveWhatsappAdapter: () => resolveAdapter(casey, 'whatsapp') })
   } catch (e) {
-    say(bad(`dashboard failed to bind port ${dashPort}: ${e.message} - start with --port <other>`))
-    try { await casey.stop() } catch (e2) { console.error('shutdown error:', e2.message) }
+    say(bad(caseyText("bin/casey-serve.js#w21", [dashPort, e.message])))
+    try { await casey.stop() } catch (e2) { console.error(caseyText("bin/casey-serve.js#w22"), e2.message) }
     process.exit(1)
   }
-  console.log(bold('casey up') + dim(`  v${pkgVersion()}`))
-  console.log(`  channels: ${green(channels.join(', '))}` + (skipped.length ? dim(`   (skipped, no creds: ${skipped.join(', ')} - run casey doctor)`) : ''))
-  if (brain.source === 'acptoapi') console.log(`  AI helper: ${green('online')}${dim(`   (${brain.model} via ${brain.url || 'in-process bridge'})`)}`)
-  else console.log(`  AI helper: ${yellow('offline')}${dim('   (auto-replies paused; no message is sent, messages queue and re-drive once the provider recovers.)')}`)
-  console.log(`  dashboard: ${cyan(`http://localhost:${dash.port}`)} ${dim('(login required)')}`)
+  console.log(bold(caseyText("bin/casey-serve.js#w23")) + dim(`  v${pkgVersion()}`))
+  console.log(`  channels: ${green(channels.join(', '))}` + (skipped.length ? dim(caseyText("bin/casey-serve.js#w24", [skipped.join(', ')])) : ''))
+  if (brain.source === 'acptoapi') console.log(caseyText("bin/casey-serve.js#w25", [green('online'), dim(`   (${brain.model} via ${brain.url || caseyText("bin/casey-serve.js#w26")})`)]))
+  else console.log(caseyText("bin/casey-serve.js#w27", [yellow('offline'), dim(caseyText("bin/casey-serve.js#w28"))]))
+  console.log(`  dashboard: ${cyan(`http://localhost:${dash.port}`)} ${dim(caseyText("bin/casey-serve.js#w29"))}`)
   console.log(`  data: ${dim(path.join(process.cwd(), 'data'))}`)
-  console.log(dim('  press ctrl-c to stop'))
+  console.log(dim(caseyText("bin/casey-serve.js#w30")))
   let exiting = false
   process.on('SIGINT', async () => {
     if (exiting) return
@@ -128,7 +129,7 @@ async function upInProcess(flags, channels, skipped) {
       await dash.close()
       await casey.stop()
     } catch (e) {
-      console.error('shutdown error:', e.message)
+      console.error(caseyText("bin/casey-serve.js#w31"), e.message)
     }
     process.exit(0)
   })
@@ -151,12 +152,12 @@ export async function cmdDashboard({ flags }) {
   const store = createCaseStore(); await store.init()
   const { ensureBootstrapAdmin } = await import('../src/dashboard/auth.js')
   const boot = await ensureBootstrapAdmin(store, console)
-  if (boot) console.log(green(`bootstrap admin account created -- username: ${bold(boot.username)}`) + dim(`  password written to ${boot.passwordPath} (read it once, log in, set your own password, then delete that file)`))
+  if (boot) console.log(green(caseyText("bin/casey-serve.js#w32", [bold(boot.username)])) + dim(caseyText("bin/casey-serve.js#w33", [boot.passwordPath])))
   let dash
   try {
     dash = await createDashboard(store, { port: Number(flags.port || 4000) })
   } catch (e) {
-    say(bad(`dashboard failed to bind port ${Number(flags.port || 4000)}: ${e.message} - start with --port <other>`))
+    say(bad(caseyText("bin/casey-serve.js#w34", [Number(flags.port || 4000), e.message])))
     await closeAndExit(store, 1)
   }
   if (extraDashboardRoutes) {
@@ -165,22 +166,22 @@ export async function cmdDashboard({ flags }) {
     if (typeof mount !== 'function') throw new Error(`CASEY_EXTRA_DASHBOARD_ROUTES module has no default export function: ${extraDashboardRoutes}`)
     await mount(dash.app, { store })
     dash.app.use((err, req, res, next) => {
-      if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'invalid request body' })
-      res.status(err?.status || 500).json({ error: 'internal error' })
+      if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: caseyText("bin/casey-serve.js#w35") })
+      res.status(err?.status || 500).json({ error: caseyText("bin/casey-serve.js#w36") })
     })
   }
-  console.log(`dashboard: ${cyan(`http://localhost:${dash.port}`)}  ${dim('(ctrl-c to stop)')}`)
-  console.log(`${yellow('dashboard-only mode')}${dim('   (reads and edits the store; not attached to a running agent)')}`)
-  console.log(dim('  not available here: sending a reply to a contact, AI-helper status, message-channel'))
-  console.log(dim('  receive status, queued/dead-lettered message counts, supervisor runtime state, Sweep now.'))
-  console.log(dim('  Controls that need them are hidden rather than shown and refused; a reply typed here is'))
-  console.log(dim('  recorded on the timeline as unsent, never as delivered. All of it keeps working wherever'))
-  console.log(dim('  `casey up` is running. Everything that reads the store is unaffected.'))
+  console.log(`dashboard: ${cyan(`http://localhost:${dash.port}`)}  ${dim(caseyText("bin/casey-serve.js#w37"))}`)
+  console.log(`${yellow(caseyText("bin/casey-serve.js#w38"))}${dim(caseyText("bin/casey-serve.js#w39"))}`)
+  console.log(dim(caseyText("bin/casey-serve.js#w40")))
+  console.log(dim(caseyText("bin/casey-serve.js#w41")))
+  console.log(dim(caseyText("bin/casey-serve.js#w42")))
+  console.log(dim(caseyText("bin/casey-serve.js#w43")))
+  console.log(dim(caseyText("bin/casey-serve.js#w44")))
   process.on('SIGINT', async () => {
     try {
       await dash.close()
     } catch (e) {
-      console.error('shutdown error:', e.message)
+      console.error(caseyText("bin/casey-serve.js#w45"), e.message)
     }
     await closeAndExit(store, 0)
   })

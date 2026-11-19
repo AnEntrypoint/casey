@@ -24,7 +24,7 @@ async function findWhatsappContact(store, needle) {
     || null
 }
 
-const usage = () => say('usage: casey roles <list|assign|demote|invite|invites|revoke|release|link|import|roster> ...   (casey roles --help)')
+const usage = () => say(caseyText("bin/casey-roles-command.js#w0"))
 
 export async function cmdRoles({ flags, rest }) {
   const store = await openStore()
@@ -43,14 +43,14 @@ export async function cmdRoles({ flags, rest }) {
       }, null, 2))
       await closeAndExit(store, 0)
     }
-    console.log(bold('WhatsApp team members'))
-    if (!contacts.length) console.log(dim('  none yet -- casey roles assign <phone> <tier> --name "..." or casey roles invite <tier>'))
+    console.log(bold(caseyText("bin/casey-roles-command.js#w1")))
+    if (!contacts.length) console.log(dim(caseyText("bin/casey-roles-command.js#w2")))
     for (const c of contacts.sort((a, b) => TIER_ORDER.indexOf(resolveTierValue(b.tier)) - TIER_ORDER.indexOf(resolveTierValue(a.tier)))) {
-      console.log(`  ${bold(c.display_name || '(no name)')}\t${cyan(resolveTierValue(c.tier))}\t${dim(fmtPhone27(c.external_id))}\t${dim(c.id)}`)
+      console.log(`  ${bold(c.display_name || caseyText("bin/casey-roles-command.js#w3"))}\t${cyan(resolveTierValue(c.tier))}\t${dim(fmtPhone27(c.external_id))}\t${dim(c.id)}`)
     }
-    console.log(bold('\nDashboard logins'))
+    console.log(bold(caseyText("bin/casey-roles-command.js#w4")))
     for (const a of accounts) {
-      const link = a.contact_phone ? dim(` linked to ${fmtPhone27(a.contact_phone)}`) : ''
+      const link = a.contact_phone ? dim(caseyText("bin/casey-roles-command.js#w5", [fmtPhone27(a.contact_phone)])) : ''
       console.log(`  ${bold(a.username)}\t${a.role}\t${a.disabled === '1' ? red('[disabled]') : green('[active]')}${link}`)
     }
     await closeAndExit(store, 0)
@@ -58,35 +58,35 @@ export async function cmdRoles({ flags, rest }) {
 
   if (sub === 'import') {
     const file = pos[0]
-    if (!file) await fail('usage: casey roles import <file.csv> [--dry-run] [--yes]', cliText('roles.import.hint') ?? 'columns: name, phone, role, smartphone (yes/no). Nothing is written without --yes.')
+    if (!file) await fail(caseyText("bin/casey-roles-command.js#w6"), cliText('roles.import.hint') ?? caseyText("bin/casey-roles-command.js#w7"))
     let csv
-    try { csv = readFileSync(file, 'utf8') } catch { await fail(`cannot read "${file}".`) }
-    if (csv.length > MAX_IMPORT_CHARS) await fail(`that file is too large (over ${MAX_IMPORT_CHARS} characters); split it into parts of at most ${MAX_IMPORT_ROWS} people.`)
+    try { csv = readFileSync(file, 'utf8') } catch { await fail(caseyText("bin/casey-roles-command.js#w8", [file])) }
+    if (csv.length > MAX_IMPORT_CHARS) await fail(caseyText("bin/casey-roles-command.js#w9", [MAX_IMPORT_CHARS, MAX_IMPORT_ROWS]))
     const apply = !!flags.yes && !flags['dry-run']
     let out
     try { out = await runImport(store, { csv }, { dryRun: !apply, isAdmin: true, by: 'cli-operator' }) } catch (e) { await fail(e.message) }
     if (flags.json) { console.log(JSON.stringify(out, null, 2)); await closeAndExit(store, 0) }
     const col = { create: green, update: cyan, skip: dim, error: red }
-    for (const r of out.results) console.log(`  line ${String(r.line).padEnd(4)} ${(col[r.action] || dim)(r.action.padEnd(6))} ${bold(r.name || '(no name)')}${r.role ? dim('  ' + r.role) : ''}${r.area ? dim('  ' + r.area) : ''}${r.phone ? dim('  ' + r.phone) : ''}  ${dim(r.reason)}`)
+    for (const r of out.results) console.log(`  line ${String(r.line).padEnd(4)} ${(col[r.action] || dim)(r.action.padEnd(6))} ${bold(r.name || caseyText("bin/casey-roles-command.js#w10"))}${r.role ? dim('  ' + r.role) : ''}${r.area ? dim('  ' + r.area) : ''}${r.phone ? dim('  ' + r.phone) : ''}  ${dim(r.reason)}`)
     const s = out.summary
-    console.log(`\n${s.create} to create, ${s.update} to update, ${s.skip} skipped, ${s.error} with errors.`)
-    if (apply) console.log(green('applied.') + dim('  nobody was messaged; they take effect on their next WhatsApp message.'))
-    else console.log(dim(flags['dry-run'] ? 'dry run: nothing was written.' : 'preview only: nothing was written. Re-run with --yes to apply.'))
+    console.log(caseyText("bin/casey-roles-command.js#w11", [s.create, s.update, s.skip, s.error]))
+    if (apply) console.log(green('applied.') + dim(caseyText("bin/casey-roles-command.js#w12")))
+    else console.log(dim(flags['dry-run'] ? caseyText("bin/casey-roles-command.js#w13") : caseyText("bin/casey-roles-command.js#w14")))
     await closeAndExit(store, s.error && apply ? 2 : 0)
   }
 
   if (sub === 'roster') {
     if (flags.forget) {
       const gone = await forgetRoster(store, typeof flags.forget === 'string' ? flags.forget : pos[0] || '', 'cli-operator')
-      console.log(gone ? green('removed from the roster.') : dim('no such person on the roster.'))
+      console.log(gone ? green(caseyText("bin/casey-roles-command.js#w15")) : dim(caseyText("bin/casey-roles-command.js#w16")))
       await closeAndExit(store, gone ? 0 : 1)
     }
     const t = await rolloutTable(store)
     if (flags.json) { console.log(JSON.stringify(t, null, 2)); await closeAndExit(store, 0) }
-    if (!t.areas.length) console.log(dim('the roster is empty -- casey roles import <file.csv> --yes'))
+    if (!t.areas.length) console.log(dim(caseyText("bin/casey-roles-command.js#w17")))
     else {
       const w = Math.max(11, ...t.areas.map(a => a.area.length))
-      console.log(bold('association'.padEnd(w)) + bold('  total  smartphones  registered  first-message  first-case'))
+      console.log(bold('association'.padEnd(w)) + bold(caseyText("bin/casey-roles-command.js#w18")))
       for (const a of [...t.areas, { area: 'ALL', ...t.totals }]) console.log(`${a.area.padEnd(w)}  ${String(a.total).padStart(5)}  ${String(a.smartphones).padStart(11)}  ${String(a.registered).padStart(10)}  ${String(a.first_message).padStart(13)}  ${String(a.first_case).padStart(10)}`)
     }
     await closeAndExit(store, 0)
@@ -94,32 +94,32 @@ export async function cmdRoles({ flags, rest }) {
 
   if (sub === 'assign') {
     const phone = pos[0]; let tier = pos[1]
-    if (!phone || !tier) await fail('usage: casey roles assign <phone> <tier> [--name "..."]', `tiers: ${TEAM_TIERS.join(', ')} (or reporter to demote)`)
-    if (!TIER_ORDER.includes(tier)) { const m = mapRole(tier); if (m.tier) tier = m.tier; else await fail(`there is no tier "${pos[1]}".`, `one of: ${TIER_ORDER.join(', ')}, or a role word such as "Eco Ranger"`) }
+    if (!phone || !tier) await fail(caseyText("bin/casey-roles-command.js#w19"), caseyText("bin/casey-roles-command.js#w20", [TEAM_TIERS.join(', ')]))
+    if (!TIER_ORDER.includes(tier)) { const m = mapRole(tier); if (m.tier) tier = m.tier; else await fail(caseyText("bin/casey-roles-command.js#w21", [pos[1]]), caseyText("bin/casey-roles-command.js#w22", [TIER_ORDER.join(', ')])) }
     const external_id = normalizeMsisdn(phone)
-    if (!external_id) await fail(`"${phone}" is not a phone number casey can match.`, caseyText("bin/casey-roles-command.js#phone-example"))
+    if (!external_id) await fail(caseyText("bin/casey-roles-command.js#w23", [phone]), caseyText("bin/casey-roles-command.js#phone-example"))
     try {
       const c = await store.registerContact({ channel: 'whatsapp', external_id, display_name: typeof flags.name === 'string' ? flags.name.slice(0, 80) : '', tier }, CLI)
-      console.log(green(`${c.display_name && c.display_name !== c.external_id ? c.display_name : fmtPhone27(external_id)} is now ${tier}`) + dim(`  (${tierLabel(tier, TIER_LABELS)})`))
-      console.log(dim('  they take effect on their next WhatsApp message; nothing was sent to them.'))
+      console.log(green(caseyText("bin/casey-roles-command.js#w24", [c.display_name && c.display_name !== c.external_id ? c.display_name : fmtPhone27(external_id), tier])) + dim(`  (${tierLabel(tier, TIER_LABELS)})`))
+      console.log(dim(caseyText("bin/casey-roles-command.js#w25")))
       await closeAndExit(store, 0)
     } catch (e) { await fail(e.message) }
   }
 
   if (sub === 'demote') {
     const needle = pos[0]
-    if (!needle) await fail('usage: casey roles demote <phone|contact-id>')
+    if (!needle) await fail(caseyText("bin/casey-roles-command.js#w26"))
     const c = await findWhatsappContact(store, needle)
-    if (!c) await fail(`no contact matches "${needle}".`, 'casey roles list shows the team; a person who never messaged has no contact row.')
+    if (!c) await fail(caseyText("bin/casey-roles-command.js#w27", [needle]), caseyText("bin/casey-roles-command.js#w28"))
     await store.setContactTier(c.id, TIER.reporter, CLI)
-    console.log(green(`${c.display_name || fmtPhone27(c.external_id)} is now ${TIER.reporter}; every open report they held went back to the queue.`))
+    console.log(green(caseyText("bin/casey-roles-command.js#w29", [c.display_name || fmtPhone27(c.external_id), TIER.reporter])))
     await closeAndExit(store, 0)
   }
 
   if (sub === 'invite') {
     let tier = pos[0]
     if (tier && !TEAM_TIERS.includes(tier)) { const m = mapRole(tier); if (m.tier && TEAM_TIERS.includes(m.tier)) tier = m.tier }
-    if (!tier || !TEAM_TIERS.includes(tier)) await fail('usage: casey roles invite <tier> [--label "..."] [--ttl-hours 72] [--uses 1] [--count N [--out codes.txt]]', `tiers: ${TEAM_TIERS.join(', ')}`)
+    if (!tier || !TEAM_TIERS.includes(tier)) await fail(caseyText("bin/casey-roles-command.js#w30"), `tiers: ${TEAM_TIERS.join(', ')}`)
     try {
       const base = {
         tier, label: typeof flags.label === 'string' ? flags.label : '',
@@ -138,19 +138,19 @@ export async function cmdRoles({ flags, rest }) {
         const invs = await createInvites(store, { ...base, count })
         if (outFile) {
           writeFileSync(outFile, invs.map(i => `${i.code}\t${i.label}`).join('\n') + '\n', { mode: 0o600 })
-          console.log(green(`${invs.length} one-time code${invs.length === 1 ? '' : 's'} for ${tier} written to ${outFile}`) + dim('   (code, tab, label; keep the file private and delete it once handed out)'))
+          console.log(green(caseyText("bin/casey-roles-command.js#w31", [invs.length, invs.length === 1 ? '' : 's', tier, outFile])) + dim(caseyText("bin/casey-roles-command.js#w32")))
         } else {
           for (const i of invs) console.log(bold(i.code) + dim(`   ${i.label}`))
-          console.log(green(`${invs.length} one-time code${invs.length === 1 ? '' : 's'} for ${tier}`) + dim('   (shown once; only their hashes are stored)'))
+          console.log(green(caseyText("bin/casey-roles-command.js#w33", [invs.length, invs.length === 1 ? '' : 's', tier])) + dim(caseyText("bin/casey-roles-command.js#w34")))
         }
-        console.log(dim(`  each expires ${fmtTimeLocal(Math.floor(invs[0].expires_at / 1000))} and works for ${invs[0].max_uses} use(s).`))
-        console.log(dim('  each person sends exactly their code, and nothing else, to the bot number on WhatsApp.'))
+        console.log(dim(caseyText("bin/casey-roles-command.js#w35", [fmtTimeLocal(Math.floor(invs[0].expires_at / 1000)), invs[0].max_uses])))
+        console.log(dim(caseyText("bin/casey-roles-command.js#w36")))
         await closeAndExit(store, 0)
       }
       const inv = await createInvite(store, base)
-      console.log(green(`one-time code for ${tier}: `) + bold(inv.code) + dim('   (shown once; only its hash is stored)'))
+      console.log(green(caseyText("bin/casey-roles-command.js#w37", [tier])) + bold(inv.code) + dim(caseyText("bin/casey-roles-command.js#w38")))
       console.log(dim(`  expires ${fmtTimeLocal(Math.floor(inv.expires_at / 1000))}, ${inv.max_uses} use(s).`))
-      console.log(dim('  the person sends exactly that code, and nothing else, to the bot number on WhatsApp.'))
+      console.log(dim(caseyText("bin/casey-roles-command.js#w39")))
       await closeAndExit(store, 0)
     } catch (e) { await fail(e.message) }
   }
@@ -158,38 +158,38 @@ export async function cmdRoles({ flags, rest }) {
   if (sub === 'invites') {
     const list = await listInvites(store)
     if (flags.json) { console.log(JSON.stringify(list, null, 2)); await closeAndExit(store, 0) }
-    if (!list.length) console.log(dim('no invites yet.'))
+    if (!list.length) console.log(dim(caseyText("bin/casey-roles-command.js#w40")))
     for (const i of list) console.log(`${bold(i.id)}\t${i.tier}\t${i.status === 'active' ? green(i.status) : dim(i.status)}\t${i.uses}/${i.max_uses}\t${dim(i.label || '')}\t${dim('by ' + i.created_by)}\t${dim('expires ' + fmtTimeLocal(Math.floor(i.expires_at / 1000)))}`)
     await closeAndExit(store, 0)
   }
 
   if (sub === 'revoke') {
-    if (!pos[0]) await fail('usage: casey roles revoke <invite-id>', 'ids are the first column of casey roles invites')
-    try { await revokeInvite(store, pos[0], 'cli-operator'); console.log(green(`invite ${pos[0]} revoked`)); await closeAndExit(store, 0) }
+    if (!pos[0]) await fail(caseyText("bin/casey-roles-command.js#w41"), caseyText("bin/casey-roles-command.js#w42"))
+    try { await revokeInvite(store, pos[0], 'cli-operator'); console.log(green(caseyText("bin/casey-roles-command.js#w43", [pos[0]]))); await closeAndExit(store, 0) }
     catch (e) { await fail(e.message) }
   }
 
   if (sub === 'release') {
     const holder = pos[0]
-    if (!holder) await fail('usage: casey roles release <phone|contact-id|username>', 'sends every OPEN report they hold back to the queue (unassigned; the assistant resumes)')
+    if (!holder) await fail(caseyText("bin/casey-roles-command.js#w44"), caseyText("bin/casey-roles-command.js#w45"))
     const c = await findWhatsappContact(store, holder)
     const key = c ? `contact:${c.id}` : holder
-    const n = await store.releaseCasesHeldBy(key, 'released from the terminal', CLI)
-    console.log(green(`${n} open report(s) released from ${c ? (c.display_name || fmtPhone27(c.external_id)) : holder}`))
+    const n = await store.releaseCasesHeldBy(key, caseyText("bin/casey-roles-command.js#w46"), CLI)
+    console.log(green(caseyText("bin/casey-roles-command.js#w47", [n, c ? (c.display_name || fmtPhone27(c.external_id)) : holder])))
     await closeAndExit(store, 0)
   }
 
   if (sub === 'link') {
     const [username, phone] = pos
-    if (!username || !phone) await fail('usage: casey roles link <username> <phone>', 'links a dashboard login to its WhatsApp contact so "my reports" works for a ranger or technician')
+    if (!username || !phone) await fail(caseyText("bin/casey-roles-command.js#w48"), caseyText("bin/casey-roles-command.js#w49"))
     const { findAccountByUsername, setAccountContactPhone } = await import('../src/dashboard/auth.js')
     const acct = await findAccountByUsername(store, username)
-    if (!acct) await fail(`no login "${username}".`, 'casey operators list')
-    try { await setAccountContactPhone(store, acct.id, phone); console.log(green(`${username} is linked to ${fmtPhone27(normalizeMsisdn(phone))}`)); await closeAndExit(store, 0) }
+    if (!acct) await fail(caseyText("bin/casey-roles-command.js#w50", [username]), caseyText("bin/casey-roles-command.js#w51"))
+    try { await setAccountContactPhone(store, acct.id, phone); console.log(green(caseyText("bin/casey-roles-command.js#w52", [username, fmtPhone27(normalizeMsisdn(phone))]))); await closeAndExit(store, 0) }
     catch (e) { await fail(e.message) }
   }
 
-  if (sub) say(bad(`casey roles has no "${sub}" subcommand.`))
+  if (sub) say(bad(caseyText("bin/casey-roles-command.js#w53", [sub])))
   usage()
   await closeAndExit(store, 1)
 }

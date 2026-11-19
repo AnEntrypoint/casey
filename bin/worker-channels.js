@@ -1,4 +1,5 @@
 import { WORKER_MSG, ipcSend } from '../src/supervisor-ipc.js'
+import { caseyText } from '../src/deployment-text.js';
 
 export function hasCreds(ch) {
   if (ch === 'discord') return !!process.env.DISCORD_BOT_TOKEN
@@ -17,11 +18,11 @@ function gateWhatsappAppSecret(requested, flags, forked) {
   const idx = requested.indexOf('whatsapp')
   if (idx !== -1 && flags.channels) {
     refuse(forked,
-      'WHATSAPP_APP_SECRET required to serve WhatsApp (verify inbound webhook signatures)',
-      '[worker] WHATSAPP_APP_SECRET is required to enable WhatsApp - refusing to serve unsigned inbound')
+      caseyText("bin/worker-channels.js#w0"),
+      caseyText("bin/worker-channels.js#w1"))
   }
   if (idx !== -1) requested.splice(idx, 1)
-  console.error('[worker] WhatsApp creds present but WHATSAPP_APP_SECRET unset - skipping WhatsApp (set the secret to enable it)')
+  console.error(caseyText("bin/worker-channels.js#w2"))
 }
 
 function gateWhatsappVerifyToken(channels, flags, forked) {
@@ -29,11 +30,11 @@ function gateWhatsappVerifyToken(channels, flags, forked) {
   const idx = channels.indexOf('whatsapp')
   if (idx !== -1 && flags.channels) {
     refuse(forked,
-      'WHATSAPP_VERIFY_TOKEN required to serve WhatsApp',
-      '[worker] WHATSAPP_VERIFY_TOKEN is required to enable WhatsApp - refusing to serve without it')
+      caseyText("bin/worker-channels.js#w3"),
+      caseyText("bin/worker-channels.js#w4"))
   }
   if (idx !== -1) channels.splice(idx, 1)
-  console.error('[worker] WhatsApp creds present but WHATSAPP_VERIFY_TOKEN unset - skipping WhatsApp (set the token to enable it)')
+  console.error(caseyText("bin/worker-channels.js#w5"))
 }
 
 export function resolveServingChannels(flags, forked) {
@@ -42,7 +43,7 @@ export function resolveServingChannels(flags, forked) {
   const channels = requested.filter(ch => (ch === 'whatsapp' ? (hasCreds(ch) && !!process.env.WHATSAPP_APP_SECRET) : hasCreds(ch)))
   gateWhatsappVerifyToken(channels, flags, forked)
   if (!channels.length) {
-    refuse(forked, 'no channels available', '[worker] no channels available - set discord/whatsapp credentials')
+    refuse(forked, caseyText("bin/worker-channels.js#w6"), caseyText("bin/worker-channels.js#w7"))
   }
   return channels
 }

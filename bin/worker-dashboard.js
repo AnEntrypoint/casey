@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { createDashboard } from '../src/dashboard/server.js'
 import { resolveAdapter } from '../src/hooks/delivery.js'
 import { WORKER_MSG, ipcSend } from '../src/supervisor-ipc.js'
+import { caseyText } from '../src/deployment-text.js';
 
 const CASEY_EXTRA_DASHBOARD_ROUTES = (() => {
   if (!process.env.CASEY_EXTRA_DASHBOARD_ROUTES) return null
@@ -16,8 +17,8 @@ async function ensureLoginExists(casey) {
   try {
     const { ensureBootstrapAdmin } = await import('../src/dashboard/auth.js')
     const boot = await ensureBootstrapAdmin(casey.store, console)
-    if (boot) console.log(`[worker] bootstrap admin account created -- username: ${boot.username}  password written to ${boot.passwordPath}  (read it once, log in, set your own password, then delete that file)`)
-  } catch (e) { console.error('[worker] bootstrap admin check failed:', e.message) }
+    if (boot) console.log(caseyText("bin/worker-dashboard.js#w0", [boot.username, boot.passwordPath]))
+  } catch (e) { console.error(caseyText("bin/worker-dashboard.js#w1"), e.message) }
 }
 
 async function mountExtraRoutes(dash, casey) {
@@ -27,8 +28,8 @@ async function mountExtraRoutes(dash, casey) {
   if (typeof mount !== 'function') throw new Error(`CASEY_EXTRA_DASHBOARD_ROUTES module has no default export function: ${CASEY_EXTRA_DASHBOARD_ROUTES}`)
   await mount(dash.app, { store: casey.store })
   dash.app.use((err, req, res, next) => {
-    if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'invalid request body' })
-    res.status(err?.status || 500).json({ error: 'internal error' })
+    if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: caseyText("bin/worker-dashboard.js#w2") })
+    res.status(err?.status || 500).json({ error: caseyText("bin/worker-dashboard.js#w3") })
   })
 }
 
@@ -46,8 +47,8 @@ export async function startWorkerDashboard({ casey, port, sendReply, llmStatus, 
       resolveWhatsappAdapter: () => resolveAdapter(casey, 'whatsapp'),
     })
   } catch (e) {
-    if (forked) ipcSend(process, WORKER_MSG.FATAL, { reason: `dashboard bind failed: ${e.message}` })
-    console.error(`[worker] dashboard failed to bind port ${port}: ${e.message}`)
+    if (forked) ipcSend(process, WORKER_MSG.FATAL, { reason: caseyText("bin/worker-dashboard.js#w4", [e.message]) })
+    console.error(caseyText("bin/worker-dashboard.js#w5", [port, e.message]))
     process.exit(/EADDRINUSE/.test(String(e && e.message)) ? 44 : 1)
   }
   await mountExtraRoutes(dash, casey)

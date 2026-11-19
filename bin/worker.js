@@ -7,10 +7,11 @@ import { openServingCasey, finishServingCasey } from './worker-boot.js'
 import { startWorkerDashboard } from './worker-dashboard.js'
 import { createRuntimeChannel } from './worker-runtime-events.js'
 import { installWorkerRuntimeIo } from './worker-ipc.js'
+import { caseyText } from '../src/deployment-text.js';
 
 function crashLoud(kind, err) {
   const reason = (err && err.stack) || (err && err.message) || String(err)
-  console.error(`[worker] ${kind} (worker crashing):`, reason)
+  console.error(caseyText("bin/worker.js#w0", [kind]), reason)
   if (typeof process.send === 'function') { try { ipcSend(process, WORKER_MSG.FATAL, { reason: `${kind}: ${err && err.message || String(err)}` }) } catch {} }
   process.exit(1)
 }

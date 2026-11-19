@@ -1,11 +1,12 @@
 import { createCaseyStore } from '../src/casey.js'
+import { caseyText } from '../src/deployment-text.js';
 
 export async function openServingCasey(channels) {
   const { makeResilientCallLLM } = await import('../src/llm.js')
   const ref = { casey: null }
   const brain = makeResilientCallLLM({
     probe: true,
-    onRecover: () => ref.casey?.drainQueuedTurns?.().catch(e => ref.casey?.log?.warn?.('[casey] recovery drain failed', { error: e.message })),
+    onRecover: () => ref.casey?.drainQueuedTurns?.().catch(e => ref.casey?.log?.warn?.(caseyText("bin/worker-boot.js#w0"), { error: e.message })),
   })
   const casey = await createCaseyStore({
     channels,
@@ -21,7 +22,7 @@ export async function openServingCasey(channels) {
 
 export async function finishServingCasey({ casey, brain }) {
   await casey.init()
-  try { await brain.status() } catch (e) { console.error('[worker] boot-time readiness warm-up failed (continuing, self-heals on first real turn):', e.message) }
+  try { await brain.status() } catch (e) { console.error(caseyText("bin/worker-boot.js#w1"), e.message) }
   await casey.start()
   return casey
 }

@@ -1,3 +1,4 @@
+import { caseyText } from '../src/deployment-text.js';
 const RUNTIME_EVENT_LABEL = {
   CRASH: 'CRASH', RELOAD_REQUESTED: 'RELOAD', HEALTH_DEGRADED: 'DEGRADED', BUDGET_EXCEEDED: 'CRASH-BUDGET-EXCEEDED',
 }
@@ -10,10 +11,10 @@ export function createRuntimeChannel(casey) {
     if (!runtimeCaseIdP) {
       runtimeCaseIdP = casey.store.findOrCreateCase({
         channel: 'system', external_id: 'runtime:supervisor',
-        contact: { display_name: 'casey runtime', handle: 'runtime' },
+        contact: { display_name: caseyText("bin/worker-runtime-events.js#w0"), handle: 'runtime' },
       }).then(r => {
         if (r.created && !r.case.subject) {
-          casey.store.updateCase(r.case.id, { subject: 'casey runtime lifecycle' }).catch(() => {})
+          casey.store.updateCase(r.case.id, { subject: caseyText("bin/worker-runtime-events.js#w1") }).catch(() => {})
         }
         return r.case.id
       })
@@ -31,7 +32,7 @@ export function createRuntimeChannel(casey) {
         text: `RUNTIME ${label}${reason} (restart #${ev.restarts ?? 0})`,
         data: { runtime: ev.event, restarts: ev.restarts ?? 0 },
       })
-    } catch (e) { console.error('[worker] runtime-event record failed:', e.message) }
+    } catch (e) { console.error(caseyText("bin/worker-runtime-events.js#w2"), e.message) }
   }
 
   return {

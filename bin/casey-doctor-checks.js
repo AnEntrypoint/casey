@@ -3,6 +3,7 @@ import fs, { existsSync } from 'node:fs'
 import os from 'node:os'
 import { bold, dim, green, red, cyan, ok, bad, warn, hasCreds } from './casey-cli-ui.js'
 import { createCaseStore } from '../src/case-store.js'
+import { caseyText } from '../src/deployment-text.js';
 
 function render(rows) {
   let problems = 0
@@ -19,11 +20,11 @@ function render(rows) {
 export async function runMetaChecks(flags = {}) {
   if (!hasCreds('whatsapp')) return 0
   if (flags['no-network'] || flags.offline || process.env.CASEY_DOCTOR_OFFLINE === '1') {
-    console.log(dim('  Meta and public-URL checks skipped (--no-network)'))
+    console.log(dim(caseyText("bin/casey-doctor-checks.js#w0")))
     return 0
   }
   const { probeMeta } = await import('../src/meta-probe.js')
-  console.log(bold('\nWhatsApp / Meta') + dim('  (read-only GETs; nothing is changed or sent)'))
+  console.log(bold('\nWhatsApp / Meta') + dim(caseyText("bin/casey-doctor-checks.js#w1")))
   const res = await probeMeta({})
   if (res.skipped && !res.rows.length) return 0
   return render(res.rows)
@@ -38,7 +39,7 @@ export async function runRoleChecks() {
     const cfgFile = process.env.CASEY_CONFIG_DIR ? path.join(path.resolve(process.env.CASEY_CONFIG_DIR), 'thatcher.config.yml') : path.join(process.cwd(), 'thatcher.config.yml')
     const s = createCaseStore({ config: cfgFile }); s.validateConfig(); openStatuses = s.getOpenStatuses()
   } catch {}
-  console.log(bold('\nTeam and roles'))
+  console.log(bold(caseyText("bin/casey-doctor-checks.js#w2")))
   const { rows } = await checkRoleSetup(dbFile, { openStatuses })
   return render(rows)
 }
@@ -46,14 +47,14 @@ export async function runRoleChecks() {
 export async function runVocabularyChecks() {
   const { loadDomainConfig } = await import('../src/config-loader.js')
   const { vocabulary: v, dir } = loadDomainConfig()
-  console.log(bold('\nVocabulary') + dim('  (the words people read; one file the team edits)'))
+  console.log(bold('\nVocabulary') + dim(caseyText("bin/casey-doctor-checks.js#w3")))
   const out = []
-  const shown = (keys) => keys.slice(0, 30).join(', ') + (keys.length > 30 ? `, and ${keys.length - 30} more` : '')
-  if (!v.hasFile) out.push({ level: 'warn', text: `no vocabulary.yml in ${dir}: every word uses the built-in default`, fix: 'copy config/default/vocabulary.yml into the config dir and edit it' })
-  else out.push({ level: 'ok', text: `vocabulary: ${Object.keys(v.words).length} words in force from ${v.file}` })
-  if (v.missing.length) out.push({ level: 'warn', text: `${v.missing.length} word(s) missing from vocabulary.yml (the built-in wording is used): ${shown(v.missing)}`, fix: 'add each key to vocabulary.yml; docs/vocabulary-guide.md lists what every key does' })
-  if (v.invalid.length) out.push({ level: 'warn', text: `${v.invalid.length} vocabulary key(s) are blank or not plain text and were ignored: ${shown(v.invalid)}`, fix: 'give each one a line of text (bot texts may be a list of lines)' })
-  if (v.unknown.length) out.push({ level: 'warn', text: `${v.unknown.length} vocabulary key(s) that nothing reads (a typo?): ${shown(v.unknown)}`, fix: 'compare the spelling with docs/vocabulary-guide.md' })
+  const shown = (keys) => keys.slice(0, 30).join(', ') + (keys.length > 30 ? caseyText("bin/casey-doctor-checks.js#w4", [keys.length - 30]) : '')
+  if (!v.hasFile) out.push({ level: 'warn', text: caseyText("bin/casey-doctor-checks.js#w5", [dir]), fix: caseyText("bin/casey-doctor-checks.js#w6") })
+  else out.push({ level: 'ok', text: caseyText("bin/casey-doctor-checks.js#w7", [Object.keys(v.words).length, v.file]) })
+  if (v.missing.length) out.push({ level: 'warn', text: caseyText("bin/casey-doctor-checks.js#w8", [v.missing.length, shown(v.missing)]), fix: caseyText("bin/casey-doctor-checks.js#w9") })
+  if (v.invalid.length) out.push({ level: 'warn', text: caseyText("bin/casey-doctor-checks.js#w10", [v.invalid.length, shown(v.invalid)]), fix: caseyText("bin/casey-doctor-checks.js#w11") })
+  if (v.unknown.length) out.push({ level: 'warn', text: caseyText("bin/casey-doctor-checks.js#w12", [v.unknown.length, shown(v.unknown)]), fix: caseyText("bin/casey-doctor-checks.js#w13") })
   const { hiddenFieldsReport } = await import('../src/store/report-shape.js')
   for (const r of hiddenFieldsReport()) out.push(r)
   return render(out)
@@ -62,13 +63,13 @@ export async function runVocabularyChecks() {
 export async function runDataProcessorChecks() {
   const { describeProcessors, auditFile } = await import('../src/llm-data-policy.js')
   const { mode, rows } = describeProcessors(process.env)
-  console.log(bold('\nData processors') + dim('  (who receives personal data, and under what policy; nothing is contacted)'))
+  console.log(bold(caseyText("bin/casey-doctor-checks.js#w14")) + dim(caseyText("bin/casey-doctor-checks.js#w15")))
   const out = []
-  if (mode === 'allow') out.push({ level: 'warn', text: 'CASEY_LLM_DATA_POLICY=allow: the no-training routing policy is OFF', fix: 'remove CASEY_LLM_DATA_POLICY (default deny) or set it to deny / zdr' })
-  else out.push({ level: 'ok', text: `LLM data policy: ${mode}${mode === 'zdr' ? ' (zero-retention endpoints only)' : ' (no-training endpoints only)'}` })
+  if (mode === 'allow') out.push({ level: 'warn', text: caseyText("bin/casey-doctor-checks.js#w16"), fix: caseyText("bin/casey-doctor-checks.js#w17") })
+  else out.push({ level: 'ok', text: caseyText("bin/casey-doctor-checks.js#w18", [mode, mode === 'zdr' ? caseyText("bin/casey-doctor-checks.js#w19") : caseyText("bin/casey-doctor-checks.js#w20")]) })
   for (const r of rows) {
     const bad = /REFUSED|NONE/.test(r.policy)
-    out.push({ level: bad && mode !== 'allow' && /^chat LLM/.test(r.processor) ? 'warn' : 'skip', text: `${r.processor}: ${r.policy} -- ${r.state}; data: ${r.data}`, ...(bad && /^chat LLM/.test(r.processor) && mode !== 'allow' ? { fix: 'remove this model from CASEY_LLM_MODEL (it is skipped at runtime anyway)' } : {}) })
+    out.push({ level: bad && mode !== 'allow' && /^chat LLM/.test(r.processor) ? 'warn' : 'skip', text: `${r.processor}: ${r.policy} -- ${r.state}; data: ${r.data}`, ...(bad && /^chat LLM/.test(r.processor) && mode !== 'allow' ? { fix: caseyText("bin/casey-doctor-checks.js#w21") } : {}) })
   }
   try {
     const key = process.env.OPENROUTER_API_KEY || (() => { try { return /^OPENROUTER_API_KEY=(.+)$/m.exec(fs.readFileSync(path.join(os.homedir(), '.acptoapi', '.env'), 'utf8'))?.[1]?.trim() } catch { return '' } })()
@@ -79,8 +80,8 @@ export async function runDataProcessorChecks() {
         const left = d.total_credits - d.total_usage
         const min = Number(process.env.CASEY_CREDIT_WARN_USD) || 3
         out.push(left < min
-          ? { level: left < 1 ? 'fail' : 'warn', text: `OpenRouter balance is $${left.toFixed(2)} (of $${d.total_credits.toFixed(2)} bought): below $${min}, so the bot can start refusing replies`, fix: 'top up credits at https://openrouter.ai/credits (the key\'s own limit is separate and does not add balance)' }
-          : { level: 'ok', text: `OpenRouter balance $${left.toFixed(2)} left` })
+          ? { level: left < 1 ? 'fail' : 'warn', text: caseyText("bin/casey-doctor-checks.js#w22", [left.toFixed(2), d.total_credits.toFixed(2), min]), fix: caseyText("bin/casey-doctor-checks.js#w23") }
+          : { level: 'ok', text: caseyText("bin/casey-doctor-checks.js#w24", [left.toFixed(2)]) })
       }
     }
   } catch {}
@@ -88,8 +89,8 @@ export async function runDataProcessorChecks() {
   const { localSttAvailable } = await import('../src/hooks/local-stt.js')
   out.push(...await sttDoctorRows({ offline: process.env.CASEY_DOCTOR_OFFLINE === '1', hasOtherEngine: !!process.env.OPENROUTER_API_KEY || !!process.env.OPENAI_API_KEY || localSttAvailable() }))
   const af = auditFile(process.env)
-  out.push({ level: 'skip', text: af ? `policy audit trail: ${af}` : 'policy audit trail is OFF (CASEY_LLM_AUDIT_FILE=0)' })
+  out.push({ level: 'skip', text: af ? caseyText("bin/casey-doctor-checks.js#w25", [af]) : caseyText("bin/casey-doctor-checks.js#w26") })
   const proactive = String(process.env.CASEY_PROACTIVE_SENDS || 'off').trim().toLowerCase()
-  out.push({ level: 'skip', text: `proactive sends (bot-initiated messages): ${proactive === 'window' ? 'window (allowed inside the 24h service window)' : 'off (the bot only answers people who write to it)'}` })
+  out.push({ level: 'skip', text: caseyText("bin/casey-doctor-checks.js#w27", [proactive === 'window' ? caseyText("bin/casey-doctor-checks.js#w28") : caseyText("bin/casey-doctor-checks.js#w29")]) })
   return render(out)
 }

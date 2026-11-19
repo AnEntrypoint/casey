@@ -1,12 +1,13 @@
 import { WORKER_MSG, PARENT_MSG, ipcSend } from '../src/supervisor-ipc.js'
+import { caseyText } from '../src/deployment-text.js';
 
 export function installWorkerRuntimeIo({ casey, dash, forked, runtime }) {
   let draining = false
   async function drainAndExit(code = 0) {
     if (draining) return
     draining = true
-    try { await dash.close() } catch (e) { console.error('[worker] dash close error:', e.message) }
-    try { await casey.stop() } catch (e) { console.error('[worker] casey stop error:', e.message) }
+    try { await dash.close() } catch (e) { console.error(caseyText("bin/worker-ipc.js#w0"), e.message) }
+    try { await casey.stop() } catch (e) { console.error(caseyText("bin/worker-ipc.js#w1"), e.message) }
     if (forked) ipcSend(process, WORKER_MSG.DRAIN_COMPLETE, {})
     setTimeout(() => process.exit(code), 50)
   }
@@ -34,7 +35,7 @@ export function installWorkerRuntimeIo({ casey, dash, forked, runtime }) {
     ipcSend(process, WORKER_MSG.READY, { port: dash.port })
     reportHealth()
   } else {
-    console.log(`casey worker (standalone) on http://localhost:${dash.port}`)
+    console.log(caseyText("bin/worker-ipc.js#w2", [dash.port]))
     process.on('SIGINT', () => drainAndExit(0))
     process.on('SIGTERM', () => drainAndExit(0))
   }

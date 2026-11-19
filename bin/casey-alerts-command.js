@@ -3,13 +3,14 @@ import { existsSync } from 'node:fs'
 import { AlertLog, AlertGate, ALERT_TAG } from '../src/alert-log.js'
 import { fmtTimeLocal } from '../src/format.js'
 import { bold, dim, green, red, cyan, ok, bad, warn, say } from './casey-cli-ui.js'
+import { caseyText } from '../src/deployment-text.js';
 
 const CONDITION_LABEL = {
-  channel_deaf: 'not hearing the field',
-  provider_down_backlog: 'AI helper down, messages queuing',
-  sweep_stalled: 'guardrail checks stopped',
-  inbound_silent: 'WhatsApp silent, possibly deaf',
-  coverage_gap: 'nobody covering',
+  channel_deaf: caseyText("bin/casey-alerts-command.js#w0"),
+  provider_down_backlog: caseyText("bin/casey-alerts-command.js#w1"),
+  sweep_stalled: caseyText("bin/casey-alerts-command.js#w2"),
+  inbound_silent: caseyText("bin/casey-alerts-command.js#w3"),
+  coverage_gap: caseyText("bin/casey-alerts-command.js#w4"),
 }
 const conditionLabel = (c) => CONDITION_LABEL[c] || c
 
@@ -27,12 +28,12 @@ const mins = (ms) => Math.max(0, Math.round(ms / 60000))
 
 export async function cmdAlerts({ flags }) {
   if (flags.limit === true || flags.limit === '') {
-    say(bad('--limit needs a number.'))
-    say(dim('  e.g. ') + cyan('casey alerts --limit 50'))
+    say(bad(caseyText("bin/casey-alerts-command.js#w5")))
+    say(dim('  e.g. ') + cyan(caseyText("bin/casey-alerts-command.js#w6")))
     process.exit(2)
   }
   if (flags.limit !== undefined && !(Number(flags.limit) > 0)) {
-    say(bad(`--limit must be a positive number, not "${flags.limit}".`))
+    say(bad(caseyText("bin/casey-alerts-command.js#w7", [flags.limit])))
     process.exit(2)
   }
   const limit = flags.limit !== undefined ? Number(flags.limit) : 20
@@ -49,11 +50,11 @@ export async function cmdAlerts({ flags }) {
       process.exit(0)
     }
     if (!flags.quiet) {
-      console.log(bold('casey alerts') + dim(`  ${dir}`))
+      console.log(bold(caseyText("bin/casey-alerts-command.js#w8")) + dim(`  ${dir}`))
       console.log(hook
-        ? ok(`alerts are being POSTed to ${hook}; the local alert log is the no-webhook fallback and is not in use`)
-        : dim('  no alerts have fired yet on this machine.'))
-      if (!hook) console.log(dim(`  the log is written on the first alert; watch it with `) + cyan(`tail -f ${path.join(dir, 'alerts.jsonl')}`))
+        ? ok(caseyText("bin/casey-alerts-command.js#w9", [hook]))
+        : dim(caseyText("bin/casey-alerts-command.js#w10")))
+      if (!hook) console.log(dim(caseyText("bin/casey-alerts-command.js#w11")) + cyan(`tail -f ${path.join(dir, 'alerts.jsonl')}`))
     }
     process.exit(0)
   }
@@ -63,7 +64,7 @@ export async function cmdAlerts({ flags }) {
     log = new AlertLog({ dataDir, stderr: false })
     gate = new AlertGate({ dataDir })
   } catch (e) {
-    say(bad(`could not read the alert log at ${dir}: ${e.message}`))
+    say(bad(caseyText("bin/casey-alerts-command.js#w12", [dir, e.message])))
     process.exit(2)
   }
   const { items, total, corrupt } = log.read({ limit })
@@ -92,14 +93,14 @@ export async function cmdAlerts({ flags }) {
 
   if (flags.quiet) process.exit(standing.length ? 1 : 0)
 
-  console.log(bold('casey alerts') + dim(`  ${log.file}`))
+  console.log(bold(caseyText("bin/casey-alerts-command.js#w13")) + dim(`  ${log.file}`))
   console.log(hook
-    ? warn(`${hook} is set, so alerts go there; this local log is the fallback and is NOT being written while that variable is set`)
-    : dim(`  no alert webhook set -- this log is the delivery channel. Watch it with `) + cyan(`tail -f ${log.file}`))
+    ? warn(caseyText("bin/casey-alerts-command.js#w14", [hook]))
+    : dim(caseyText("bin/casey-alerts-command.js#w15")) + cyan(`tail -f ${log.file}`))
 
-  if (!standing.length) console.log(green('\nnothing is standing right now.'))
+  if (!standing.length) console.log(green(caseyText("bin/casey-alerts-command.js#w16")))
   else {
-    console.log(bold(`\nstanding now (${standing.length})`))
+    console.log(bold(caseyText("bin/casey-alerts-command.js#w17", [standing.length])))
     for (const s of standing) {
       const since = s.since ? `${fmtTimeLocal(s.since)}  (${mins(now - s.since)} min)` : 'unknown'
       console.log(`  ${bad(conditionLabel(s.condition))}\t${dim('since ' + since)}`)
@@ -107,19 +108,19 @@ export async function cmdAlerts({ flags }) {
   }
 
   console.log(bold(`\nrecent (${items.length} of ${total})`))
-  if (!items.length) console.log(dim('  nothing has fired yet.'))
+  if (!items.length) console.log(dim(caseyText("bin/casey-alerts-command.js#w18")))
   for (const e of items) {
-    const when = dim('[' + (fmtTimeLocal(e.at || Date.parse(e.t) || null) || 'no time') + ']')
+    const when = dim('[' + (fmtTimeLocal(e.at || Date.parse(e.t) || null) || caseyText("bin/casey-alerts-command.js#w19")) + ']')
     const evt = e.event === 'cleared' ? green('cleared') : red('raised ')
-    console.log(`  ${when} ${evt} ${bold(conditionLabel(e.condition) || 'unrecorded condition')}\t${dim(e.ref || '')}`)
+    console.log(`  ${when} ${evt} ${bold(conditionLabel(e.condition) || caseyText("bin/casey-alerts-command.js#w20"))}\t${dim(e.ref || '')}`)
     if (e.detail) console.log(`      ${e.detail}`)
   }
-  if (corrupt) console.log(red(`\n  ${corrupt} unreadable line(s) skipped (a crash mid-append truncated them).`))
+  if (corrupt) console.log(red(caseyText("bin/casey-alerts-command.js#w21", [corrupt])))
 
   const st = log.stats()
-  console.log(dim(`\n  ${st.archive_count} archive(s), ${Math.round(st.total_bytes / 1024)} KB of a ${Math.round(st.ceiling_bytes / 1024 / 1024)} MB ceiling (rotates by rename, oldest archive dropped).`))
-  if (st.write_failures) console.log(bad(`  ${st.write_failures} alert(s) could not be written to disk (${st.last_write_error}) -- they went to stderr only.`))
-  console.log(dim(`  every line carries the literal ${ALERT_TAG}, so `) + cyan(`grep ${ALERT_TAG} ${log.file}`) + dim(' works with no parser.'))
-  console.log(dim('  exit code: 0 clear, 1 something standing, 2 unreadable.'))
+  console.log(dim(caseyText("bin/casey-alerts-command.js#w22", [st.archive_count, Math.round(st.total_bytes / 1024), Math.round(st.ceiling_bytes / 1024 / 1024)])))
+  if (st.write_failures) console.log(bad(caseyText("bin/casey-alerts-command.js#w23", [st.write_failures, st.last_write_error])))
+  console.log(dim(caseyText("bin/casey-alerts-command.js#w24", [ALERT_TAG])) + cyan(`grep ${ALERT_TAG} ${log.file}`) + dim(caseyText("bin/casey-alerts-command.js#w25")))
+  console.log(dim(caseyText("bin/casey-alerts-command.js#w26")))
   process.exit(standing.length ? 1 : 0)
 }
