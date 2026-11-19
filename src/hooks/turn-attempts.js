@@ -165,7 +165,7 @@ function jargonFeedback(words, ref) {
   return caseyText("src/hooks/turn-attempts.js#4", [words.join(', '), ref])
 }
 
-export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, typedText = '', turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [], consentOn = false, returnOn = false, isStaff = false, isTechnician: isSpecialist = false }) {
+export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, typedText = '', turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [], consentOn = false, returnOn = false, isStaff = false, isSpecialist = false }) {
 
   const offerThing = isStaff ? caseyText("src/hooks/turn-attempts.js#5") : caseyText("src/hooks/turn-attempts.js#6")
   const note = async (text) => {
@@ -519,7 +519,7 @@ export async function runAgentTurn({
       store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, typedText, turnCallLLM,
       priorAttemptWrote: turnWroteSomething || ingressRecorded, systemPromptText,
       staffRefs: canQueryCases(resolvedTier) ? touchedRefs(result) : [],
-      consentOn, returnOn, isStaff: canQueryCases(resolvedTier), isTechnician: canSignOff(resolvedTier),
+      consentOn, returnOn, isStaff: canQueryCases(resolvedTier), isSpecialist: canSignOff(resolvedTier),
 
       factsForJudge: () => reportFactsForJudge(store, fresh, events, turnBinding.id),
     })
