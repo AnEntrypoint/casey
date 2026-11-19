@@ -139,12 +139,12 @@ export async function usageReport(store, { routerId = null, mac = null, since, u
   return { series: bucketSeries(deltas, bucket), devices: deviceTotals(deltas) }
 }
 
-export const SAST_OFFSET_MS = UTC_OFFSET_HOURS * 3600e3
+export const LOCAL_OFFSET_MS = UTC_OFFSET_HOURS * 3600e3
 export const BYTES_PER_MB = 1024 * 1024
 
 export const capBytesFromMb = (mb) => mb * BYTES_PER_MB
 
-export const sastDayStart = (now) => new Date(Math.floor((now + SAST_OFFSET_MS) / DAY_MS) * DAY_MS - SAST_OFFSET_MS).toISOString()
+export const localDayStart = (now) => new Date(Math.floor((now + LOCAL_OFFSET_MS) / DAY_MS) * DAY_MS - LOCAL_OFFSET_MS).toISOString()
 
 const safeJson = (text) => {
   try { return JSON.parse(text) } catch { return null }
@@ -169,7 +169,7 @@ export async function capHitTimes(store, { routerId = null, since, until }) {
 }
 
 export async function dailyCaps(store, { routerId = null, capBytesFor, now = Date.now() }) {
-  const since = sastDayStart(now)
+  const since = localDayStart(now)
   const until = new Date(now).toISOString()
   const totals = deviceTotals(await usageDeltas(store, { routerId, since, until }))
   const hits = await capHitTimes(store, { routerId, since, until })
@@ -201,7 +201,7 @@ export function syncIsFull(since, now = Date.now()) {
   if (!Number.isFinite(sinceMs)) return true
   if (sinceMs > now) return true
   if (now - sinceMs > DELTA_MAX_AGE_MS) return true
-  return sinceMs < Date.parse(sastDayStart(now))
+  return sinceMs < Date.parse(localDayStart(now))
 }
 
 export async function capsAnswer(store, { routerId, capBytesFor, since = null, now = Date.now() }) {
@@ -216,3 +216,5 @@ export async function registeredPhone(store, routerId, mac) {
   const [registration] = await store.t.list(TABLE.registrations, { router_id: routerId, mac }, { limit: 1, sort: [{ field: 'registered_at', dir: 'DESC' }] })
   return registration?.phone_e164 || null
 }
+export const SAST_OFFSET_MS = LOCAL_OFFSET_MS;
+export const sastDayStart = localDayStart;

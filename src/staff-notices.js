@@ -7,7 +7,7 @@ import { evData } from './safe.js'
 import { canSignOff } from './contact-tiers.js'
 import { isHandedOff } from './signoff-desk.js'
 import { isOwnConversation } from './case-assignment.js'
-import { TECHNICIAN_NOTE, notesTagged, offersFor, offerLine } from './relay.js'
+import { SPECIALIST_NOTE, notesTagged, offersFor, offerLine } from './relay.js'
 import { firstTimeStaff, issuesGroupUrl, issuesInviteDue, markIssuesInvited } from './staff-help.js'
 import { caseyText } from './deployment-text.js';
 
@@ -29,12 +29,12 @@ export function assignedCaseState(events, contact) {
   const iOutAny = lastIndex(events, e => e.kind === 'outbound')
   const undelivered = iOutAny > iIn && iOutAny >= 0 && dataOf(events[iOutAny]).delivered === false
   const iSentBack = lastIndex(events, e => { const d = dataOf(e); return d.sent_back === true || d.handoff_withdrawn === true })
-  const iTechNote = lastIndex(events, e => dataOf(e).tag === TECHNICIAN_NOTE)
+  const iTechNote = lastIndex(events, e => dataOf(e).tag === SPECIALIST_NOTE)
   const newTechNote = iTechNote > iAnnounced
   return {
     reply_undelivered: undelivered,
     new_technician_note: newTechNote,
-    ...(newTechNote ? { technician_note: notesTagged(events, TECHNICIAN_NOTE)[0].text } : {}),
+    ...(newTechNote ? { technician_note: notesTagged(events, SPECIALIST_NOTE)[0].text } : {}),
     sent_back: iSentBack > iAnnounced,
     new_assignment: iAssigned > iAnnounced,
     waiting_for_you: iIn > iOut,

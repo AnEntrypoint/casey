@@ -2,7 +2,7 @@
 
 import { defTool, str, boundCase } from './case-tools-shared.js'
 import { addFeedback, listFeedback, MAX_TEXT } from './feedback.js'
-import { fmtTimeSAST } from './format.js'
+import { fmtTimeLocal } from './format.js'
 import { caseyText } from './deployment-text.js';
 
 export function buildFeedbackTools(store) {
@@ -32,7 +32,7 @@ export function buildFeedbackTools(store) {
           say: [
             caseyText("src/case-tools-feedback.js#s1", [out.total, out.total === 1 ? '' : 's']),
             ...out.by_week.slice(0, 4).map(w => caseyText("src/case-tools-feedback.js#s2", [w.week, w.count])),
-            ...out.items.map(i => `${fmtTimeSAST(Math.floor(i.at / 1000))} ${i.from}${i.language ? ` (${i.language})` : ''}: ${i.text}`),
+            ...out.items.map(i => `${fmtTimeLocal(Math.floor(i.at / 1000))} ${i.from}${i.language ? ` (${i.language})` : ''}: ${i.text}`),
           ],
           note: caseyText("src/case-tools-feedback.js#7"),
         }

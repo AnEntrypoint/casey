@@ -1,7 +1,7 @@
-import { SAST_TZ, TZ_LABEL, LOCALE, COUNTRY_CODE, INTERNATIONAL_DIGITS_RE, INTERNATIONAL_GROUPS, LOCAL_NUMBER_RE, LOCAL_GROUPS, spaced } from './locale.js'
+import { LOCAL_TZ, TZ_LABEL, LOCALE, COUNTRY_CODE, INTERNATIONAL_DIGITS_RE, INTERNATIONAL_GROUPS, LOCAL_NUMBER_RE, LOCAL_GROUPS, spaced } from './locale.js'
 
 
-export { SAST_TZ }
+export { LOCAL_TZ, LOCAL_TZ as SAST_TZ }
 
 export function isOpenCase(c) {
   return c && c.status !== 'resolved' && c.status !== 'closed'
@@ -21,13 +21,13 @@ export function toDate(v) {
   return isNaN(d.getTime()) ? null : d
 }
 
-export function fmtTimeSAST(v) {
+export function fmtTimeLocal(v) {
   const d = toDate(v)
   if (!d) return ''
   const suffix = TZ_LABEL ? ' ' + TZ_LABEL : ''
   try {
     return d.toLocaleString(LOCALE, {
-      timeZone: SAST_TZ, year: 'numeric', month: 'short', day: 'numeric',
+      timeZone: LOCAL_TZ, year: 'numeric', month: 'short', day: 'numeric',
       hour: '2-digit', minute: '2-digit',
     }) + suffix
   } catch { return d.toLocaleString() + suffix }
@@ -52,6 +52,8 @@ export function hostTimezone() {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || '' }
   catch { return '' }
 }
-export function hostIsSAST() {
-  return hostTimezone() === SAST_TZ
+export function hostIsLocal() {
+  return hostTimezone() === LOCAL_TZ
 }
+export const fmtTimeSAST = fmtTimeLocal;
+export const hostIsSAST = hostIsLocal;

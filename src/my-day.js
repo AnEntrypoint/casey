@@ -1,6 +1,6 @@
 
 
-import { isOpenCase, SAST_TZ } from './format.js'
+import { isOpenCase, LOCAL_TZ } from './format.js'
 import { parseReport, tagList, tsMs } from './timestamp.js'
 import { evData } from './safe.js'
 import { assigneeKeyFor } from './case-assignment.js'
@@ -8,9 +8,9 @@ import { normalizeMsisdn } from './role-invites.js'
 import { canSignOff } from './contact-tiers.js'
 import { identifyingLine } from './team-focus.js'
 import { SIGNOFF_DIAGNOSIS_FIELDS, missingMandatoryMinimum, missingSignoffDiagnosis, fieldLabel } from './store/report-shape.js'
-import { loadAreas, areasOfRanger, resolveArea, statedArea } from './areas.js'
+import { loadAreas, areasOfResponder, resolveArea, statedArea } from './areas.js'
 import { isHandedOff, inSignOffQueue } from './signoff-desk.js'
-import { TECHNICIAN_NOTE, notesTagged } from './relay.js'
+import { SPECIALIST_NOTE, notesTagged } from './relay.js'
 import { caseyText } from './deployment-text.js';
 
 export async function keysForContact(store, contact) {
@@ -27,7 +27,7 @@ export async function keysForContact(store, contact) {
 const NEEDS_CAP = 15
 const SCOPE_EVENT_CAP = 150
 
-export function dayStartMs(now = Date.now(), tz = SAST_TZ) {
+export function dayStartMs(now = Date.now(), tz = LOCAL_TZ) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date(now)).filter(p => p.type !== 'literal').map(p => [p.type, Number(p.value)]))
   const wallNow = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second)
   const offset = wallNow - Math.floor(now / 1000) * 1000
@@ -40,7 +40,7 @@ export async function myDay(store, { keys = [], contact = null, tier = '', name 
   const myKeys = [...new Set([...keys, assigneeKeyFor(contact)].filter(Boolean))]
   const dayStart = since != null && Number.isFinite(Number(since)) ? Number(since) : dayStartMs(now)
   const areas = await loadAreas(store)
-  const mineAreas = areasOfRanger(areas, myKeys)
+  const mineAreas = areasOfResponder(areas, myKeys)
   const mineAreaIds = new Set(mineAreas.map(a => a.id))
 
   const all = (await store.listCases({}, { limit: 10000, offset: 0 })).filter(c => c.channel !== 'system')
@@ -63,7 +63,7 @@ export async function myDay(store, { keys = [], contact = null, tier = '', name 
     let iIn = -1; let iOut = -1
     events.forEach((e, i) => { if (e.kind === 'inbound') iIn = i; if (e.kind === 'outbound' && e.actor === 'operator') iOut = i })
     lastInbound.set(c.id, iIn > iOut)
-    const notes = notesTagged(events, TECHNICIAN_NOTE)
+    const notes = notesTagged(events, SPECIALIST_NOTE)
     if (notes.length && tsMs(notes[0].at) >= dayStart) techNote.set(c.id, notes[0].text)
     for (const e of events) {
       if (!(tsMs(e.created_at) >= dayStart)) continue
@@ -72,7 +72,7 @@ export async function myDay(store, { keys = [], contact = null, tier = '', name 
       else if (e.kind === 'transition') changed.moved_stage += 1
       if (d.assigned_contact_id && myKeys.includes(`contact:${d.assigned_contact_id}`)) changed.newly_assigned_to_you += 1
       if (d.sent_back) changed.sent_back += 1
-      if (d.tag === TECHNICIAN_NOTE) changed.technician_notes += 1
+      if (d.tag === SPECIALIST_NOTE) changed.technician_notes += 1
       if (d.handed_off) changed.handed_to_desk += 1
     }
   }

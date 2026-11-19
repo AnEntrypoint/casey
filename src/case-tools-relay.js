@@ -10,7 +10,7 @@ import { assigneeKeyFor, isOwnConversation } from './case-assignment.js'
 import { AGENT_USER } from './case-store.js'
 import { NOT_ASSIGNED, findCase, authorityOn, deskAuthorityOn, actorData } from './case-tools-team-shared.js'
 import { resolveTeamContact } from './case-tools-team-operator.js'
-import { RANGER_NOTE, TECHNICIAN_NOTE, HANDOVER_TAG, HANDOVER_TTL_MS, cleanNote, pendingOffer } from './relay.js'
+import { FIELD_NOTE, SPECIALIST_NOTE, HANDOVER_TAG, HANDOVER_TTL_MS, cleanNote, pendingOffer } from './relay.js'
 import { caseyText } from './deployment-text.js';
 
 const NO_SUCH = { error: caseyText("src/case-tools-relay.js#0") }
@@ -36,7 +36,7 @@ export function buildRelayTools(store) {
         const refused = await writeGate(store(), ctx, c); if (refused) return refused
         const note = cleanNote(text)
         if (!note) return EMPTY_NOTE
-        await writeNote(store(), c, ctx, { tag: RANGER_NOTE, label: caseyText("src/case-tools-relay.js#s1"), text: note })
+        await writeNote(store(), c, ctx, { tag: FIELD_NOTE, label: caseyText("src/case-tools-relay.js#s1"), text: note })
         return { ok: true, recorded_on: await recordedOn(store(), c, ctx), noted_for_the_technician: true, sent_to_anyone: false }
       }),
     defTool(visibleToolName('case_note_to_specialist'), 'cases',
@@ -50,7 +50,7 @@ export function buildRelayTools(store) {
         if (authority === 'assigned') { const refused = await writeGate(store(), ctx, c); if (refused) return refused }
         const note = cleanNote(text)
         if (!note) return EMPTY_NOTE
-        await writeNote(store(), c, ctx, { tag: TECHNICIAN_NOTE, label: caseyText("src/case-tools-relay.js#s4"), text: note })
+        await writeNote(store(), c, ctx, { tag: SPECIALIST_NOTE, label: caseyText("src/case-tools-relay.js#s4"), text: note })
         return { ok: true, recorded_on: await recordedOn(store(), c, ctx), noted_for_the_ranger: true, sent_to_anyone: false, note: caseyText("src/case-tools-relay.js#5") }
       }),
     defTool('case_offer_handover', 'cases',

@@ -33,7 +33,7 @@ export function inSignOffQueue(c, unclaimedKey = UNCLAIMED) {
   return !a || a === unclaimedKey
 }
 
-export async function handoffToTechnician(store, caseId, { by = 'a team member', user, data = {}, note = '' } = {}) {
+export async function handoffToSpecialist(store, caseId, { by = 'a team member', user, data = {}, note = '' } = {}) {
   return store._withLock(`assign|${caseId}`, async () => {
     const c = await store.getCase(caseId)
     if (!c || c.channel === 'system') return { ok: false, code: 'not_found', error: 'No such report.' }
@@ -53,7 +53,7 @@ export async function handoffToTechnician(store, caseId, { by = 'a team member',
   })
 }
 
-export async function withdrawHandoff(store, caseId, { by = 'a team member', user, reason = '', data = {}, byRanger = false } = {}) {
+export async function withdrawHandoff(store, caseId, { by = 'a team member', user, reason = '', data = {}, byRanger: byResponder = false } = {}) {
   return store._withLock(`assign|${caseId}`, async () => {
     const c = await store.getCase(caseId)
     if (!c) return { ok: false, code: 'not_found', error: 'No such report.' }
@@ -61,14 +61,14 @@ export async function withdrawHandoff(store, caseId, { by = 'a team member', use
     await store.updateCase(c.id, { tags: dropTag(c.tags || '', HANDED_OFF_TAG) }, user)
     await store.appendEvent(c.id, {
       kind: 'action', actor: 'operator',
-      text: `${byRanger ? caseyText("src/signoff-desk.js#o0", [by]) : `HAND-OVER WITHDRAWN by ${by}`}${reason ? `: ${String(reason).slice(0, 400)}` : ''}`,
-      data: byRanger ? { ...data, by, handoff_withdrawn_by_ranger: true } : { ...data, by, handoff_withdrawn: true },
+      text: `${byResponder ? caseyText("src/signoff-desk.js#o0", [by]) : `HAND-OVER WITHDRAWN by ${by}`}${reason ? `: ${String(reason).slice(0, 400)}` : ''}`,
+      data: byResponder ? { ...data, by, handoff_withdrawn_by_ranger: true } : { ...data, by, handoff_withdrawn: true },
     })
     return { ok: true, was: true, ref: c.ref }
   })
 }
 
-export async function sendBackToRanger(store, caseId, { by = 'a team member', user, text = '', missing = [], data = {} } = {}) {
+export async function sendBackToResponder(store, caseId, { by = 'a team member', user, text = '', missing = [], data = {} } = {}) {
   const c = await store.getCase(caseId)
   if (!c || c.channel === 'system') return { ok: false, error: 'No such report.' }
   const tags = tagList(c)
@@ -78,3 +78,5 @@ export async function sendBackToRanger(store, caseId, { by = 'a team member', us
   await withdrawHandoff(store, c.id, { by, user, reason: 'sent back' })
   return { ok: true, ref: c.ref }
 }
+export const handoffToTechnician = handoffToSpecialist;
+export const sendBackToRanger = sendBackToResponder;

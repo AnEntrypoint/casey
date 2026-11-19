@@ -108,7 +108,7 @@ async function append(store, rec, note) {
   await store.appendEvent(caseId, { kind: 'observation', actor: 'operator', text: `${TAG}:${JSON.stringify(rec)}`, data: { op: rec.op, id: rec.id, note } })
 }
 
-export async function checkRanger(store, key) {
+export async function checkResponder(store, key) {
   const k = String(key || '').trim()
   if (!k || k === UNCLAIMED) return { ok: false, why: 'no ranger given' }
   if (isContactAssignee(k)) {
@@ -124,7 +124,7 @@ export async function checkRanger(store, key) {
   return { ok: true, name: acct.display_name || acct.username, contact: null }
 }
 
-async function rangerName(store, key) {
+async function responderName(store, key) {
   if (isContactAssignee(key)) {
     const c = await store.getContact(contactIdOfAssignee(key)).catch(() => null)
     return c ? staffLabel(c) : 'a team member'
@@ -137,11 +137,11 @@ async function normaliseInput(store, areas, input, existing) {
   const name = String(input.name ?? existing?.name ?? '').trim().replace(/\s+/g, ' ').slice(0, 80)
   if (!name) throw new Error('an area needs a name')
   const primary = String(input.primary ?? existing?.primary ?? '').trim()
-  const p = await checkRanger(store, primary)
+  const p = await checkResponder(store, primary)
   if (!p.ok) throw new Error(`the first ranger: ${p.why}`)
   const backups = [...new Set((input.backups ?? existing?.backups ?? []).map(b => String(b).trim()).filter(Boolean))].filter(b => b !== primary)
   if (backups.length > MAX_BACKUPS) throw new Error(`at most ${MAX_BACKUPS} backup rangers`)
-  for (const b of backups) { const r = await checkRanger(store, b); if (!r.ok) throw new Error(`backup ranger ${await rangerName(store, b)}: ${r.why}`) }
+  for (const b of backups) { const r = await checkResponder(store, b); if (!r.ok) throw new Error(`backup ranger ${await responderName(store, b)}: ${r.why}`) }
   const aliases = [...new Set((input.aliases ?? existing?.aliases ?? []).map(a => String(a).trim().replace(/\s+/g, ' ').slice(0, 80)).filter(Boolean))]
   if (aliases.length > MAX_ALIASES) throw new Error(`at most ${MAX_ALIASES} other names for one area`)
 
@@ -213,14 +213,14 @@ export async function removeArea(store, ref, by = 'operator') {
   })
 }
 
-export function areasOfRanger(areas, keys) {
+export function areasOfResponder(areas, keys) {
   const want = new Set((Array.isArray(keys) ? keys : [keys]).filter(Boolean))
   return areas.filter(a => want.has(a.primary) || a.backups.some(b => want.has(b)))
 }
 
-export async function pickRanger(store, area, caseRow) {
+export async function pickResponder(store, area, caseRow) {
   for (const key of [area.primary, ...area.backups]) {
-    const r = await checkRanger(store, key)
+    const r = await checkResponder(store, key)
     if (!r.ok) continue
     if (r.contact && caseRow && isOwnConversation(caseRow, r.contact)) continue
     return { key, name: r.name, contact: r.contact }
@@ -283,7 +283,7 @@ export async function autoAssignByArea(store, caseId, { user = SYSTEM_ACTOR, nea
     let target = null
     let pick = null
     for (const cand of candidates) {
-      const r = await pickRanger(store, cand.area, c)
+      const r = await pickResponder(store, cand.area, c)
       if (r) { target = cand; pick = r; break }
     }
     if (!pick) return { assigned: false, why: 'no valid ranger for the nearest area', area: candidates[0].area.name }
@@ -339,7 +339,7 @@ export function possiblyWrongArea(caseRow, areas) {
   const assocHit = stated ? resolveArea(areas, { stated }) : null
   const locHit = resolveAreaFromLocation(areas, report.location)
   const held = !isUnheld(caseRow) ? String(caseRow.assignee).trim() : ''
-  const mine = held ? areasOfRanger(areas, [held]) : []
+  const mine = held ? areasOfResponder(areas, [held]) : []
   const reasons = []
   if (locHit && mine.length && !mine.some(a => a.id === locHit.area.id)) reasons.push('location_elsewhere')
   if (assocHit && locHit && assocHit.area.id !== locHit.area.id) reasons.push('stated_disagrees')
@@ -354,7 +354,7 @@ export async function wrongAreaCases(store, areas = null) {
   const open = (await store.listCases({}, { limit: 10000, offset: 0 })).filter(c => c.channel !== 'system' && isOpenCase(c))
   open.sort((x, y) => (Number(y.last_event_at) || 0) - (Number(x.last_event_at) || 0))
   const rows = []
-  const rangerOf = new Map()
+  const responderOf = new Map()
   for (const c of open) {
     const flag = possiblyWrongArea(c, list)
     if (!flag) continue
@@ -362,13 +362,13 @@ export async function wrongAreaCases(store, areas = null) {
     const now = resolveArea(list, { stated: statedArea(r), location: r.location })
     const sug = flag.location_area || flag.stated_area
     const target = sug ? list.find(a => a.id === sug.id) : null
-    if (target && !rangerOf.has(target.id)) rangerOf.set(target.id, (await pickRanger(store, target, null))?.key || '')
+    if (target && !responderOf.has(target.id)) responderOf.set(target.id, (await pickResponder(store, target, null))?.key || '')
     rows.push({
       id: c.id, ref: c.ref, subject: c.subject || '',
       report: { [K.kind]: r[K.kind] != null ? String(r[K.kind]) : '', location: r.location != null ? String(r.location) : '', [AREA_FIELD]: statedArea(r) },
       current_area: now ? { id: now.area.id, name: now.area.name } : null,
       suggested_area: sug ? { id: sug.id, name: sug.name } : null,
-      suggested_ranger_key: target ? rangerOf.get(target.id) : '',
+      suggested_ranger_key: target ? responderOf.get(target.id) : '',
       reasons: flag.reasons, flag,
       holder_key: isUnheld(c) ? '' : String(c.assignee).trim(),
     })
@@ -408,12 +408,12 @@ export async function relocateCase(store, caseId, { area = '', stated = '', assi
 
     let next = null
     if (assignee) {
-      const r = await checkRanger(store, assignee)
+      const r = await checkResponder(store, assignee)
       if (!r.ok) return { ok: false, error: `That person cannot be used: ${r.why}.` }
       if (r.contact && isOwnConversation(c, r.contact)) return { ok: false, error: 'That is the reporter\'s own chat, so it cannot be given to them.' }
       next = { key: String(assignee).trim(), name: r.name, contact: r.contact }
     } else if (target && reassign) {
-      next = await pickRanger(store, target, c)
+      next = await pickResponder(store, target, c)
       if (!next) return { ok: false, error: `No valid ranger is set for ${target.name}. Fix the area first, or choose a person.` }
     }
 
@@ -441,4 +441,7 @@ export async function relocateCase(store, caseId, { area = '', stated = '', assi
   })
 }
 
-export { rangerName }
+export { responderName, responderName as rangerName }
+export const checkRanger = checkResponder;
+export const areasOfRanger = areasOfResponder;
+export const pickRanger = pickResponder;

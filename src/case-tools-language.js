@@ -10,7 +10,7 @@ import { caseyText } from './deployment-text.js';
 
 const NO_SUCH = { error: caseyText("src/case-tools-language.js#0") }
 
-async function rangerLanguage(store, contact) {
+async function responderLanguage(store, contact) {
   const own = await store.findOpenCase({ channel: contact.channel, external_id: contact.external_id })
   return String(parseReport(own).language_detected || '').trim()
 }
@@ -40,7 +40,7 @@ export function buildLanguageTools(store, { callLLM } = {}) {
           if (!c) return { error: caseyText("src/case-tools-language.js#6") }
         }
         if (!deskAuthorityOn(ctx, c)) return NOT_ASSIGNED
-        const target = String(to || '').trim() || await rangerLanguage(store(), me)
+        const target = String(to || '').trim() || await responderLanguage(store(), me)
         if (!target) return { error: caseyText("src/case-tools-language.js#7") }
         const ev = await targetEvent(store(), c, which)
         if (!ev) return { error: caseyText("src/case-tools-language.js#8") }

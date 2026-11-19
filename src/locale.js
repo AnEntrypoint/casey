@@ -9,7 +9,7 @@ const groups = (v) => (Array.isArray(v) && v.length && v.every((n) => Number.isI
 const TIMEZONE = env.CASEY_TZ || text(cfg.timezone, 'UTC')
 try { new Intl.DateTimeFormat('en', { timeZone: TIMEZONE }) } catch { throw new Error('domain.yml locale.timezone is not a time zone') }
 
-export const SAST_TZ = TIMEZONE
+export const LOCAL_TZ = TIMEZONE
 export const TZ_LABEL = env.CASEY_TZ_LABEL || (env.CASEY_TZ ? '' : text(cfg.timezone_label, 'UTC'))
 export const UTC_OFFSET_HOURS = Number.isInteger(cfg.utc_offset_hours) ? cfg.utc_offset_hours : 0
 export const LOCALE = text(cfg.locale, 'en')
@@ -35,7 +35,7 @@ export function spaced(s, sizes) {
 export const EXAMPLE_LOCAL = text(cfg.examples?.local, '')
 export const EXAMPLE_INTERNATIONAL = text(cfg.examples?.international, '')
 export const EXAMPLE_DISPLAY = text(cfg.examples?.display, '')
-export const LOCATION_NAME = text(cfg.location_name, '') || SAST_TZ
+export const LOCATION_NAME = text(cfg.location_name, '') || LOCAL_TZ
 
 export function phoneDigitsOk(d) {
   if (LOCAL_NUMBER_RE || INTERNATIONAL_PLUS_RE) return Boolean((LOCAL_NUMBER_RE && LOCAL_NUMBER_RE.test(d)) || (INTERNATIONAL_PLUS_RE && INTERNATIONAL_PLUS_RE.test(d)))
@@ -53,3 +53,4 @@ export function clientPhoneRuleLines() {
   if (INTERNATIONAL_PLUS_RE) lines.push(`      if (/${INTERNATIONAL_PLUS_RE.source}/.test(d)) { errEl.className = 'field-err'; phoneEl.removeAttribute('aria-invalid'); return }`)
   return lines.map((l) => l + '\n').join('')
 }
+export const SAST_TZ = LOCAL_TZ;

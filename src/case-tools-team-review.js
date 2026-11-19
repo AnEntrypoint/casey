@@ -14,9 +14,9 @@ import { evData } from './safe.js'
 import { writeGate, recordedOn, setFocus } from './team-focus.js'
 import { recordSeen } from './stale-write-guard.js'
 import { NOT_ASSIGNED, doneStages, findCase, teamRow, actorData, stripSavedPaths, deskAuthorityOn, authorityOn, reporterExtras, maskNumberFields } from './case-tools-team-shared.js'
-import { inSignOffQueue, withdrawHandoff, isHandedOff, sendBackToRanger } from './signoff-desk.js'
+import { inSignOffQueue, withdrawHandoff, isHandedOff, sendBackToResponder } from './signoff-desk.js'
 import { mergeTag } from './hooks/heuristics.js'
-import { RANGER_NOTE, notesTagged } from './relay.js'
+import { FIELD_NOTE, notesTagged } from './relay.js'
 import { caseyText } from './deployment-text.js';
 
 const NO_SUCH = { error: caseyText("src/case-tools-team-review.js#0") }
@@ -52,7 +52,7 @@ export function buildTeamReviewTools(store) {
         const n = Math.min(Math.max(Number(limit) || 15, 1), 50)
         const { extra: who } = await reporterExtras(store(), rows.slice(0, n))
         const notes = new Map()
-        for (const c of rows.slice(0, n)) notes.set(c.id, notesTagged(await store().listEvents(c.id), RANGER_NOTE))
+        for (const c of rows.slice(0, n)) notes.set(c.id, notesTagged(await store().listEvents(c.id), FIELD_NOTE))
         const noteOf = (c) => (notes.get(c.id).length ? { ranger_notes: notes.get(c.id).length, latest_ranger_note: notes.get(c.id)[0].text } : {})
         return { total: rows.length, shown: Math.min(rows.length, n), cases: rows.slice(0, n).map(c => teamRow(c, ctx, { reporter_asked_us_to_stop: tagList(c).includes(OPTED_OUT_TAG), ...who(c), ...noteOf(c) })) }
       }),
@@ -77,7 +77,7 @@ export function buildTeamReviewTools(store) {
           case: slim,
           required_missing: missingMandatoryMinimum(parseReport(c)).map(fieldLabel),
           ready_for_signoff: isComplete(c) && !done(c),
-          ranger_notes: notesTagged(events, RANGER_NOTE),
+          ranger_notes: notesTagged(events, FIELD_NOTE),
           reporter_asked_us_to_stop: tagList(c).includes(OPTED_OUT_TAG),
           timeline: events.slice(-REVIEW_EVENT_CAP).map(e => ({ kind: e.kind, actor: e.actor, at: e.created_at, text: stripSavedPaths(e.text).slice(0, 600) })),
           timeline_total: events.length,
@@ -110,7 +110,7 @@ export function buildTeamReviewTools(store) {
         if (!atLeast(reporter?.tier, TIER.field)) {
 
           if (isHandedOff(c)) {
-            const back = await sendBackToRanger(store(), c.id, { by: staffLabel(ctx.contact), user: AGENT_USER, text: String(text || '').trim(), data: actorData(ctx) })
+            const back = await sendBackToResponder(store(), c.id, { by: staffLabel(ctx.contact), user: AGENT_USER, text: String(text || '').trim(), data: actorData(ctx) })
             return back.ok ? { ok: true, sent_back_to_the_ranger: true, delivered: false, recorded_on: r.on, taken_off_the_sign_off_desk: true } : { error: back.error }
           }
           return { error: caseyText("src/case-tools-team-review.js#8") }

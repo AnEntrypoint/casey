@@ -7,7 +7,7 @@ import { writeGate, recordedOn } from './team-focus.js'
 import { REPORT_ENTITY_LABEL } from './store/report-shape.js'
 import { TIER_LABELS } from './store/report-shape.js'
 import { resolveTierValue } from './contact-tiers.js'
-import { handoffToTechnician, withdrawHandoff } from './signoff-desk.js'
+import { handoffToSpecialist, withdrawHandoff } from './signoff-desk.js'
 import { myDay, keysForContact } from './my-day.js'
 import { relocateCase } from './areas.js'
 import { findCase, authorityOn, ownFiledAuthority, storeUser, actorData, NOT_ASSIGNED } from './case-tools-team-shared.js'
@@ -28,7 +28,7 @@ export function buildTeamDeskTools(store) {
         const authority = authorityOn(ctx, c) || ownFiledAuthority(ctx, c)
         if (!authority) return NOT_ASSIGNED
         if (authority === 'assigned') { const refused = await writeGate(store(), ctx, c); if (refused) return refused }
-        const r = await handoffToTechnician(store(), c.id, { by: staffLabel(ctx.contact), user: storeUser(ctx, authority), data: actorData(ctx), note })
+        const r = await handoffToSpecialist(store(), c.id, { by: staffLabel(ctx.contact), user: storeUser(ctx, authority), data: actorData(ctx), note })
         if (!r.ok) return { error: r.error, ...(r.missing ? { still_missing: r.missing } : {}) }
         return { ok: true, ref: c.ref, recorded_on: await recordedOn(store(), c, ctx), handed_to_sign_off_desk: true, ...(r.already ? { note: caseyText("src/case-tools-team-desk.js#s2") } : {}) }
       }),

@@ -6,8 +6,8 @@ import { AGENT_USER } from './case-store.js'
 import { NOTE_TAGS } from './domain-roles.js'
 import { caseyText } from './deployment-text.js';
 
-export const RANGER_NOTE = NOTE_TAGS.field_note
-export const TECHNICIAN_NOTE = NOTE_TAGS.specialist_note
+export const FIELD_NOTE = NOTE_TAGS.field_note
+export const SPECIALIST_NOTE = NOTE_TAGS.specialist_note
 export const HANDOVER_TAG = NOTE_TAGS.handover_offer
 export const HANDOVER_TTL_MS = 48 * 3600e3
 export const NOTE_MAX = 600
@@ -53,3 +53,5 @@ export async function offersFor(store, contact, cases, { mark = false, now = Dat
   }
   return out
 }
+export const RANGER_NOTE = FIELD_NOTE;
+export const TECHNICIAN_NOTE = SPECIALIST_NOTE;

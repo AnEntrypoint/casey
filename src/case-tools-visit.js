@@ -152,14 +152,14 @@ export function buildVisitTools(store, editTool) {
       },
       async (args, ctx) => {
         const { case: ref, arrived_at, actions, samples } = args
-        const animals_treated = args[TOOL_ARG.treated_count]
+        const treatedInput = args[TOOL_ARG.treated_count]
         const r = await lookup(ctx, ref); if (r.fail) return r.fail
         const { c } = r
         const clean = (v, max = ITEM_MAX) => { return cleanRelayed(String(v ?? '')).replace(PHONE_SHAPE, 'a number').trim().slice(0, max) }
         const acts = (Array.isArray(actions) ? actions : []).map(a => clean(a)).filter(Boolean).slice(0, LIST_MAX)
         const smp = (Array.isArray(samples) ? samples : []).map(s => ({ id: clean(s?.id, 40), type: clean(s?.type, 40) })).filter(s => s.id).slice(0, LIST_MAX)
         const arrived = clean(arrived_at, 60)
-        const treated = clean(animals_treated, 120)
+        const treated = clean(treatedInput, 120)
         if (!arrived && !acts.length && !smp.length && !treated) return { error: caseyText("src/case-tools-visit.js#20") }
         const treatedCount = treated ? statedCount(treated) : null
         if (smp.length) {

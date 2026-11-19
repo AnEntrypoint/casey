@@ -165,7 +165,7 @@ function jargonFeedback(words, ref) {
   return caseyText("src/hooks/turn-attempts.js#4", [words.join(', '), ref])
 }
 
-export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, typedText = '', turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [], consentOn = false, returnOn = false, isStaff = false, isTechnician = false }) {
+export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, typedText = '', turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [], consentOn = false, returnOn = false, isStaff = false, isTechnician: isSpecialist = false }) {
 
   const offerThing = isStaff ? caseyText("src/hooks/turn-attempts.js#5") : caseyText("src/hooks/turn-attempts.js#6")
   const note = async (text) => {
@@ -264,7 +264,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   if (verdict.fault) await raiseOperatorItem({ store, log, caseId: fresh.id, code: 'judge.fault', fields: { attempt, fault: verdict.fault } })
 
   if (isStaff && !verdict.clean && verdict.reasons?.length) {
-    const rest = verdict.reasons.filter(r => !/jargon|multi.?ask|wall of text|repeat.?ask/i.test(r) && !(isTechnician && /advice.?given/i.test(r)))
+    const rest = verdict.reasons.filter(r => !/jargon|multi.?ask|wall of text|repeat.?ask/i.test(r) && !(isSpecialist && /advice.?given/i.test(r)))
     if (rest.length !== verdict.reasons.length) verdict = rest.length ? { ...verdict, reasons: rest, category: 'other' } : { clean: true, reasons: [], category: null }
   }
 

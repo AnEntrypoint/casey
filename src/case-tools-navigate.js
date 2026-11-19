@@ -5,7 +5,7 @@ import { staffLabel } from './hooks/staff-outbound.js'
 import { REPORT_ENTITY_LABEL } from './store/report-shape.js'
 import { findCase, deskAuthorityOn, actorData, NOT_ASSIGNED } from './case-tools-team-shared.js'
 import { isOwnConversation } from './case-assignment.js'
-import { loadAreas, areasOfRanger, resolveArea, statedArea } from './areas.js'
+import { loadAreas, areasOfResponder, resolveArea, statedArea } from './areas.js'
 import { keysForContact } from './my-day.js'
 import { identifyingLine } from './team-focus.js'
 import { casePin, planRoute } from './route-plan.js'
@@ -26,7 +26,7 @@ async function mayNavigate(store, ctx, c) {
   if (isOwnConversation(c, ctx?.contact)) return false
   if (deskAuthorityOn(ctx, c)) return true
   const areas = await loadAreas(store)
-  const mine = areasOfRanger(areas, await keysForContact(store, ctx?.contact))
+  const mine = areasOfResponder(areas, await keysForContact(store, ctx?.contact))
   if (!mine.length) return false
   const r = parseReport(c)
   const hit = resolveArea(areas, { stated: statedArea(r), location: r.location })?.area

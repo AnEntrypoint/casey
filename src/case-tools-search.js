@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
 import { defTool, str, haversineKm } from './case-tools-shared.js'
 import { vocabWord } from './config-loader.js'
-import { SAST_TZ } from './format.js'
+import { LOCAL_TZ } from './format.js'
 import { parseReport, tagList, tsMs } from './timestamp.js'
 import { dayStartMs, keysForContact } from './my-day.js'
-import { loadAreas, areasOfRanger, resolveArea, statedArea } from './areas.js'
+import { loadAreas, areasOfResponder, resolveArea, statedArea } from './areas.js'
 import { isHandedOff, isUnheld } from './signoff-desk.js'
 import { doneStages, deskAuthorityOn, scrubNumbers } from './case-tools-team-shared.js'
 import { OPTED_OUT_TAG, CASE_REF_RE } from './hooks/heuristics.js'
@@ -40,12 +40,12 @@ const asList = (v) => (v == null || v === '' ? [] : (Array.isArray(v) ? v : Stri
 const fail = (message, extra = {}) => ({ error: message, ...extra })
 
 function tzParts(ms) {
-  const f = new Intl.DateTimeFormat('en-US', { timeZone: SAST_TZ, year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short' })
+  const f = new Intl.DateTimeFormat('en-US', { timeZone: LOCAL_TZ, year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short' })
   const p = Object.fromEntries(f.formatToParts(new Date(ms)).filter(x => x.type !== 'literal').map(x => [x.type, x.value]))
   return { y: Number(p.year), m: Number(p.month), d: Number(p.day), weekday: WEEKDAYS.indexOf(p.weekday) }
 }
 
-const startOfDayAt = (ms) => dayStartMs(ms, SAST_TZ)
+const startOfDayAt = (ms) => dayStartMs(ms, LOCAL_TZ)
 const nextDayStart = (dayStart) => startOfDayAt(dayStart + DAY_MS * 1.5)
 const prevDayStart = (dayStart) => startOfDayAt(dayStart - DAY_MS / 2)
 
@@ -214,7 +214,7 @@ export async function searchCases(store, ctx, args = {}, { now = Date.now() } = 
   let areas = null
   if (f.scope === 'area') {
     areas = await loadAreas(store)
-    areaIds = new Set(areasOfRanger(areas, [...keys]).map(a => a.id))
+    areaIds = new Set(areasOfResponder(areas, [...keys]).map(a => a.id))
     if (!areaIds.size) notes.push(caseyText("src/case-tools-search.js#8"))
   }
   const inArea = (report) => !!areaIds && areaIds.size > 0 && areaIds.has(resolveArea(areas, { stated: statedArea(report), location: report.location })?.area?.id)
@@ -314,7 +314,7 @@ export async function searchCases(store, ctx, args = {}, { now = Date.now() } = 
   const behind = total - remaining.length
 
   const out = {
-    total, shown: page.length, as_of: new Date(now).toISOString(), timezone: SAST_TZ,
+    total, shown: page.length, as_of: new Date(now).toISOString(), timezone: LOCAL_TZ,
     next: more ? encodeCursor(sig, page[page.length - 1].key) : null,
     filters_applied: describeFilters(f),
   }
