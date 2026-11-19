@@ -78,11 +78,11 @@ function byTypeTable(report) {
     const rows = types.map((t) => row(ctLabel(t), sbt[t], met[t]));
     if (ov) rows.push(row(word('ui.metrics_panel_overall'), ov, null));
     return Section({ title: word('ui.metrics_panel_by_type'), children: [
-        Table({ headers: [
+        h('div', { class: 'ds-trends-types' }, Table({ headers: [
             word('ui.metrics_panel_h_type'), word('ui.metrics_panel_h_reports'), word('ui.metrics_panel_h_in_time'),
             word('ui.metrics_panel_h_late'), word('ui.metrics_panel_h_never'), word('ui.metrics_panel_h_first_reply'),
             word('ui.metrics_panel_h_closed'),
-        ], rows })
+        ], rows }))
     ]});
 }
 
