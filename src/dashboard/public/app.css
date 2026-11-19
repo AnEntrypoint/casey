@@ -936,3 +936,15 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .ds-app-root:has(.app-two-pane.has-active) footer.app-status { display: none; }
   .ds-app-root:has(.app-two-pane.has-active) .app-body { padding-bottom: 0; }
 }
+
+.ds-247420 .ds-appbar .btn-ghost,
+.ds-247420 .ds-appbar .ds-icon-btn,
+.ds-247420 .ds-appbar .ds-dropdown-trigger {
+  border-color: color-mix(in oklab, var(--fg) 26%, transparent);
+}
+@media (max-width: 700px) {
+  .ds-247420 .ds-appbar .btn-primary:not(.btn-sm):not(.btn-lg),
+  .ds-247420 .ds-appbar .btn-ghost:not(.btn-sm):not(.btn-lg) {
+    white-space: nowrap;
+  }
+}
