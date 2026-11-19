@@ -27,8 +27,7 @@ const SERIAL = /^[A-Z0-9]{6,20}$/
 const SSID = /^[\x20-\x7e]{1,32}$/
 const PASSPHRASE = /^[\x20-\x7e]{8,63}$/
 export const SITE_MAX = 120
-export const ONLINE_WITHIN_MS = 10 * 60e3
-export const QUIET_WITHIN_MS = 60 * 60e3
+export const DEFAULT_IDLE_HEARTBEAT_S = 3600
 
 export class RouterRefusal extends Error {
   constructor(message, status) {
@@ -51,12 +50,13 @@ export function normaliseSerial(v) {
   return SERIAL.test(s) ? s : null
 }
 
-export function liveness(lastSeen, now = Date.now()) {
+export function liveness(lastSeen, now = Date.now(), idleHeartbeatS = DEFAULT_IDLE_HEARTBEAT_S) {
   const seen = typeof lastSeen === 'string' && lastSeen ? Date.parse(lastSeen) : NaN
   if (!Number.isFinite(seen)) return 'never'
+  const hbMs = (Number.isFinite(idleHeartbeatS) && idleHeartbeatS > 0 ? idleHeartbeatS : DEFAULT_IDLE_HEARTBEAT_S) * 1000
   const age = Math.max(0, now - seen)
-  if (age <= ONLINE_WITHIN_MS) return 'online'
-  if (age <= QUIET_WITHIN_MS) return 'quiet'
+  if (age <= hbMs) return 'online'
+  if (age <= 2 * hbMs) return 'quiet'
   return 'offline'
 }
 
@@ -214,10 +214,11 @@ export async function listRouters(store) {
   return store.t.list(TABLE.routers, {}, { limit: 500, sort: [{ field: 'created_at', dir: 'ASC' }] })
 }
 
-export async function routerOverview(store, now = Date.now()) {
+export async function routerOverview(store, now = Date.now(), heartbeatFor = async () => DEFAULT_IDLE_HEARTBEAT_S) {
   const routers = await store.t.list(TABLE.routers, {}, { limit: 500, sort: [{ field: 'created_at', dir: 'ASC' }] })
   const since = new Date(now - DAY_MS).toISOString()
   return Promise.all(routers.map(async (r) => {
+    const idleHeartbeatS = await heartbeatFor(r.router_id)
     const recent = await store.t.list(TABLE.events, { router_id: r.router_id }, { limit: RECENT_EVENTS, sort: [{ field: 'ts', dir: 'DESC' }] })
     const [hb] = await store.t.list(TABLE.events, { router_id: r.router_id, type: 'heartbeat' }, { limit: 1, sort: [{ field: 'ts', dir: 'DESC' }] })
     const cutoffs = await store.t.list(TABLE.events, { router_id: r.router_id, type: 'cutoff', ts: { $gte: since } }, { limit: 10000 })
@@ -228,7 +229,8 @@ export async function routerOverview(store, now = Date.now()) {
       site: r.site || '',
       serial: r.serial || '',
       uplink_ssid: r.uplink_ssid || '',
-      status: liveness(r.last_seen, now),
+      status: liveness(r.last_seen, now, idleHeartbeatS),
+      idle_heartbeat_s: idleHeartbeatS,
       last_seen: isoOrNull(r.last_seen),
       active_clients: Number.isFinite(active) ? active : null,
       active_clients_at: hb ? isoOrNull(hb.ts) : null,
