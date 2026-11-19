@@ -367,7 +367,7 @@ export function diseaseReportBody(rep, { period, region, generated }, { esc, row
 }
 
 export function getDiseasesPrint(deps) {
-  const { store, authed, esc, fmtTimeSAST: fmtTimeLocal, printableReportRow, printableReportTable, printableReport } = deps
+  const { store, authed, esc, fmtTimeLocal, printableReportRow, printableReportTable, printableReport } = deps
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const w = windowOf(req, res); if (!w) return

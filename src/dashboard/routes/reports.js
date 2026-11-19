@@ -182,7 +182,7 @@ export function getReportJson(deps) {
   }
 }
 
-export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST: fmtTimeLocal }) {
+export function getAuditCsv({ store, authed, csvCell, fmtTimeLocal }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const days = reportDays(req)
@@ -233,7 +233,7 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST: fmtTimeLocal 
 }
 
 export function getReportHtml(deps) {
-  const { authed, esc, fmtTimeSAST: fmtTimeLocal, printableReportRow, printableReport } = deps
+  const { authed, esc, fmtTimeLocal, printableReportRow, printableReport } = deps
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { report: r } = await gatherReport(deps, reportDays(req))
@@ -261,7 +261,7 @@ export function getReportHtml(deps) {
 }
 
 export function getHandover(deps) {
-  const { authed, esc, fmtTimeSAST: fmtTimeLocal, printableReportRow, printableReportTable, printableReport } = deps
+  const { authed, esc, fmtTimeLocal, printableReportRow, printableReportTable, printableReport } = deps
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const h = await gatherHandover(deps)

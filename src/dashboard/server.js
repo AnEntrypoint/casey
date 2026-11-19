@@ -391,7 +391,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
     computeFillRate, csvCell, parseJsonArraySafe, parseEventData, isOpenCase,
     UNCLAIMED_ASSIGNEE,
-    rankAttention, sendReply, fmtTimeSAST: fmtTimeLocal, fmtPhone27, SAST_TZ: LOCAL_TZ,
+    rankAttention, sendReply, fmtTimeLocal, fmtPhone27, LOCAL_TZ,
     printableReportRow, printableReportTable, printableReport,
     getWebhookDeliveryStatus, llmStatus, callLLM, runSweep, receiveStatus,
     runtimeStatus, queueStatus, alertWebhookUrl, resolveWhatsappAdapter,

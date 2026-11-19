@@ -232,7 +232,7 @@ export function getRuntime({ authed, runtimeStatus }) {
   }
 }
 
-export function getConfig({ store, authed, SAST_TZ: LOCAL_TZ, resolveWhatsappAdapter, fmtPhone27 }) {
+export function getConfig({ store, authed, LOCAL_TZ, resolveWhatsappAdapter, fmtPhone27 }) {
   return (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     let botNumber = ''
