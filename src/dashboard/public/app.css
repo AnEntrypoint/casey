@@ -973,6 +973,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 
 .ds-247420 .panel-title {
   color: var(--fg);
+  font-size: var(--fs-body);
   font-weight: 600;
 }
 
