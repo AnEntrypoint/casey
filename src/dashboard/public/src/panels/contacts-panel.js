@@ -152,7 +152,7 @@ export function ContactsPanel() {
                         withPeople(c, who(c)),
                         channelLabel(c.channel),
                         chip,
-                        c.last_location_at ? fmtTime(c.last_location_at) : NO_TIME_TEXT,
+                        c.last_location_at ? fmtTime(c.last_location_at) : h('span', { class: 'ds-placeholder' }, NO_TIME_TEXT),
                         h('div', { class: 'ds-contact-actions' },
                             Select({ key: 'role-' + c.id, name: 'role-' + c.id, size: 'sm', value: tier, options: all, 'aria-label': word('ui.contacts_panel_role_for', { name: c.named ? c.display_name : (c.has_number ? c.external_id_formatted : word('ui.contacts_panel_this_person')) }), onChange: (v, e) => setTier(c, v, e && e.target) }),
                             (isAdmin && !erased) ? Btn({ size: 'sm', variant: 'link', class: 'ds-contact-erase', disabled: busyIds.has(c.id), children: word('ui.contacts_panel_erase_confirm'), onClick: () => erase(c) }) : null),

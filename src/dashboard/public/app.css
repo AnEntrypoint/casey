@@ -1021,3 +1021,13 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   min-height: 0;
   margin-bottom: 0;
 }
+
+.ds-247420 .panel-head > .panel-title:last-child:not(.ds-badge) {
+  color: var(--fg);
+}
+.ds-247420 .ds-placeholder {
+  color: var(--fg-3);
+}
+.ds-247420 .ds-area-item .row {
+  padding-block: var(--space-2);
+}

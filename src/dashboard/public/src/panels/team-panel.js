@@ -7,7 +7,7 @@ import { Chip } from '/design/src/components/shell/atoms.js';
 import { state, schedule } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchOperatorWorkload } from '../api.js';
-import { fmtDur } from '../format.js';
+import { fmtDur, NO_TIME_TEXT } from '../format.js';
 import { word } from '../words.js';
 
 const h = webjsx.createElement;
@@ -31,14 +31,18 @@ const headers = () => [
     word('ui.team_panel_h_oldest_waiting'),
 ];
 
+function placeholderOr(text) {
+    return text === NO_TIME_TEXT ? h('span', { class: 'ds-placeholder' }, text) : text;
+}
+
 function operatorValues(o) {
     return [
         o.name || o.id,
         String(o.open_assigned || 0),
         o.stale_claims > 0 ? Chip({ tone: 'warn', size: 'sm', children: String(o.stale_claims) }) : '0',
         String(o.replies_24h || 0),
-        fmtDur(o.first_reply_ms_median),
-        fmtDur(o.oldest_waiting_ms),
+        placeholderOr(fmtDur(o.first_reply_ms_median)),
+        placeholderOr(fmtDur(o.oldest_waiting_ms)),
     ];
 }
 
