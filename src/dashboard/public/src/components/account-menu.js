@@ -22,11 +22,11 @@ export function chooseTheme(t) {
   applyTheme(t);
 }
 
-const LEGACY_THEME = { paper: 'herd', light: 'herd', ink: 'herd-ink', dark: 'herd-ink' };
+const LEGACY_THEME = __CASEY_THEME_LEGACY__;
 
 export function systemTheme() {
-  try { return matchMedia('(prefers-color-scheme: dark)').matches ? 'herd-ink' : 'herd'; }
-  catch { return 'herd'; }
+  try { return matchMedia('(prefers-color-scheme: dark)').matches ? '__CASEY_THEME_DARK__' : '__CASEY_THEME_LIGHT__'; }
+  catch { return '__CASEY_THEME_LIGHT__'; }
 }
 
 export function storedTheme() {
@@ -85,7 +85,7 @@ export function AccountMenu() {
   const items = [
     { id: 'account-name', label, glyph: Icon('members', { size: 14 }), disabled: true },
     { separator: true },
-    { id: 'theme', label: state.theme === 'herd' ? word('ui.account_menu_theme_dark') : word('ui.account_menu_theme_light'), glyph: Icon(state.theme === 'herd' ? 'moon' : 'sun', { size: 14 }) },
+    { id: 'theme', label: state.theme === '__CASEY_THEME_LIGHT__' ? word('ui.account_menu_theme_dark') : word('ui.account_menu_theme_light'), glyph: Icon(state.theme === '__CASEY_THEME_LIGHT__' ? 'moon' : 'sun', { size: 14 }) },
     { id: 'help', label: word('ui.account_menu_help'), glyph: Icon('help', { size: 14 }) },
     { id: 'feedback', label: word('ui.account_menu_feedback'), glyph: Icon('thread', { size: 14 }) },
     { separator: true },
@@ -93,7 +93,7 @@ export function AccountMenu() {
     { id: 'logout-everywhere', label: word('ui.account_menu_logout_all'), danger: true },
   ];
   const onSelect = (id) => {
-    if (id === 'theme') chooseTheme(state.theme === 'herd' ? 'herd-ink' : 'herd');
+    if (id === 'theme') chooseTheme(state.theme === '__CASEY_THEME_LIGHT__' ? '__CASEY_THEME_DARK__' : '__CASEY_THEME_LIGHT__');
     else if (id === 'help') openModal('help');
     else if (id === 'feedback') openFeedback();
     else if (id === 'logout') doLogout();

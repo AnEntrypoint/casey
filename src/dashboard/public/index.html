@@ -7,17 +7,16 @@
 <meta name="theme-color" content="#3b6ea5">
 <meta name="casey-tile-url" content="/tiles/{z}/{x}/{y}.png">
 <link rel="manifest" href="/manifest.json">
-<link rel="preload" href="/vendor/ubuntu/ubuntu-400.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="/vendor/ubuntu/ubuntu-700.woff2" as="font" type="font/woff2" crossorigin>
+__CASEY_FONT_PRELOADS__
 <script>
 (function () {
-  var legacy = { paper: 'herd', light: 'herd', ink: 'herd-ink', dark: 'herd-ink' };
+  var legacy = __CASEY_THEME_LEGACY__;
   var saved = null;
   try { saved = localStorage.casey_theme; } catch (e) {  }
   var dark = false;
   try { dark = matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) {  }
   document.documentElement.dataset.caseyTheme =
-    (saved && (legacy[saved] || saved)) || (dark ? 'herd-ink' : 'herd');
+    (saved && (legacy[saved] || saved)) || (dark ? '__CASEY_THEME_DARK__' : '__CASEY_THEME_LIGHT__');
 })();
 </script>
 <link rel="icon" type="image/svg+xml" href="/icon.svg">

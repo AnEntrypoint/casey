@@ -62,6 +62,7 @@ Imperatives for the operator console. Root `AGENTS.md` covers the access ladder,
 
 - `html` and `body` carry `.ds-247420` (`#app` too); theme is `data-casey-theme` stamped by the head script, never `data-theme` on `html`, never a hardcoded `data-theme`, never `data-accent`.
 - Link only `/design/dist/247420.css`; kit JS only through the `ds/` import map; font preloads keep `crossorigin`.
+- Theme ids, the font stack and font faces are `__CASEY_*__` tokens in public/index.html, app.css and src/components/account-menu.js. `brand-tokens.js` resolves them at serve time from `brand.yml` in CASEY_CONFIG_DIR (missing tokens take the neutral defaults there); an overlay under `CASEY_CONFIG_DIR/public/` is served after public/. Never write a deployment brand name into public/.
 - `#ds-boot` stays inline-styled and AFTER `#app`; Leaflet scripts stay below it and ahead of `/src/main.js`; the service-worker reload requires a pre-existing controller and waits until the person stops typing.
 -> recall {query:"casey index.html data-casey-theme head inline script data-accent ds-boot hadController reload"}
 

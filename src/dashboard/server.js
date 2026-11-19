@@ -8,6 +8,7 @@ import { VISIT_CRITICAL } from '../case-health.js'
 import { REPORT_KEY_ORDER, UNCLAIMED_ASSIGNEE } from '../case-store.js'
 import { SYSTEM_SET_FIELDS } from '../store/report-shape.js'
 import { BRAND, TYPE_SCALE_CSS } from './brand.js'
+import { brandConfig, applyBrandTokens, tokenisedAssets } from './brand-tokens.js'
 import { rankAttention } from '../attn.js'
 import { fmtTimeSAST, isOpenCase, SAST_TZ, fmtPhone27 } from '../format.js'
 import { getWebhookDeliveryStatus } from '../gateway-hooks.js'
@@ -182,9 +183,10 @@ function injectModulePreloads(html, moduleUrls) {
   return html.slice(0, i) + tags + '\n' + html.slice(i)
 }
 
-function shellBuildId(publicDir, assetUrls, siteEnabled) {
+function shellBuildId(publicDir, assetUrls, siteEnabled, brand) {
   const h = createHash('sha256')
   h.update('brand:' + BRAND.name + ':' + BRAND.ground + '\n')
+  h.update('tokens:' + JSON.stringify(brand.tokens) + '\n')
   h.update('tiles:' + CLIENT_TILE_URL + '\n')
   h.update('site:' + siteEnabled + '\n')
   h.update('vocab:' + vocabularyJson() + '\n')
@@ -198,6 +200,7 @@ function shellBuildId(publicDir, assetUrls, siteEnabled) {
     }
   }
   try { walk(publicDir, '') } catch { h.update('public-dir-unreadable\n') }
+  if (brand.overlayDir) { try { walk(brand.overlayDir, 'overlay/') } catch { h.update('overlay-unreadable\n') } }
   for (const url of assetUrls) {
     try {
       const st = statSync(shellAssetPath(url, publicDir))
@@ -298,9 +301,11 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   })()
   const SHELL_ASSET_URLS = SHELL_HTML_SOURCE ? shellAssetUrls(SHELL_HTML_SOURCE) : []
   const SHELL_MODULE_URLS = SHELL_HTML_SOURCE ? shellModuleGraph(SHELL_HTML_SOURCE, PUBLIC_DIR) : []
-  const SHELL_HTML = SHELL_HTML_SOURCE ? vocabularyShellHead(tileShellHead(brandShellHead(injectModulePreloads(SHELL_HTML_SOURCE, SHELL_MODULE_URLS)))) : null
+  const BRAND_CONFIG = brandConfig()
+  const TOKENISED_ASSETS = tokenisedAssets(PUBLIC_DIR, BRAND_CONFIG.tokens)
+  const SHELL_HTML = SHELL_HTML_SOURCE ? applyBrandTokens(vocabularyShellHead(tileShellHead(brandShellHead(injectModulePreloads(SHELL_HTML_SOURCE, SHELL_MODULE_URLS)))), BRAND_CONFIG.tokens) : null
   const PUBLIC_SITE_ROOT = publicSiteDir()
-  const SHELL_BUILD_ID = shellBuildId(PUBLIC_DIR, [...SHELL_ASSET_URLS, ...SHELL_MODULE_URLS], !!PUBLIC_SITE_ROOT)
+  const SHELL_BUILD_ID = shellBuildId(PUBLIC_DIR, [...SHELL_ASSET_URLS, ...SHELL_MODULE_URLS], !!PUBLIC_SITE_ROOT, BRAND_CONFIG)
   const SHELL_ENTRY = PUBLIC_SITE_ROOT ? '/app' : '/'
   registerWhatsappWebhook(app, { express, resolveWhatsappAdapter })
   app.use(guiActionLogger())
@@ -540,8 +545,19 @@ a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};font-size:var(--fs-body);t
     app.get('/app', sendShell)
     app.get('/index.html', sendShell)
   }
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next()
+    const body = TOKENISED_ASSETS.get(req.path)
+    if (body === undefined) return next()
+    res.setHeader('Cache-Control', 'no-cache')
+    res.type(path.extname(req.path)).send(body)
+  })
   app.use(express.static(PUBLIC_DIR, {
     index: 'index.html',
+    setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache') },
+  }))
+  if (BRAND_CONFIG.overlayDir) app.use(express.static(BRAND_CONFIG.overlayDir, {
+    index: false,
     setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache') },
   }))
   registerRouterRootFallback(app, deps)

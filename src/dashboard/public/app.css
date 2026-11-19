@@ -2,10 +2,10 @@
 .ds-247420 footer.app-status { border-top: none; background: var(--bg-2); }
 
 .ds-247420 .app-status .item:first-of-type { color: var(--fg-2); }
-html.ds-247420[data-casey-theme="herd"] { background: var(--paper); }
-html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
+html.ds-247420[data-casey-theme="__CASEY_THEME_LIGHT__"] { background: var(--paper); }
+html.ds-247420[data-casey-theme="__CASEY_THEME_DARK__"] { background: var(--ink); }
 
-.ds-247420[data-theme="herd-ink"] { --warn-fg: var(--ink); }
+.ds-247420[data-theme="__CASEY_THEME_DARK__"] { --warn-fg: var(--ink); }
 
 .ds-247420 :is(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
   outline: var(--focus-w) solid var(--focus-color);
@@ -141,7 +141,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-247420 :is(.ds-filter-pill, .chip).tone-live { color: color-mix(in oklab, var(--sky) 70%, var(--fg)); }
 .ds-247420 .is-danger > .ds-dropdown-label { color: var(--danger-ink); }
 
-.ds-247420[data-theme="herd-ink"] .ds-filter-pill.tone-success { color: var(--green); }
+.ds-247420[data-theme="__CASEY_THEME_DARK__"] .ds-filter-pill.tone-success { color: var(--green); }
 
 .ds-247420 .ds-search-field { width: 100%; max-width: 36rem; }
 .ds-247420 .ds-search-field .ds-search-input { flex: 1 1 auto; min-width: 0; }
@@ -569,23 +569,10 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .casey-rep-editable svg { display: none; }
 }
 
-@font-face {
-  font-family: 'Ubuntu';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('/vendor/ubuntu/ubuntu-400.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'Ubuntu';
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url('/vendor/ubuntu/ubuntu-700.woff2') format('woff2');
-}
+__CASEY_FONT_FACES__
 
 .ds-247420 {
-  --ff-sans: 'Ubuntu', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --ff-sans: __CASEY_FONT_SANS__;
 
   font-family: var(--ff-sans);
 

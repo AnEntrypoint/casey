@@ -47,6 +47,7 @@ export function loadDomainConfig() {
     pack: loadOptionalCjs(dir, 'pack.cjs'),
     externalSchema: loadOptionalCjs(dir, 'external-schema.cjs'),
     dashboard: loadOptionalYaml(dir, 'dashboard.yml'),
+    brand: loadOptionalYaml(dir, 'brand.yml'),
   }
   return cached
 }
