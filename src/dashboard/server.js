@@ -481,13 +481,10 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(fetch(req).catch(() => offlineFallback(req)))
     return
   }
-  e.respondWith(caches.open(CACHE).then((c) => c.match(req, { ignoreVary: true }).then((hit) => {
-    if (hit) return hit
-    return fetch(req).then((res) => {
-      if (res && res.status === 200 && res.type === 'basic') c.put(req, res.clone())
-      return res
-    }).catch(() => offlineFallback(req))
-  })))
+  e.respondWith(caches.open(CACHE).then((c) => fetch(req).then((res) => {
+    if (res && res.status === 200 && res.type === 'basic') c.put(req, res.clone())
+    return res
+  }).catch(() => c.match(req, { ignoreVary: true }).then((hit) => hit || offlineFallback(req)))))
 })
 
 function offlineFallback(req) {
