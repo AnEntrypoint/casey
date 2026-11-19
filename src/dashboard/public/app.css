@@ -305,18 +305,9 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 
 .tcase-reason { font-size: var(--fs-micro); color: var(--fg-3); margin-top: var(--space-1); }
 
-.tcase { position: relative; }
-.tcase.heat-3::before, .tcase.heat-2::before, .tcase.heat-1::before {
-  content: '';
-  position: absolute;
-  left: 0; top: var(--space-2);
-  width: 3px;
-  height: 20px;
-  border-radius: 0 var(--r-pill) var(--r-pill) 0;
-}
-.tcase.heat-3::before { background: var(--danger); }
-.tcase.heat-2::before { background: var(--warn); }
-.tcase.heat-1::before { background: var(--border); }
+.tcase.heat-3 { background-image: linear-gradient(color-mix(in oklab, var(--danger) 10%, transparent), color-mix(in oklab, var(--danger) 10%, transparent)); box-shadow: inset 0 0 0 1px var(--danger); }
+.tcase.heat-2 { background-image: linear-gradient(color-mix(in oklab, var(--warn) 8%, transparent), color-mix(in oklab, var(--warn) 8%, transparent)); box-shadow: inset 0 0 0 1px var(--warn); }
+.tcase.heat-1 { box-shadow: inset 0 0 0 1px var(--border); }
 .tcase-flag { font-size: var(--fs-micro); font-weight: 700; color: var(--fg); border: 1px solid currentColor; border-radius: var(--r-pill); padding: 0 var(--space-1); }
 .tcase-flag.flag-3 { border-width: 2px; }
 
