@@ -7,19 +7,20 @@ import { UNCLAIMED_ASSIGNEE } from '../case-store.js'
 import { withoutIssuedCodes } from '../role-invites.js'
 import { proactiveRefusal } from '../proactive-sends.js'
 import { vocabText } from '../config-loader.js'
+import { caseyText } from '../deployment-text.js';
 
 export const STAFF_TEXT_MAX_LEN = 4000
 
 const OUTBOUND_REFUSAL_DEFAULTS = {
-  empty: ['ui.outbound_refused_empty', 'nothing was sent: the message is empty'],
-  too_long: ['ui.outbound_refused_too_long', 'nothing was sent: the message is too long (max {max})'],
-  registration_code: ['ui.outbound_refused_registration_code', 'nothing was sent: the message contains a registration code'],
-  own_chat: ['ui.outbound_refused_own_chat', 'nothing was sent: that is this same chat with the assistant, not a reporter to message'],
-  no_channel: ['ui.outbound_refused_no_channel', 'nothing was sent: this conversation is not attached to a messaging channel right now'],
-  opted_out: ['ui.outbound_refused_opted_out', 'nothing was sent: this person asked us not to message them again'],
-  history: ['ui.outbound_refused_history', 'nothing was sent: could not read this conversation\'s history ({error})'],
-  window: ['ui.outbound_refused_window', 'nothing was sent: this person last wrote more than {hours}h ago, outside WhatsApp\'s free reply window, so the message would be rejected rather than delivered. Reach them another way if it cannot wait.'],
-  channel_refused: ['ui.outbound_refused_channel', 'nothing was sent: the channel refused the message ({error})'],
+  empty: ['ui.outbound_refused_empty', caseyText("src/hooks/staff-outbound.js#s0")],
+  too_long: ['ui.outbound_refused_too_long', caseyText("src/hooks/staff-outbound.js#0")],
+  registration_code: ['ui.outbound_refused_registration_code', caseyText("src/hooks/staff-outbound.js#1")],
+  own_chat: ['ui.outbound_refused_own_chat', caseyText("src/hooks/staff-outbound.js#2")],
+  no_channel: ['ui.outbound_refused_no_channel', caseyText("src/hooks/staff-outbound.js#3")],
+  opted_out: ['ui.outbound_refused_opted_out', caseyText("src/hooks/staff-outbound.js#4")],
+  history: ['ui.outbound_refused_history', caseyText("src/hooks/staff-outbound.js#5")],
+  window: ['ui.outbound_refused_window', caseyText("src/hooks/staff-outbound.js#6")],
+  channel_refused: ['ui.outbound_refused_channel', caseyText("src/hooks/staff-outbound.js#7")],
 }
 
 function refusedSend(reason, vars = {}) {
@@ -30,11 +31,11 @@ function refusedSend(reason, vars = {}) {
 export function staffLabel(contact) {
   const name = String(contact?.display_name || '').trim()
   if (name && !/^\+?[\d\s()-]{6,}$/.test(name)) return name.slice(0, 80)
-  return 'a team member'
+  return caseyText("src/hooks/staff-outbound.js#s1")
 }
 
 export async function outboundRefusal(store, caseRow, { canSend = null, sendReply = null, now = Date.now(), kind = 'message' } = {}) {
-  if (!caseRow) return { error: 'no such record' }
+  if (!caseRow) return { error: caseyText("src/hooks/staff-outbound.js#s2") }
 
   const noStart = proactiveRefusal({ kind })
   if (noStart) return { error: noStart }
@@ -70,10 +71,10 @@ export async function sendStaffMessage({ store, sendReply, canSend = null, caseR
   catch (e) {
     await store.appendEvent(caseRow.id, {
       kind: 'note', actor: 'operator', channel: caseRow.channel,
-      text: vocabText('ui.staff_note_channel_refused', 'Not sent: the channel refused it. {by} wrote: {body}', { by, body }),
-      data: { undelivered: true, reason: 'send_failed', by, text: body, error: e.message || 'unknown error', ...extra },
+      text: vocabText('ui.staff_note_channel_refused', caseyText("src/hooks/staff-outbound.js#8"), { by, body }),
+      data: { undelivered: true, reason: 'send_failed', by, text: body, error: e.message || caseyText("src/hooks/staff-outbound.js#s3"), ...extra },
     })
-    return { ok: false, error: refusedSend('channel_refused', { error: e.message || 'unknown error' }).error }
+    return { ok: false, error: refusedSend('channel_refused', { error: e.message || caseyText("src/hooks/staff-outbound.js#s4") }).error }
   }
   let claimed = false
   let tookOver = false
@@ -82,12 +83,12 @@ export async function sendStaffMessage({ store, sendReply, canSend = null, caseR
     const assignee = String(caseRow.assignee || '').trim()
     if (!assignee || assignee === UNCLAIMED_ASSIGNEE) {
       current = await store.updateCase(caseRow.id, { assignee: assigneeKeyFor(staff) }, { id: by, role: 'operator' }) || caseRow
-      await store.appendEvent(caseRow.id, { kind: 'action', actor: 'operator', text: `Claimed by ${by}`, data: { claimed_by: assigneeKeyFor(staff), by, was: assignee || null } })
+      await store.appendEvent(caseRow.id, { kind: 'action', actor: 'operator', text: caseyText("src/hooks/staff-outbound.js#s5", [by]), data: { claimed_by: assigneeKeyFor(staff), by, was: assignee || null } })
       claimed = true
     }
     if (isAssignedTo(current, staff) && (current.autonomy || 'auto') === 'auto') {
       await store.updateCase(caseRow.id, { autonomy: 'observe' }, { id: by, role: 'operator' })
-      await store.appendEvent(caseRow.id, { kind: 'autonomy_change', actor: 'operator', text: 'autonomy auto -> observe', data: { from: 'auto', to: 'observe', by, reason: 'a team member took over the conversation' } })
+      await store.appendEvent(caseRow.id, { kind: 'autonomy_change', actor: 'operator', text: caseyText("src/hooks/staff-outbound.js#s6"), data: { from: 'auto', to: 'observe', by, reason: caseyText("src/hooks/staff-outbound.js#9") } })
       tookOver = true
     }
   }
@@ -108,17 +109,17 @@ export async function pendingDraft(store, caseRow) {
 }
 
 const UNDELIVERED_REPLY_REASONS = {
-  no_channel: 'this console is not attached to the messaging channels',
-  send_failed: 'the channel refused it',
+  no_channel: caseyText("src/hooks/staff-outbound.js#10"),
+  send_failed: caseyText("src/hooks/staff-outbound.js#s7"),
 }
 export function appendReplyEvent(store, c, text, op, { delivered, reason, extra = {} }) {
   if (delivered) {
     return store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, by: op.id, ...extra } })
   }
-  const why = vocabText(`ui.undelivered_reason_${reason}`, UNDELIVERED_REPLY_REASONS[reason] || 'the send did not happen')
+  const why = vocabText(`ui.undelivered_reason_${reason}`, UNDELIVERED_REPLY_REASONS[reason] || caseyText("src/hooks/staff-outbound.js#s8"))
   return store.appendEvent(c.id, {
     kind: 'note', actor: 'operator', channel: c.channel,
-    text: vocabText('ui.reply_not_sent_note', 'NOT SENT to the contact ({why}). Operator wrote: {text}', { why, text }),
+    text: vocabText('ui.reply_not_sent_note', caseyText("src/hooks/staff-outbound.js#11"), { why, text }),
     data: { undelivered: true, reason, by: op.id, text, ...extra },
   })
 }
@@ -128,9 +129,9 @@ export async function releaseCase({ store, caseRow, by, user }) {
   const wasObserve = caseRow.autonomy === 'observe'
   if (wasObserve) patch.autonomy = 'auto'
   await store.updateCase(caseRow.id, patch, user)
-  await store.appendEvent(caseRow.id, { kind: 'action', actor: 'operator', text: `edited assignee`, data: { assignee: UNCLAIMED_ASSIGNEE, by } })
+  await store.appendEvent(caseRow.id, { kind: 'action', actor: 'operator', text: caseyText("src/hooks/staff-outbound.js#s9"), data: { assignee: UNCLAIMED_ASSIGNEE, by } })
   if (wasObserve) {
-    await store.appendEvent(caseRow.id, { kind: 'autonomy_change', actor: 'operator', text: 'autonomy observe -> auto', data: { from: 'observe', to: 'auto', by, reason: 'handed back to the assistant' } })
+    await store.appendEvent(caseRow.id, { kind: 'autonomy_change', actor: 'operator', text: caseyText("src/hooks/staff-outbound.js#s10"), data: { from: 'observe', to: 'auto', by, reason: caseyText("src/hooks/staff-outbound.js#s11") } })
   }
   return { autonomy: wasObserve ? 'auto' : caseRow.autonomy || 'auto', resumed: wasObserve }
 }

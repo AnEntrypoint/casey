@@ -10,6 +10,7 @@ import { languageOf } from '../stt/languages.js'
 import { unheardKind } from '../stt/readback.js'
 import { googleSttConfig } from '../stt/config.js'
 import { failureKindOf } from '../stt/errors.js'
+import { caseyText } from '../deployment-text.js';
 
 const FIELD_TRANSCRIPT_CHARS = 1500
 
@@ -17,22 +18,22 @@ export function describeMedia(msg) {
   const r = msg.raw || {}
   if (Array.isArray(r.attachments) && r.attachments.length) return `${r.attachments.length} attachment(s)`
 
-  if (msg.location) return 'a location pin'
+  if (msg.location) return caseyText("src/hooks/media-intake.js#s0")
   if (r.type === 'interactive') return ''
   if (r.type && r.type !== 'text') return `${/^[aeiou]/i.test(r.type) ? 'an' : 'a'} ${r.type} message`
-  if (r.image) return 'an image'
-  if (r.audio) return 'an audio message'
+  if (r.image) return caseyText("src/hooks/media-intake.js#s1")
+  if (r.audio) return caseyText("src/hooks/media-intake.js#s2")
   if (r.sticker_items) return 'a sticker'
   return ''
 }
 
 function inboundImageNote(msg) {
   const r = msg.raw || {}
-  if (r.image || r.type === 'image') return 'farmer sent a photo'
+  if (r.image || r.type === 'image') return caseyText("src/hooks/media-intake.js#s3")
   const atts = Array.isArray(r.attachments) ? r.attachments : []
   const imgs = atts.filter(a => typeof (a?.content_type || a?.contentType || a?.mimetype) === 'string'
     && /^image\//i.test(a.content_type || a.contentType || a.mimetype))
-  if (imgs.length) return imgs.length === 1 ? 'farmer sent a photo' : `farmer sent ${imgs.length} photos`
+  if (imgs.length) return imgs.length === 1 ? caseyText("src/hooks/media-intake.js#s4") : caseyText("src/hooks/media-intake.js#s5", [imgs.length])
   return ''
 }
 
@@ -47,13 +48,13 @@ function heardSummary(tr) {
 
 function transcriptTail(tr) {
   const text = tr.text
-  const shown = text.length > FIELD_TRANSCRIPT_CHARS ? `${text.slice(0, FIELD_TRANSCRIPT_CHARS)} [... ${text.length - FIELD_TRANSCRIPT_CHARS} more characters: the full transcript is in the message on the timeline]` : text
-  return ` -- auto-transcript by the AI helper, HEARD not verified (${heardSummary(tr)}; may be wrong, listen to check): "${shown}"`
+  const shown = text.length > FIELD_TRANSCRIPT_CHARS ? caseyText("src/hooks/media-intake.js#0", [text.slice(0, FIELD_TRANSCRIPT_CHARS), text.length - FIELD_TRANSCRIPT_CHARS]) : text
+  return caseyText("src/hooks/media-intake.js#1", [heardSummary(tr), shown])
 }
 
 function unheardTail(tr) {
-  const guess = tr.text ? `; the machine's untrusted guess was: "${truncate(tr.text, 300)}"` : ''
-  return ` -- NOT understood by the AI helper (${tr.unheard}${tr.error ? `: ${truncate(tr.error, 120)}` : ''}), staff should listen to the saved audio${guess}`
+  const guess = tr.text ? caseyText("src/hooks/media-intake.js#s6", [truncate(tr.text, 300)]) : ''
+  return caseyText("src/hooks/media-intake.js#2", [tr.unheard, tr.error ? `: ${truncate(tr.error, 120)}` : '', guess])
 }
 
 function inboundAudioNote(msg, tr = { text: '', error: '' }) {
@@ -61,8 +62,8 @@ function inboundAudioNote(msg, tr = { text: '', error: '' }) {
 
   const tail = tr.unheard ? unheardTail(tr)
     : tr.text ? transcriptTail(tr)
-      : tr.error ? ` -- no auto-transcript could be made (${truncate(tr.error, 120)})` : ''
-  const base = 'farmer sent a voice note (listen and record what it says)' + tail
+      : tr.error ? caseyText("src/hooks/media-intake.js#s7", [truncate(tr.error, 120)]) : ''
+  const base = caseyText("src/hooks/media-intake.js#3") + tail
   if (r.audio || r.voice || r.type === 'audio' || r.type === 'voice') return base
   const atts = Array.isArray(r.attachments) ? r.attachments : []
   const auds = atts.filter(a => typeof (a?.content_type || a?.contentType || a?.mimetype) === 'string'
@@ -77,7 +78,7 @@ export function carriesArtifact(msg) {
 
 function relayedNote(note, relay) {
   if (!relay) return note
-  return `[relayed by ${relay.by} on the reporter's behalf] ${note.replace(/^farmer sent/, 'team member sent')}`
+  return caseyText("src/hooks/media-intake.js#s8", [relay.by, note.replace(/^farmer sent/, 'team member sent')])
 }
 
 function pickMediaItem(msg, kind) {
@@ -135,7 +136,7 @@ export async function transcribeInboundAudio({ store, log, caseId, msg, callLLM 
     tr = await transcribeAudioDetailed(audioItem.buffer, audioItem.mimeType, { hintLanguage: await languageHint(store, log, caseId), callLLM, redact })
     if (tr.text) {
       try { const clean = await withoutIssuedCodes(store, tr.text); if (clean != null) tr.text = clean }
-      catch (e) { log.error?.('[casey] transcript code redaction failed', { caseId, error: e.message }); tr.text = ''; tr.error = tr.error || 'transcript withheld' }
+      catch (e) { log.error?.('[casey] transcript code redaction failed', { caseId, error: e.message }); tr.text = ''; tr.error = tr.error || caseyText("src/hooks/media-intake.js#s9") }
     }
   } catch (e) {
     log.error?.('[casey] voice.transcribe_threw', { code: 'voice.transcribe_threw', caseId, failureKind: failureKindOf(e) })
@@ -155,16 +156,16 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
       if (kind === 'photo') {
         const description = await describePhoto(mediaItem.buffer, mediaItem.mimeType)
 
-        if (description) text += ` -- auto-description by the AI helper (not the farmer's words): "${truncate(description, 500)}"`
+        if (description) text += caseyText("src/hooks/media-intake.js#4", [truncate(description, 500)])
       }
     }
     const r = await store.appendReportField(caseId, field, text)
     if (r?.appended || r?.error === 'observe') {
-      await store.appendEvent(caseId, observation(`${eventPrefix}: ${text}${kind === 'photo' ? ' (recorded for the field team).' : '.'}`,
+      await store.appendEvent(caseId, observation(`${eventPrefix}: ${text}${kind === 'photo' ? caseyText("src/hooks/media-intake.js#s10") : '.'}`,
         relay ? { on_behalf: true, relayed_by: relay.by, staff_contact_id: relay.contactId } : undefined))
     }
     if (r?.reportWasCorrupted) {
-      await store.appendEvent(caseId, observation(`WARNING: this case's stored report JSON was corrupted and has been reset before appending this ${kind} note -- some previously recorded fields may be lost.`))
+      await store.appendEvent(caseId, observation(caseyText("src/hooks/media-intake.js#5", [kind])))
       await raiseOperatorItem({ store, log, caseId, code: 'report.corrupted', level: 'error', fields: { kind } })
     }
   } catch {
@@ -172,10 +173,10 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
   }
 }
 
-const AREA_ASK_NOTE = (question) => `\n\n[System note: the location pin they shared was NOT stored. The team keeps only the general town or area of a report, never a map pin, coordinates, GPS numbers or directions, so do not say you have their location and do not ask for a pin, coordinates or directions. In this reply ask ONE question, in their language, in one short natural sentence: "${question}"]`
+const AREA_ASK_NOTE = (question) => caseyText("src/hooks/media-intake.js#6", [question])
 export async function recordInboundLocation({ store, log, caseId, msg }) {
   if (!msg.location) return ''
-  try { await store.appendEvent(caseId, observation('LOCATION PIN NOT STORED: a map pin was shared. Only the general town or area is recorded, so nothing was saved from it.')) }
+  try { await store.appendEvent(caseId, observation(caseyText("src/hooks/media-intake.js#7"))) }
   catch (e) { log.warn?.('[casey] location pin note failed', { caseId, error: e.message }) }
   return AREA_ASK_NOTE(loadDomainConfig().persona.areaQuestion)
 }
@@ -189,7 +190,7 @@ export async function recordInboundMedia({ store, log, caseId, msg, relay = null
     await recordArrival({
       store, log, caseId, field: 'photos', note: photoNote, kind: 'photo',
       mediaItem: photoItem,
-      eventPrefix: 'PHOTO RECEIVED', relay,
+      eventPrefix: caseyText("src/hooks/media-intake.js#s11"), relay,
     })
   }
 
@@ -204,7 +205,7 @@ export async function recordInboundMedia({ store, log, caseId, msg, relay = null
     await recordArrival({
       store, log, caseId, field: 'audio', note: audioNote, kind: 'audio',
       mediaItem: audioItem,
-      eventPrefix: 'AUDIO RECEIVED', relay,
+      eventPrefix: caseyText("src/hooks/media-intake.js#s12"), relay,
     })
   }
 }

@@ -1,10 +1,11 @@
+import { caseyText } from '../deployment-text.js';
 export const SA_LANGUAGES = Object.freeze([
   { key: 'zu', code: 'zu-ZA', label: 'isiZulu', names: ['zulu', 'isizulu'], chirp: true },
   { key: 'xh', code: 'xh-ZA', label: 'isiXhosa', names: ['xhosa', 'isixhosa'], chirp: true },
   { key: 'af', code: 'af-ZA', label: 'Afrikaans', names: ['afrikaans'], chirp: true },
-  { key: 'nso', code: 'nso-ZA', label: 'Sepedi', names: ['sepedi', 'northern sotho', 'sesotho sa leboa'], chirp: true },
+  { key: 'nso', code: 'nso-ZA', label: 'Sepedi', names: ['sepedi', caseyText("src/stt/languages.js#s0"), caseyText("src/stt/languages.js#s1")], chirp: true },
   { key: 'en', code: 'en-GB', label: 'English', names: ['english'], chirp: true },
-  { key: 'st', code: 'st-ZA', label: 'Sesotho', names: ['sesotho', 'southern sotho', 'sotho'], chirp: false },
+  { key: 'st', code: 'st-ZA', label: 'Sesotho', names: ['sesotho', caseyText("src/stt/languages.js#s2"), 'sotho'], chirp: false },
   { key: 'tn', code: 'tn-Latn-ZA', label: 'Setswana', names: ['setswana', 'tswana'], chirp: false },
   { key: 'ss', code: 'ss-Latn-ZA', label: 'siSwati', names: ['siswati', 'swati', 'swazi'], chirp: false },
   { key: 've', code: 've-ZA', label: 'Tshivenda', names: ['tshivenda', 'venda'], chirp: false },

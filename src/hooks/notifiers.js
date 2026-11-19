@@ -5,6 +5,7 @@ import { stageNote, OPTED_OUT_TAG } from './heuristics.js'
 import { tagList, tsMs } from '../timestamp.js'
 import { vocabText, vocabWord } from '../config-loader.js'
 import { queueNotice, pendingNoticesFor } from './pending-notices.js'
+import { caseyText } from '../deployment-text.js';
 
 const stageLabel = (stage) => vocabWord('stages.' + stage, stage)
 
@@ -37,7 +38,7 @@ export function makeTransitionNotifier(store, { log = console } = {}) {
       await queueNotice(store, caseRow, { notice: 'stage', stage: to, text })
       await store.appendEvent(caseRow.id, {
         kind: 'observation', actor: 'system',
-        text: vocabText('ui.staff_note_stage_queued', 'Stage note for {stage} queued: it goes out in the next reply to the contact, and nothing is sent on its own.', { stage: stageLabel(to) }),
+        text: vocabText('ui.staff_note_stage_queued', caseyText("src/hooks/notifiers.js#0"), { stage: stageLabel(to) }),
         data: { proactive: 'stage-note', stage: to, queued: true },
       })
     } catch (e) {
@@ -50,10 +51,10 @@ export function discordHandoffNotifier(webhookUrl = process.env.CASEY_HANDOFF_WE
   if (!webhookUrl) return null
   return async ({ case: c, channel, from }) => {
 
-    const content = `A person is needed - case ${c.ref} on ${channel}`
+    const content = caseyText("src/hooks/notifiers.js#s0", [c.ref, channel])
       + (c.subject ? ` - ${c.subject}` : '')
 
-    await postWebhook(webhookUrl, content, log, 'discord handoff webhook')
+    await postWebhook(webhookUrl, content, log, caseyText("src/hooks/notifiers.js#s1"))
   }
 }
 
@@ -69,7 +70,7 @@ export function breachNotifier(webhookUrl = process.env.CASEY_ALERT_WEBHOOK || p
     const content = `Case ${c.ref}: ${detail || breach}`
 
     const alert = buildAlertPayload(c, breach, detail, { escalated: !!opts.escalated })
-    await postWebhook(webhookUrl, content, log, 'discord breach webhook', alert)
+    await postWebhook(webhookUrl, content, log, caseyText("src/hooks/notifiers.js#s2"), alert)
   }
 }
 

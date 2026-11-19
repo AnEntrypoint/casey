@@ -5,19 +5,20 @@ import { haversineKm, isValidLatLon } from './case-tools-shared.js'
 import { doneStages } from './case-tools-team-shared.js'
 import { identifyingLine } from './team-focus.js'
 import { keysForContact } from './my-day.js'
+import { caseyText } from './deployment-text.js';
 
 export const ROUTE_CAP = 8
 export const NO_PIN_LISTED = 5
 const URGENT_PRIORITIES = new Set(['urgent', 'high'])
-const TIER_REASONS = ['sent back by the technician', 'urgent', 'the reporter is waiting for an answer', 'open']
+const TIER_REASONS = [caseyText("src/route-plan.js#s0"), 'urgent', caseyText("src/route-plan.js#s1"), 'open']
 
 export function ageWords(ms) {
   const minutes = Math.max(0, Math.round(ms / 60e3))
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`
+  if (minutes < 60) return caseyText("src/route-plan.js#s2", [minutes, minutes === 1 ? '' : 's'])
   const hours = Math.round(minutes / 60)
-  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'} ago`
+  if (hours < 48) return caseyText("src/route-plan.js#s3", [hours, hours === 1 ? '' : 's'])
   const days = Math.round(hours / 24)
-  return `${days} days ago`
+  return caseyText("src/route-plan.js#s4", [days])
 }
 
 export const casePin = (c) => {
@@ -83,7 +84,7 @@ export function positionOf(contact, now) {
   const lon = Number(contact?.last_location_lon)
   if (contact?.last_location_lat == null || contact?.last_location_lon == null || !isValidLatLon(lat, lon)) return null
   const at = tsMs(contact.last_location_at)
-  return { lat, lon, age: at ? ageWords(now - at) : 'at an unknown time' }
+  return { lat, lon, age: at ? ageWords(now - at) : caseyText("src/route-plan.js#s5") }
 }
 
 export async function planRoute(store, contact, now = Date.now()) {
@@ -107,10 +108,10 @@ export async function planRoute(store, contact, now = Date.now()) {
       ref: s.c.ref,
       what: identifyingLine(s.c),
       why: TIER_REASONS[s.tier],
-      ...(s.leg_km == null ? {} : { distance: `about ${s.leg_km < 10 ? Math.round(s.leg_km * 10) / 10 : Math.round(s.leg_km)} km straight line ${i === 0 ? 'from you' : 'from the previous stop'}` }),
+      ...(s.leg_km == null ? {} : { distance: caseyText("src/route-plan.js#s6", [s.leg_km < 10 ? Math.round(s.leg_km * 10) / 10 : Math.round(s.leg_km), i === 0 ? caseyText("src/route-plan.js#s7") : caseyText("src/route-plan.js#s8")]) }),
     })),
     left_off_for_length: Math.max(0, withPin.length - ROUTE_CAP),
-    no_pin_yet: noPin.slice(0, NO_PIN_LISTED).map(e => ({ ref: e.c.ref, what: identifyingLine(e.c), why: TIER_REASONS[e.tier], note: 'no pin yet' })),
+    no_pin_yet: noPin.slice(0, NO_PIN_LISTED).map(e => ({ ref: e.c.ref, what: identifyingLine(e.c), why: TIER_REASONS[e.tier], note: caseyText("src/route-plan.js#s9") })),
     no_pin_not_listed: Math.max(0, noPin.length - NO_PIN_LISTED),
   }
 }

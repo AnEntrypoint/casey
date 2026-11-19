@@ -1,6 +1,7 @@
 import { evData } from './safe.js'
 import { loadDomainConfig } from './config-loader.js'
 import { atLeast, TIER } from './contact-tiers.js'
+import { caseyText } from './deployment-text.js';
 
 const OWN_CASE_CAP = 20
 
@@ -18,7 +19,7 @@ export async function firstTimeStaff(store, contact) {
 export async function markOnboarded(store, contact) {
   const own = (await ownCases(store, contact))[0]
   if (!own) throw new Error('markOnboarded: this contact has no conversation to record the onboarding on')
-  await store.appendEvent(own.id, { kind: 'observation', actor: 'system', text: 'ONBOARDING shown to this team member', data: { onboarded: true, contact_id: contact.id }, touch: false })
+  await store.appendEvent(own.id, { kind: 'observation', actor: 'system', text: caseyText("src/staff-help.js#s0"), data: { onboarded: true, contact_id: contact.id }, touch: false })
 }
 
 const ISSUES_GROUP_URL = /^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]+$/
@@ -41,7 +42,7 @@ export async function issuesInviteDue(store, contact) {
 export async function markIssuesInvited(store, contact) {
   const own = (await ownCases(store, contact))[0]
   if (!own) throw new Error('markIssuesInvited: this contact has no conversation to record the invite on')
-  await store.appendEvent(own.id, { kind: 'observation', actor: 'system', text: 'ISSUES GROUP invite shown to this team member', data: { issues_invited: true, contact_id: contact.id }, touch: false })
+  await store.appendEvent(own.id, { kind: 'observation', actor: 'system', text: caseyText("src/staff-help.js#0"), data: { issues_invited: true, contact_id: contact.id }, touch: false })
 }
 
 const asList = (v) => (Array.isArray(v) ? v : [v]).filter(Boolean)

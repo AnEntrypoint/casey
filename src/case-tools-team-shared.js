@@ -8,9 +8,10 @@ import { staffLabel } from './hooks/staff-outbound.js'
 import { MANDATORY_MINIMUM_BLOCKED_STATUSES } from './store/report-shape.js'
 import { isHandedOff } from './signoff-desk.js'
 import { reportersForCases } from './phone-persons.js'
+import { caseyText } from './deployment-text.js';
 
 export const NOT_ASSIGNED = {
-  error: 'This one is not assigned to you, so you can look at it but not change it or message the person who reported it. Say that plainly, and offer to ask an operator to assign it to you.',
+  error: caseyText("src/case-tools-team-shared.js#0"),
 }
 
 export function doneStages() {
@@ -58,8 +59,8 @@ export function teamRow(c, ctx, extra = {}) {
 
 export async function reporterExtras(store, cases) {
   const m = await reportersForCases(store, cases).catch(() => new Map())
-  const extra = (c) => { const w = m.get(c.id); return w ? { ...(w.name ? { reported_by: w.name } : {}), ...(w.people > 1 ? { shared_phone: `shared phone (${w.people} people)` } : {}) } : {} }
-  const text = (c) => { const w = m.get(c.id); return w ? { by_person: [w.name ? `reported by ${w.name}` : '', w.people > 1 ? `shared phone (${w.people} people)` : ''].filter(Boolean).join(', ') } : {} }
+  const extra = (c) => { const w = m.get(c.id); return w ? { ...(w.name ? { reported_by: w.name } : {}), ...(w.people > 1 ? { shared_phone: caseyText("src/case-tools-team-shared.js#s0", [w.people]) } : {}) } : {} }
+  const text = (c) => { const w = m.get(c.id); return w ? { by_person: [w.name ? caseyText("src/case-tools-team-shared.js#s1", [w.name]) : '', w.people > 1 ? caseyText("src/case-tools-team-shared.js#s2", [w.people]) : ''].filter(Boolean).join(', ') } : {} }
   return { extra, text }
 }
 
@@ -67,12 +68,12 @@ export const NUMBER_FIELDS = ['owner_contact', 'contact_fallback']
 
 const NUMBER_OR_REF = /(CASE-\d+-[a-z0-9]+)|(\+?\d[\d ()\-.]{5,}\d)/gi
 
-export const scrubNumbers = (text) => String(text ?? '').replace(NUMBER_OR_REF, (m, ref) => (ref ? m : '(number not shown)'))
+export const scrubNumbers = (text) => String(text ?? '').replace(NUMBER_OR_REF, (m, ref) => (ref ? m : caseyText("src/case-tools-team-shared.js#s3")))
 
 export function maskNumberFields(report) {
   if (!report) return report
   const out = { ...report }
-  for (const k of NUMBER_FIELDS) if (out[k]) out[k] = 'recorded (not repeated here)'
+  for (const k of NUMBER_FIELDS) if (out[k]) out[k] = caseyText("src/case-tools-team-shared.js#s4")
   return out
 }
 
@@ -95,7 +96,7 @@ export async function claimSelfFiledReport(store, ctx, caseId) {
     const held = String(c.assignee || '').trim()
     if (held && held !== UNCLAIMED_ASSIGNEE) return false
     await store.updateCase(c.id, { assignee: assigneeKeyFor(me) }, AGENT_USER)
-    await store.appendEvent(c.id, { kind: 'action', actor: 'system', text: `Filed by ${staffLabel(me)}, a team member, and assigned to them`, data: { self_filed: true, by: staffLabel(me), staff_contact_id: me.id } })
+    await store.appendEvent(c.id, { kind: 'action', actor: 'system', text: caseyText("src/case-tools-team-shared.js#1", [staffLabel(me)]), data: { self_filed: true, by: staffLabel(me), staff_contact_id: me.id } })
     return true
   })
 }

@@ -1,3 +1,4 @@
+import { caseyText } from '../deployment-text.js';
 const PARSE_SEP = /\s*,\s*/
 
 export function specialistEndpoints(env = process.env) {
@@ -64,14 +65,14 @@ export async function transcribeSpecialist(url, buffer, mimeType, { timeoutMs = 
       if (token) headers.authorization = `Bearer ${token}`
     }
   } catch (e) {
-    return done({ error: `specialist identity: ${String(e?.message || e)}` })
+    return done({ error: caseyText("src/stt/specialist.js#s0", [String(e?.message || e)]) })
   }
   try {
     const res = await fetch(url, { method: 'POST', headers, body: buffer, signal: AbortSignal.timeout(timeoutMs) })
-    if (!res.ok) return done({ error: `specialist answered HTTP ${res.status}`, status: res.status, cold: res.status === COLD_STATUS })
+    if (!res.ok) return done({ error: caseyText("src/stt/specialist.js#s1", [res.status]), status: res.status, cold: res.status === COLD_STATUS })
     const body = await res.json()
     const text = String(body?.text ?? '').trim()
-    return text ? done({ text, status: res.status }) : done({ error: 'specialist returned no text', status: res.status })
+    return text ? done({ text, status: res.status }) : done({ error: caseyText("src/stt/specialist.js#s2"), status: res.status })
   } catch (e) {
     return done({ error: `specialist: ${String(e?.message || e)}` })
   }
@@ -83,8 +84,8 @@ export async function runSpecialists(buffer, mimeType, { timeoutMs = 25000, env 
     const id = key
     const base = { id, engine: 'specialist', provider: `specialist-${key}` }
     const url = endpoints.get(key)
-    if (!url) return { ...base, text: '', error: 'no specialist endpoint configured in CASEY_STT_SPECIALISTS', status: null, cold: false, ms: 0 }
-    if (!buffer?.length) return { ...base, text: '', error: 'no audio bytes to send', status: null, cold: false, ms: 0 }
+    if (!url) return { ...base, text: '', error: caseyText("src/stt/specialist.js#0"), status: null, cold: false, ms: 0 }
+    if (!buffer?.length) return { ...base, text: '', error: caseyText("src/stt/specialist.js#s3"), status: null, cold: false, ms: 0 }
     const r = await transcribeSpecialist(url, buffer, mimeType, { timeoutMs, env })
     return { ...base, text: r.text, error: r.error, status: r.status, cold: r.cold, ms: r.ms }
   }))

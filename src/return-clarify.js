@@ -7,6 +7,7 @@ import { MANDATORY_MINIMUM_FIELDS, missingMandatoryMinimum } from './store/repor
 import { isDone } from './signoff-desk.js'
 import { resolveContactTier, atLeast, TIER } from './contact-tiers.js'
 import { speakerState } from './phone-persons.js'
+import { caseyText } from './deployment-text.js';
 
 export const returnGapMs = () => Number(process.env.CASEY_RETURN_CLARIFY_MS) || 3600e3
 export const returnManaged = () => MANDATORY_MINIMUM_FIELDS.length > 0
@@ -35,7 +36,7 @@ export async function noteReturn(store, { caseRow, events, contact, msgId }) {
     if (lastMs - tsMs(prev.created_at) < returnGapMs()) return false
     await store.appendEvent(caseRow.id, {
       kind: 'observation', actor: 'system',
-      text: 'RETURNED: this complete report was written to again after a gap; the person is asked whether it is about that report or a new one, and who is writing',
+      text: caseyText("src/return-clarify.js#0"),
       data: { return_pending: true, return_msg: msgId || '' }, touch: false,
     })
     return true
@@ -61,7 +62,7 @@ export async function returnState(store, caseRow, contact, { events = null } = {
 export async function recordClarified(store, caseId, sameReport) {
   await store.appendEvent(caseId, {
     kind: 'observation', actor: 'system',
-    text: sameReport ? 'return: they said it is more about this report' : 'return: they said it is a new problem',
+    text: sameReport ? caseyText("src/return-clarify.js#1") : caseyText("src/return-clarify.js#s0"),
     data: { return_clarified: sameReport ? 'same' : 'new' }, touch: false,
   })
 }
@@ -72,6 +73,6 @@ export async function returnGate(store, ctx) {
     if (!boundId || !ctx?.contact?.id) return null
     const st = await returnState(store, await store.getCase(boundId), ctx.contact)
     if (!st.owed) return null
-    return { held: true, nothing_recorded: true, note: 'Nothing was recorded, so never say or imply that anything was noted. This person has come back to a report that is already complete. In THIS reply, as your one question, ask in their language whether it is more about that report or a new problem (name the report in a few words: the animals and the place), and who is writing' + (st.person ? ` (is it ${st.person}?)` : '') + '. When they answer, call case_clarify, then record.' }
+    return { held: true, nothing_recorded: true, note: caseyText("src/return-clarify.js#2") + (st.person ? caseyText("src/return-clarify.js#s1", [st.person]) : '') + caseyText("src/return-clarify.js#3") }
   } catch { return null }
 }

@@ -3,6 +3,7 @@
 import { truncate } from './heuristics.js'
 import { tsMs } from '../timestamp.js'
 import { CRITICAL_FIELDS, fieldLabel, missingMandatoryMinimum } from '../store/report-shape.js'
+import { caseyText } from '../deployment-text.js';
 
 export const LOCATION_STALE_MS = Number(process.env.CASEY_LOCATION_STALE_MS) || 3 * 3600e3
 
@@ -35,7 +36,7 @@ export function buildPromptContext(caseRow, events) {
 
   const haveFields = reportObj ? Object.keys(reportObj).filter(k => reportObj[k] != null) : []
 
-  const reportLine = haveFields.length ? haveFields.map(k => `${k}=${fenced(reportObj[k], 80)}`).join('; ') : '(nothing recorded yet)'
+  const reportLine = haveFields.length ? haveFields.map(k => `${k}=${fenced(reportObj[k], 80)}`).join('; ') : caseyText("src/hooks/prompt-context.js#s0")
 
   const missingCritical = CRITICAL_FIELDS.filter(k => !haveFields.includes(k))
 

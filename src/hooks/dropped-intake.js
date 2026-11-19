@@ -1,16 +1,17 @@
+import { caseyText } from '../deployment-text.js';
 
 
 const DEFAULT_FLUSH_WINDOW_MS = 15 * 60_000
 
 export const DROP_REASONS = {
-  rate_limited_contact: 'one contact sent more than their allowed messages in the window',
-  rate_limited_global: 'all contacts together sent more than the global allowance in the window',
-  burst_buffer_full: 'a contact sent faster than a turn could finish and the hold buffer filled up',
-  store_not_ready: 'the store was not initialized, so the message could not be recorded at all',
-  case_resolve_failed: 'the store could not be read or written to open or find the report, so the message reached no record at all (the sending platform was acked already and will never redeliver it)',
-  inbound_record_failed: 'the report was opened but the message itself could not be appended to it, so that report exists with the message missing from its timeline',
-  gateway_gap_unresumable: 'the gateway reconnected but could not resume the previous session, so anything sent during that disconnect window was never delivered (a count of windows, not of messages -- how many were in one is not knowable)',
-  gateway_identity_unknown: 'a guild message arrived before the gateway reported casey own user id, so the mention filter could not evaluate it and failed closed',
+  rate_limited_contact: caseyText("src/hooks/dropped-intake.js#0"),
+  rate_limited_global: caseyText("src/hooks/dropped-intake.js#1"),
+  burst_buffer_full: caseyText("src/hooks/dropped-intake.js#2"),
+  store_not_ready: caseyText("src/hooks/dropped-intake.js#3"),
+  case_resolve_failed: caseyText("src/hooks/dropped-intake.js#4"),
+  inbound_record_failed: caseyText("src/hooks/dropped-intake.js#5"),
+  gateway_gap_unresumable: caseyText("src/hooks/dropped-intake.js#6"),
+  gateway_identity_unknown: caseyText("src/hooks/dropped-intake.js#7"),
 }
 
 const tallies = new Map()
@@ -26,10 +27,10 @@ async function dropCaseId(store) {
   if (!dropCaseIdP) {
     dropCaseIdP = store.findOrCreateCase({
       channel: 'system', external_id: 'intake:dropped',
-      contact: { display_name: 'casey intake', handle: 'intake' },
+      contact: { display_name: caseyText("src/hooks/dropped-intake.js#s0"), handle: 'intake' },
     }).then(r => {
       if (r.created && !r.case.subject) {
-        store.updateCase(r.case.id, { subject: 'inbound messages dropped before they were recorded' }).catch(() => {})
+        store.updateCase(r.case.id, { subject: caseyText("src/hooks/dropped-intake.js#8") }).catch(() => {})
       }
       return r.case.id
     }).catch((e) => { dropCaseIdP = null; throw e })
@@ -59,7 +60,7 @@ function flushIfDue(reason, { store, log, now, flushWindowMs, force = false }) {
   dropCaseId(store)
     .then(id => store.appendEvent(id, {
       kind: 'observation', actor: 'system',
-      text: `INTAKE DROPPED ${count} message(s), ${t.total} since start -- ${DROP_REASONS[reason] || reason} (${channels})${t.note ? ` [${t.note}]` : ''}`,
+      text: caseyText("src/hooks/dropped-intake.js#9", [count, t.total, DROP_REASONS[reason] || reason, channels, t.note ? ` [${t.note}]` : '']),
       data: { dropped_inbound: reason, count, total: t.total, note: t.note || undefined },
     }))
     .catch(e => log?.error?.('[casey] dropped-intake audit write failed', { reason, error: e.message }))

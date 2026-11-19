@@ -1,4 +1,5 @@
 import { STT_FAILURE } from './errors.js'
+import { caseyText } from '../deployment-text.js';
 
 const ARBITER_TIMEOUT_MS = Math.max(1000, Number(process.env.CASEY_STT_ARBITER_TIMEOUT_MS) || 30000)
 const GOOGLE_ID = 'google'
@@ -11,29 +12,29 @@ function withTimeout(promise, ms) {
 }
 
 function arbiterPrompt(candidates, caseLanguage) {
-  const lines = candidates.map(c => (c.text ? `[${c.id}] ${c.text}` : `[${c.id}] (no transcript: ${c.error || 'empty'})`))
+  const lines = candidates.map(c => (c.text ? `[${c.id}] ${c.text}` : caseyText("src/stt/arbitrate.js#s0", [c.id, c.error || 'empty'])))
   return [
-    'Four automatic speech recognisers transcribed the same voice note from a farmer in South Africa who is reporting an animal-health problem. Each transcript is a machine guess and each can be wrong in different places.',
-    caseLanguage ? `The language Google detected for this note is ${caseLanguage}.` : 'The language of this note is not known.',
-    'Candidates (the id is in brackets):',
+    caseyText("src/stt/arbitrate.js#0"),
+    caseLanguage ? caseyText("src/stt/arbitrate.js#1", [caseLanguage]) : caseyText("src/stt/arbitrate.js#s1"),
+    caseyText("src/stt/arbitrate.js#s2"),
     ...lines,
-    'Pick the candidate whose wording most likely captured what the sender intended. Choose ONLY one of the listed ids that has a transcript, or "none" if no candidate is trustworthy.',
-    'Never write, repair or combine a transcript. Do not add any fact that no candidate states. If the candidates disagree about a number, a species, a place or a disease, say so in the reason.',
-    'Respond with ONLY JSON: {"chosen": "<one id or none>", "confidence": <number from 0 to 1>, "reason": "<one short sentence>"}',
+    caseyText("src/stt/arbitrate.js#2"),
+    caseyText("src/stt/arbitrate.js#3"),
+    caseyText("src/stt/arbitrate.js#4"),
   ].join('\n')
 }
 
 export function parseArbiterReply(raw, validIds) {
   const m = /\{[\s\S]*\}/.exec(String(raw || ''))
-  if (!m) return { ok: false, why: 'the reply held no JSON object' }
+  if (!m) return { ok: false, why: caseyText("src/stt/arbitrate.js#s3") }
   let j
-  try { j = JSON.parse(m[0]) } catch { return { ok: false, why: 'the reply JSON did not parse' } }
+  try { j = JSON.parse(m[0]) } catch { return { ok: false, why: caseyText("src/stt/arbitrate.js#s4") } }
   const chosen = typeof j.chosen === 'string' ? j.chosen.trim() : ''
-  if (chosen !== 'none' && !validIds.includes(chosen)) return { ok: false, why: `chosen "${chosen.slice(0, 40)}" is not a candidate with a transcript` }
+  if (chosen !== 'none' && !validIds.includes(chosen)) return { ok: false, why: caseyText("src/stt/arbitrate.js#5", [chosen.slice(0, 40)]) }
   const confidence = typeof j.confidence === 'number' ? j.confidence : Number(j.confidence)
-  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return { ok: false, why: 'confidence is not a number from 0 to 1' }
+  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return { ok: false, why: caseyText("src/stt/arbitrate.js#s5") }
   const reason = String(j.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, REASON_CHARS)
-  if (!reason) return { ok: false, why: 'the reply gave no reason' }
+  if (!reason) return { ok: false, why: caseyText("src/stt/arbitrate.js#s6") }
   return { ok: true, chosen, confidence: Math.round(confidence * 100) / 100, reason }
 }
 
@@ -47,19 +48,19 @@ export async function arbitrateCandidates({ candidates, caseLanguage = null, cal
     return { chosen: 'none', source: 'no_text', confidence: null, reason: null, llm_model: null, decided_at, fallback: null, note }
   }
   if (candidates.length === 1) {
-    return { chosen: candidates[0].id, source: 'single_candidate', confidence: null, reason: 'only one candidate was available', llm_model: null, decided_at, fallback: null, note }
+    return { chosen: candidates[0].id, source: 'single_candidate', confidence: null, reason: caseyText("src/stt/arbitrate.js#s7"), llm_model: null, decided_at, fallback: null, note }
   }
-  if (typeof callLLM !== 'function') return fallbackTo('no LLM handle was passed to the speech intake')
+  if (typeof callLLM !== 'function') return fallbackTo(caseyText("src/stt/arbitrate.js#6"))
   try {
     const reply = await withTimeout(callLLM({ messages: [{ role: 'user', content: arbiterPrompt(candidates, caseLanguage) }], tools: [] }), ARBITER_TIMEOUT_MS)
     const parsed = parseArbiterReply(reply?.content, withText.map(c => c.id))
-    if (!parsed.ok) return fallbackTo(`unusable arbiter reply: ${parsed.why}`)
+    if (!parsed.ok) return fallbackTo(caseyText("src/stt/arbitrate.js#s8", [parsed.why]))
     return {
       chosen: parsed.chosen, source: 'llm', confidence: parsed.confidence, reason: parsed.reason,
       llm_model: reply?.raw?.model || process.env.CASEY_LLM_MODEL || null, decided_at, fallback: null, note,
     }
   } catch (e) {
-    return fallbackTo(`arbiter call failed: ${String(e?.message || e).slice(0, 160)}`)
+    return fallbackTo(caseyText("src/stt/arbitrate.js#s9", [String(e?.message || e).slice(0, 160)]))
   }
 }
 
@@ -67,7 +68,7 @@ export function applyChoice(tr, choice) {
   const out = { ...tr, stt_choice: choice }
   if (choice.source === 'no_text') return out
   if (choice.chosen === 'none') {
-    return { ...out, text: '', error: 'no candidate judged trustworthy', failureKind: STT_FAILURE.LOW_CONFIDENCE }
+    return { ...out, text: '', error: caseyText("src/stt/arbitrate.js#s10"), failureKind: STT_FAILURE.LOW_CONFIDENCE }
   }
   if (choice.chosen === GOOGLE_ID) return out
   const cand = tr.candidates.find(c => c.id === choice.chosen)

@@ -3,6 +3,7 @@
 import { visibleToolName } from './config-loader.js'
 import { boundCase } from './case-tools-shared.js'
 import { atLeast, TIER } from './contact-tiers.js'
+import { caseyText } from './deployment-text.js';
 
 export const REPORT_ONLY_TOOLS = new Set(['case_report', 'case_stop', 'case_handoff', 'case_new', 'case_feedback', 'case_speaker', 'case_consent', 'case_clarify'])
 
@@ -44,7 +45,7 @@ export function gateByTier(tool) {
     handler: async (args, ctx) => {
 
       if (!toolVisibleToTier(tool.name, ctx?.tier)) {
-        return { unavailable: true, note: 'This is not something you can look up for this person. Do not mention tools, permissions, or access -- just continue the conversation naturally: report their case, or answer using what you already know from this conversation.' }
+        return { unavailable: true, note: caseyText("src/case-tools-gates.js#0") }
       }
       return handler(args, ctx)
     },
@@ -72,7 +73,7 @@ export function dedupeDuplicateCalls(tool, store) {
           try {
             await store().appendEvent(dedupeLogTarget, {
               kind: 'observation', actor: 'system',
-              text: `duplicate tool call suppressed: ${tool.name}`,
+              text: caseyText("src/case-tools-gates.js#s0", [tool.name]),
               data: { duplicate_tool_call_suppressed: true, tool: tool.name },
             })
           } catch {  }

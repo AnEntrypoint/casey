@@ -3,31 +3,32 @@
 import { defTool, str, boundCase, isValidLatLon } from './case-tools-shared.js'
 import { searchCases } from './case-tools-search.js'
 import { toStorable } from './store/guards.js'
+import { caseyText } from './deployment-text.js';
 
 export function buildWorkerTools(store) {
   return [
     defTool('case_mine', 'cases',
-      "List the cases ASSIGNED to the asking worker that are still open, worst first (a thin wrapper over case_search with scope mine). PII-free. For anything with filters, free text or paging use case_search.",
+      caseyText("src/case-tools-worker.js#0"),
       { type: 'object', properties: { limit: { type: 'number', description: 'Rows, default 8, max 25' } } },
       async ({ limit }, ctx) => searchCases(store(), ctx, { scope: 'mine', state: 'open', limit })),
     defTool('case_today', 'cases',
-      "The asking worker's list for today: their assigned open cases, worst first (same rows as case_mine; a thin wrapper over case_search). PII-free.",
+      caseyText("src/case-tools-worker.js#1"),
       { type: 'object', properties: { limit: { type: 'number', description: 'Rows, default 8, max 25' } } },
       async ({ limit }, ctx) => searchCases(store(), ctx, { scope: 'mine', state: 'open', limit })),
 
     defTool('case_checkin', 'cases',
-      "Record the FIELD WORKER's own current location (not an animal report's location) -- call this when they say where they are now, e.g. 'I'm at the clinic', 'just arrived at the Bela-Bela farm', or share GPS. Shows them on the team's map and lets a later 'anything near me' question use this as the starting point.",
+      caseyText("src/case-tools-worker.js#2"),
       {
         type: 'object',
         properties: {
-          lat: { type: 'number', description: 'Latitude of where the worker is now (their own best estimate for a described place, or exact if they shared GPS)' },
-          lon: { type: 'number', description: 'Longitude of where the worker is now' },
+          lat: { type: 'number', description: caseyText("src/case-tools-worker.js#3") },
+          lon: { type: 'number', description: caseyText("src/case-tools-worker.js#s0") },
           location_source: str(
-            'REQUIRED. "gps" ONLY if they read out exact coordinates. Otherwise "estimated" -- your own ' +
-            'best-effort guess from a place name they said, not yet confirmed with them. After you voice ' +
-            'the estimate back and they agree, call again with "confirmed" and any refined lat/lon. ' +
-            'Never guess "confirmed" -- it means they actually agreed. The operator map draws an estimate ' +
-            'differently from a real fix, so this is what stops a guess being dispatched to as if it were one.',
+            caseyText("src/case-tools-worker.js#4") +
+            caseyText("src/case-tools-worker.js#5") +
+            caseyText("src/case-tools-worker.js#6") +
+            caseyText("src/case-tools-worker.js#7") +
+            caseyText("src/case-tools-worker.js#8"),
             { enum: ['gps', 'estimated', 'confirmed'] },
           ),
         },
@@ -35,20 +36,20 @@ export function buildWorkerTools(store) {
       },
       async ({ lat, lon, location_source }, ctx) => {
         if (!isValidLatLon(lat, lon)) {
-          return { error: 'lat/lon must be finite numbers in range (lat -90..90, lon -180..180)' }
+          return { error: caseyText("src/case-tools-worker.js#9") }
         }
 
         const LOCATION_SOURCE_VALUES = new Set(['gps', 'estimated', 'confirmed'])
         if (location_source != null && !LOCATION_SOURCE_VALUES.has(location_source)) {
-          return { error: `invalid location_source: ${location_source}`, allowed: [...LOCATION_SOURCE_VALUES] }
+          return { error: caseyText("src/case-tools-worker.js#s1", [location_source]), allowed: [...LOCATION_SOURCE_VALUES] }
         }
         const resolvedLocationSource = location_source || 'estimated'
         const author = ctx?.author || ctx?.principal?.id
-        if (!author) return { error: 'no author on this turn -- cannot attribute a check-in' }
+        if (!author) return { error: caseyText("src/case-tools-worker.js#10") }
         const contact = ctx?.store?.findOrCreateContactLocked
           ? await ctx.store.findOrCreateContactLocked({ channel: ctx.channel || 'other', external_id: author })
           : null
-        if (!contact?.id) return { error: 'could not resolve the contact record for this check-in' }
+        if (!contact?.id) return { error: caseyText("src/case-tools-worker.js#11") }
         await store().t.update('contact', contact.id, toStorable({
           last_location_lat: lat, last_location_lon: lon, last_location_at: new Date().toISOString(),
           last_location_source: resolvedLocationSource,
@@ -58,11 +59,11 @@ export function buildWorkerTools(store) {
 
     defTool('case_idle', 'cases',
 
-      "Record that the worker has nothing to work on right now. Call this when a worker says they have no cases, nothing to do, or asks what they should do next -- this flags them for follow-up by other staff. Recording it is invisible to them, so still reply warmly in your own words.",
-      { type: 'object', properties: { note: str('Optional: what the worker said about their availability') } },
+      caseyText("src/case-tools-worker.js#12"),
+      { type: 'object', properties: { note: str(caseyText("src/case-tools-worker.js#13")) } },
       async ({ note }, ctx) => {
         const id = boundCase(ctx).id
-        if (!id) return { error: 'no active case to record an idle observation on' }
+        if (!id) return { error: caseyText("src/case-tools-worker.js#14") }
         const text = note ? `IDLE ${note}` : 'IDLE'
         await store().appendEvent(id, { kind: 'observation', actor: 'agent', text })
         return { ok: true }

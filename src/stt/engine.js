@@ -5,10 +5,11 @@ import { splitAudio } from './chunker.js'
 import { recognizeChunk, mergeSegments } from './google-recognize.js'
 import { languageOf, longModelLanguage } from './languages.js'
 import { runSpecialists } from './specialist.js'
+import { caseyText } from '../deployment-text.js';
 
 const MAX_INLINE_BYTES = 9 * 1024 * 1024
 const NO_SPECIALIST_LANGUAGE = 'nso'
-const NO_SPECIALIST_NOTE = 'Sepedi (nso) has no specialist model: the Google transcript is the only candidate'
+const NO_SPECIALIST_NOTE = caseyText("src/stt/engine.js#0")
 
 function routeFor(cfg, hintLanguage) {
   const long = longModelLanguage(hintLanguage)
@@ -25,11 +26,11 @@ async function mapLimited(items, limit, fn) {
 }
 
 async function recognizeGoogle(buffer, cfg, target, t0) {
-  if (!buffer?.length) throw new SttError(STT_FAILURE.NO_AUDIO, 'no audio bytes')
+  if (!buffer?.length) throw new SttError(STT_FAILURE.NO_AUDIO, caseyText("src/stt/engine.js#s0"))
   const deadline = t0 + cfg.budgetMs
   const signalMs = () => {
     const left = deadline - Date.now()
-    if (left < 500) throw new SttError(STT_FAILURE.TIMEOUT, `speech budget of ${cfg.budgetMs}ms spent`)
+    if (left < 500) throw new SttError(STT_FAILURE.TIMEOUT, caseyText("src/stt/engine.js#s1", [cfg.budgetMs]))
     return Math.min(cfg.requestTimeoutMs, left)
   }
   const ogg = oggOpusDurationSeconds(buffer)
@@ -59,7 +60,7 @@ export async function transcribeGoogle(buffer, mimeType, { hintLanguage = null, 
   try {
     rec = await recognizeGoogle(buffer, cfg, target, t0)
   } catch (e) {
-    failure = { error: `google stt: ${String(e?.message || e)}`, failureKind: failureKindOf(e) }
+    failure = { error: caseyText("src/stt/engine.js#s2", [String(e?.message || e)]), failureKind: failureKindOf(e) }
   }
   if (!rec && !buffer?.length) return { ...base, ms: Date.now() - t0, text: '', ...failure }
 
@@ -68,7 +69,7 @@ export async function transcribeGoogle(buffer, mimeType, { hintLanguage = null, 
   const lang = rec?.lang || null
   const googleCandidate = {
     id: 'google', engine: 'google', provider: base.provider, text: googleText,
-    error: rec ? (googleText ? '' : 'no intelligible speech') : failure.error, status: null, cold: false, ms: googleMs,
+    error: rec ? (googleText ? '' : caseyText("src/stt/engine.js#s3")) : failure.error, status: null, cold: false, ms: googleMs,
   }
 
   const skipSpecialists = lang?.key === NO_SPECIALIST_LANGUAGE
@@ -85,6 +86,6 @@ export async function transcribeGoogle(buffer, mimeType, { hintLanguage = null, 
     } : {}),
   }
   if (googleText) return { ...common, text: googleText, error: '', failureKind: '' }
-  if (rec) return { ...common, text: '', error: 'no intelligible speech', failureKind: STT_FAILURE.NO_SPEECH }
+  if (rec) return { ...common, text: '', error: caseyText("src/stt/engine.js#s4"), failureKind: STT_FAILURE.NO_SPEECH }
   return { ...common, text: '', ...failure }
 }

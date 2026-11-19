@@ -4,6 +4,7 @@ import { parseReportTolerant as parseReport } from './timestamp.js'
 
 import { normalizeLocation as surfaceKey } from './location-normalize.js'
 import { ENQUIRY_HEADLINE_FIELDS, APPEND_FIELDS, REPORT_FIELD_DEFS, fieldLabel } from './store/report-shape.js'
+import { caseyText } from './deployment-text.js';
 
 export const KNOWN_VALUE_FIELDS = ENQUIRY_HEADLINE_FIELDS
   .filter(k => REPORT_FIELD_DEFS.some(f => f.key === k))
@@ -76,18 +77,18 @@ export function canonPrompt(field, value, known) {
     .map(k => '- ' + (typeof k === 'string' ? k : k.value))
     .join('\n')
   return [
-    `An operator is filling in the "${label}" field (${field}) of an animal-health report by hand.`,
+    caseyText("src/field-values.js#0", [label, field]),
     '',
-    'These values are already on record for that field in this deployment:',
+    caseyText("src/field-values.js#1"),
     list,
     '',
-    `They have just typed: ${JSON.stringify(String(value))}`,
+    caseyText("src/field-values.js#s0", [JSON.stringify(String(value))]),
     '',
-    'Is what they typed the SAME real-world thing as one of the values already on record, only written differently -- a different capitalisation, a spelling mistake, singular instead of plural, a synonym, or the same place or animal named in another language?',
-    'A different animal, a different place, a narrower or wider thing, or anything you are not sure about is NOT the same thing. When in doubt answer NEW.',
+    caseyText("src/field-values.js#2"),
+    caseyText("src/field-values.js#3"),
     '',
-    'Answer with ONE line and nothing else:',
-    'SAME: <copy the matching value from the list exactly>',
+    caseyText("src/field-values.js#s1"),
+    caseyText("src/field-values.js#4"),
     'or',
     'NEW',
   ].join('\n')

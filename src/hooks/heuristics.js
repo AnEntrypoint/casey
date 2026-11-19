@@ -2,6 +2,7 @@
 
 import { tagList } from '../timestamp.js'
 import { vocabText } from '../config-loader.js'
+import { caseyText } from '../deployment-text.js';
 
 export const OPTED_OUT_TAG = 'opted-out'
 
@@ -81,9 +82,9 @@ export function canAgentAct(caseRow, action = 'reply') {
 }
 
 const STAGE_NOTE_DEFAULTS = {
-  in_progress: ['ui.stage_note_in_progress', 'Someone is looking at what you sent us now.'],
-  waiting: ['ui.stage_note_waiting', 'We are still busy with what you sent us. There is nothing you need to do for now.'],
-  resolved: ['ui.stage_note_resolved', 'What you sent us has been dealt with. If something is still wrong, just reply here.'],
+  in_progress: ['ui.stage_note_in_progress', caseyText("src/hooks/heuristics.js#0")],
+  waiting: ['ui.stage_note_waiting', caseyText("src/hooks/heuristics.js#1")],
+  resolved: ['ui.stage_note_resolved', caseyText("src/hooks/heuristics.js#2")],
 }
 
 export function stageNote(status) {

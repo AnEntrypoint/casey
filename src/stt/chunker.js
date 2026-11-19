@@ -3,14 +3,15 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { SttError, STT_FAILURE } from './errors.js'
+import { caseyText } from '../deployment-text.js';
 
 const FFMPEG_ENV = { PATH: '/usr/local/bin:/usr/bin:/bin', LANG: 'C' }
 
 function runFfmpeg(ffmpeg, args, timeoutMs) {
   return new Promise((resolve, reject) => {
     execFile(ffmpeg, ['-nostdin', '-hide_banner', ...args], { timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024, env: FFMPEG_ENV }, (err, stdout, stderr) => {
-      if (err && err.code === 'ENOENT') return reject(new SttError(STT_FAILURE.FFMPEG_MISSING, `ffmpeg not found (${ffmpeg}); install it to split notes longer than one minute`))
-      if (err && err.killed) return reject(new SttError(STT_FAILURE.TIMEOUT, 'ffmpeg timed out'))
+      if (err && err.code === 'ENOENT') return reject(new SttError(STT_FAILURE.FFMPEG_MISSING, caseyText("src/stt/chunker.js#0", [ffmpeg])))
+      if (err && err.killed) return reject(new SttError(STT_FAILURE.TIMEOUT, caseyText("src/stt/chunker.js#s0")))
       resolve({ code: err ? err.code : 0, stdout: String(stdout || ''), stderr: String(stderr || '') })
     })
   })
@@ -51,16 +52,16 @@ export async function splitAudio(buffer, { ffmpeg, chunkSeconds, maxSeconds, dea
     const left = () => Math.max(1000, deadline - Date.now())
     const probe = await runFfmpeg(ffmpeg, ['-i', input, '-vn', '-af', 'silencedetect=noise=-35dB:d=0.35', '-f', 'null', '-'], left())
     const { durationSec, silences } = parseProbe(probe.stderr)
-    if (!durationSec) throw new SttError(STT_FAILURE.BAD_AUDIO, 'ffmpeg could not read this audio')
-    if (durationSec > maxSeconds) throw new SttError(STT_FAILURE.TOO_LONG, `audio is ${Math.round(durationSec)}s, over the ${maxSeconds}s limit`)
+    if (!durationSec) throw new SttError(STT_FAILURE.BAD_AUDIO, caseyText("src/stt/chunker.js#s1"))
+    if (durationSec > maxSeconds) throw new SttError(STT_FAILURE.TOO_LONG, caseyText("src/stt/chunker.js#s2", [Math.round(durationSec), maxSeconds]))
     const plan = planChunks(durationSec, silences, { chunkSeconds })
     const chunks = []
     for (const [i, p] of plan.entries()) {
       const out = path.join(dir, `c${i}.flac`)
       const r = await runFfmpeg(ffmpeg, ['-y', '-v', 'error', '-ss', String(p.start), '-t', String(p.end - p.start), '-i', input, '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'flac', out], left())
-      if (r.code || !fs.existsSync(out)) throw new SttError(STT_FAILURE.BAD_AUDIO, 'ffmpeg could not cut the audio')
+      if (r.code || !fs.existsSync(out)) throw new SttError(STT_FAILURE.BAD_AUDIO, caseyText("src/stt/chunker.js#s3"))
       chunks.push({ content: fs.readFileSync(out), startSec: p.start, endSec: p.end })
     }
     return { durationSec, chunks }
-  } finally { try { fs.rmSync(dir, { recursive: true, force: true }) } catch (e) { process.emitWarning(`stt temp cleanup failed: ${e.message}`) } }
+  } finally { try { fs.rmSync(dir, { recursive: true, force: true }) } catch (e) { process.emitWarning(caseyText("src/stt/chunker.js#s4", [e.message])) } }
 }

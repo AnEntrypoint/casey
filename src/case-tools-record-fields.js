@@ -4,20 +4,21 @@ import { AGENT_USER } from './case-store.js'
 import { defTool, str, pick, ownsCase, slimCase } from './case-tools-shared.js'
 import { isContactAssignee } from './case-assignment.js'
 import { canQueryCases, isOperator } from './contact-tiers.js'
+import { caseyText } from './deployment-text.js';
 
 export function buildCaseFieldTools(store, { caseTypeValues, priorityValues }) {
   return [
     defTool('case_update', 'cases',
-      'Update editable case fields (subject, summary, priority, assignee, autonomy, case_type). Keep `summary` current -- it is your working memory of the case. You may set `case_type` ONLY when the worker or farmer directly and explicitly said which category applies (e.g. they used the word "outbreak", named a lab sample/test, or said the animals were recently moved/imported) -- never from your own inference about severity, onset speed, or whether a disease is notifiable. This is recording a stated fact, not diagnosing or triaging; a technician makes that call. Leave it unset whenever the category was not explicitly stated -- unset is correct and expected far more often than not.',
+      caseyText("src/case-tools-record-fields.js#0"),
       {
         type: 'object',
         properties: {
-          id: str('Case id'),
-          subject: str('Short human title'),
-          summary: str('One-paragraph rolling summary of the case state'),
+          id: str(caseyText("src/case-tools-record-fields.js#s0")),
+          subject: str(caseyText("src/case-tools-record-fields.js#s1")),
+          summary: str(caseyText("src/case-tools-record-fields.js#1")),
           priority: str('Priority', { enum: priorityValues }),
-          assignee: str('Operator handle, or "agent"'),
-          case_type: str('Category, set ONLY when directly and explicitly stated by the worker/farmer -- never inferred from severity or symptoms. Leave unset when not explicitly stated.', { enum: caseTypeValues }),
+          assignee: str(caseyText("src/case-tools-record-fields.js#s2")),
+          case_type: str(caseyText("src/case-tools-record-fields.js#2"), { enum: caseTypeValues }),
         },
         required: ['id'],
       },
@@ -25,23 +26,23 @@ export function buildCaseFieldTools(store, { caseTypeValues, priorityValues }) {
         const bad = validateEnumFields(store, patch, { caseTypeValues, priorityValues })
         if (bad) return bad
         const clean = pick(patch, ['subject', 'summary', 'priority', 'assignee', 'case_type'])
-        if (!Object.keys(clean).length) return { error: 'no editable fields supplied' }
+        if (!Object.keys(clean).length) return { error: caseyText("src/case-tools-record-fields.js#s3") }
 
-        if (isContactAssignee(clean.assignee)) return { error: 'that assignee cannot be set here' }
+        if (isContactAssignee(clean.assignee)) return { error: caseyText("src/case-tools-record-fields.js#s4") }
         const c = await store().getCase(id)
-        if (!c) return { error: `no case ${id}` }
+        if (!c) return { error: caseyText("src/case-tools-record-fields.js#s5", [id]) }
 
         const author = ctx?.author || ctx?.principal?.id
         if (!ownsCase(c.external_id, author) && !canQueryCases(ctx?.tier)) {
-          return { error: `case ${id} does not belong to you -- cannot update it` }
+          return { error: caseyText("src/case-tools-record-fields.js#3", [id]) }
         }
         if (clean.assignee !== undefined && !ownsCase(c.external_id, author) && !isOperator(ctx?.tier)) {
-          return { error: 'Who holds a record is not changed from here -- ask an operator to assign it. Nothing was changed.' }
+          return { error: caseyText("src/case-tools-record-fields.js#4") }
         }
 
         const result = await store().updateCaseChecked(id, clean, AGENT_USER)
         if (result.error === 'observe') {
-          return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
+          return { error: caseyText("src/case-tools-record-fields.js#5") }
         }
         if (result.error) return result
         await auditFieldUpdate(store, id, clean, result.prior)
@@ -54,10 +55,10 @@ function validateEnumFields(store, patch, { caseTypeValues, priorityValues }) {
   const caseTypeValueSet = new Set(store().getFieldEnum('case.case_type', caseTypeValues))
   const priorityValueSet = new Set(store().getFieldEnum('case.priority', priorityValues))
   if ('case_type' in patch && !caseTypeValueSet.has(patch.case_type)) {
-    return { error: `invalid case_type: ${patch.case_type}`, allowed: [...caseTypeValueSet] }
+    return { error: caseyText("src/case-tools-record-fields.js#s6", [patch.case_type]), allowed: [...caseTypeValueSet] }
   }
   if ('priority' in patch && !priorityValueSet.has(patch.priority)) {
-    return { error: `invalid priority: ${patch.priority}`, allowed: [...priorityValueSet] }
+    return { error: caseyText("src/case-tools-record-fields.js#s7", [patch.priority]), allowed: [...priorityValueSet] }
   }
   return null
 }

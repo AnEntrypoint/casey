@@ -12,8 +12,9 @@ import { stampReporter } from './phone-persons.js'
 import { consentManaged, consentState } from './phone-consent.js'
 import { returnGate } from './return-clarify.js'
 import { loadDomainConfig } from './config-loader.js'
+import { caseyText } from './deployment-text.js';
 
-const OBSERVE_BLOCKED = { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
+const OBSERVE_BLOCKED = { error: caseyText("src/case-tools-record-report.js#0") }
 
 export function buildCaseReportTools(store) {
   return [
@@ -22,7 +23,7 @@ export function buildCaseReportTools(store) {
       {
         type: 'object',
         properties: {
-          id: str('Case id'),
+          id: str(caseyText("src/case-tools-record-report.js#s0")),
           ...Object.fromEntries(REPORTER_FIELD_DEFS.filter(f => !SYSTEM_SET_FIELDS.has(f.key)).map(f => [f.key, str(f.description)])),
         },
         required: ['id'],
@@ -32,8 +33,8 @@ export function buildCaseReportTools(store) {
         if (consentManaged() && ctx?.contact?.id && !canQueryCases(ctx?.tier)) {
           const state = await consentState(store(), ctx.contact.id, { caseId: boundCase(ctx).id })
           if (state !== 'agreed') return { held: true, nothing_recorded: true, note: state === 'declined'
-            ? 'This person said no to what is kept, so nothing is written down. Do not record this. Be kind, offer a person from the team (case_handoff) if they want help, and only if they change their mind and say yes call case_consent with agreed true.'
-            : 'Nothing was recorded, so never say or imply that anything was noted or saved. This phone has not said it is okay for the team to keep what they send. In THIS reply, in your own words, tell them briefly what is kept and ask if that is okay (this is your one question). Do not say you are recording or that you need permission: just talk to them. When they say yes, call case_consent with agreed true and then record everything they have told you in this chat.' }
+            ? caseyText("src/case-tools-record-report.js#1")
+            : caseyText("src/case-tools-record-report.js#2") }
         }
 
         const notDiagnosis = SIGNOFF_DIAGNOSIS_FIELDS.filter(k => k in fields)
@@ -41,7 +42,7 @@ export function buildCaseReportTools(store) {
 
         if (ctx?.contact?.id && !canQueryCases(ctx?.tier)) { const held = await returnGate(store(), ctx); if (held) return held }
         const elsewhere = await namesHeldRecord(store, ctx)
-        if (elsewhere) return { error: `This message is about ${elsewhere}, a record held by this team member, not about their own report. Nothing was recorded on their own report. Say which record it is (${elsewhere}), ask them to confirm it in their next message, then use case_focus and case_edit for it.` }
+        if (elsewhere) return { error: caseyText("src/case-tools-record-report.js#3", [elsewhere, elsewhere]) }
         const target = await resolveReportTarget(store, id, ctx)
         if (target.error) return { error: target.error }
         id = target.id
@@ -61,7 +62,7 @@ export function buildCaseReportTools(store) {
         await assignByArea(store, id, incoming)
         await auditReportWrite(store, id, { incoming, priorReport })
         await wireProvenance(store, ctx, id, { incoming, res })
-        return { ok: true, report: res.report, fieldsRecorded: Object.keys(incoming), ...(notDiagnosis.length ? { notRecorded: `${notDiagnosis.join(', ')} -- only the animal health technician records these, when signing off; say nothing about it` } : {}), ...(locationDropped ? { locationNotRecorded: areaAskNote() } : {}), ...(res.cappedFields?.length ? { cappedFields: res.cappedFields } : {}) }
+        return { ok: true, report: res.report, fieldsRecorded: Object.keys(incoming), ...(notDiagnosis.length ? { notRecorded: caseyText("src/case-tools-record-report.js#4", [notDiagnosis.join(', ')]) } : {}), ...(locationDropped ? { locationNotRecorded: areaAskNote() } : {}), ...(res.cappedFields?.length ? { cappedFields: res.cappedFields } : {}) }
       }),
   ]
 }
@@ -96,18 +97,18 @@ async function resolveReportTarget(store, id, ctx) {
     const logTarget = bound.id || id
     await store().appendEvent(logTarget, {
       kind: 'observation', actor: 'system',
-      text: `SECURITY: case_report called with id=${id} but this turn's active case is ${bound.id || '(none)'}; write rejected.`,
+      text: caseyText("src/case-tools-record-report.js#5", [id, bound.id || '(none)']),
       data: { attemptedId: id, activeCaseId: bound.id, tool: 'case_report' },
     })
   } catch {  }
   return { error: bound.id
-    ? `case_report must target this conversation's active case (${bound.ref || bound.id}), not ${id}`
-    : 'case_report has no bound active case on this turn -- cannot target an arbitrary case id' }
+    ? caseyText("src/case-tools-record-report.js#6", [bound.ref || bound.id, id])
+    : caseyText("src/case-tools-record-report.js#7") }
 }
 
 async function validateReportArgs(store, fields) {
   const incoming = pick(fields, [...REPORTER_KEYS])
-  if (!Object.keys(incoming).length) return { error: 'no report fields supplied' }
+  if (!Object.keys(incoming).length) return { error: caseyText("src/case-tools-record-report.js#s1") }
   let locationDropped = false
   if (typeof incoming.location === 'string') {
     const { generalAreaFor } = await import('./areas.js')
@@ -120,7 +121,7 @@ async function validateReportArgs(store, fields) {
 }
 
 function areaAskNote() {
-  return `The place was not a known area, so it was not recorded. Ask, in their language: "${loadDomainConfig().persona.areaQuestion}"`
+  return caseyText("src/case-tools-record-report.js#8", [loadDomainConfig().persona.areaQuestion])
 }
 
 async function mergeIncomingReport(store, id, incoming) {
@@ -132,7 +133,7 @@ async function mergeIncomingReport(store, id, incoming) {
     try {
       await store().appendEvent(id, {
         kind: 'observation', actor: 'system',
-        text: 'WARNING: this case\'s stored report JSON was corrupted and has been reset before merging in this turn\'s fields -- some previously recorded fields may be lost. Review the case history for what was said before this point.',
+        text: caseyText("src/case-tools-record-report.js#9"),
       })
     } catch {  }
   }
@@ -140,7 +141,7 @@ async function mergeIncomingReport(store, id, incoming) {
     try {
       await store().appendEvent(id, {
         kind: 'observation', actor: 'system',
-        text: `WARNING: field(s) ${res.cappedFields.join(', ')} reached their maximum accumulated length -- this turn's new note(s) were NOT attached. A human should review the case for a length reset.`,
+        text: caseyText("src/case-tools-record-report.js#10", [res.cappedFields.join(', ')]),
         data: { cappedFields: res.cappedFields },
       })
     } catch {  }
@@ -150,7 +151,7 @@ async function mergeIncomingReport(store, id, incoming) {
 
 async function assignByArea(store, id, incoming) {
   if (!('location' in incoming) && !(AREA_FIELD in incoming)) return
-  try { const { autoAssignByArea } = await import('./areas.js'); await autoAssignByArea(store(), id) } catch (e) { store().log?.warn?.('[casey] area auto-assign failed', { caseId: id, error: e.message }) }
+  try { const { autoAssignByArea } = await import('./areas.js'); await autoAssignByArea(store(), id) } catch (e) { store().log?.warn?.(caseyText("src/case-tools-record-report.js#s2"), { caseId: id, error: e.message }) }
 }
 
 async function syncDerivedLocation(store, id, incoming) {
@@ -166,8 +167,8 @@ async function auditReportWrite(store, id, { incoming, priorReport }) {
     .filter(k => priorReport[k] != null && String(priorReport[k]).trim() !== '' && String(priorReport[k]) !== String(incoming[k]))
     .map(k => `${k} ${priorReport[k]} -> ${incoming[k]}`)
   const text = corrections.length
-    ? `recorded report fields: ${fieldsRecorded.join(', ')}; changed: ${corrections.join(', ')}`
-    : `recorded report fields: ${fieldsRecorded.join(', ')}`
+    ? caseyText("src/case-tools-record-report.js#s3", [fieldsRecorded.join(', '), corrections.join(', ')])
+    : caseyText("src/case-tools-record-report.js#s4", [fieldsRecorded.join(', ')])
   await store().appendEvent(id, { kind: 'action', actor: 'agent', text, data: { ...incoming, ...(corrections.length ? { corrections } : {}) } })
 }
 

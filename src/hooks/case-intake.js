@@ -14,6 +14,7 @@ import { tagList } from '../timestamp.js'
 import { stampReporter } from '../phone-persons.js'
 import { tapNote } from '../choices.js'
 import { isBarePin, answerBarePin } from '../pin-query.js'
+import { caseyText } from '../deployment-text.js';
 
 export function messageId(msg) {
   return msg.raw?.id || msg.id || ''
@@ -63,13 +64,13 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
   const typedText = stripChannelMarkup(msg.text || '')
   const spoken = tr.unheard ? '' : tr.text
   const inboundText = [typedText, spoken].filter(Boolean).join('\n')
-  const media = describeMedia(msg) || (msg._transcript ? 'an audio message' : '')
+  const media = describeMedia(msg) || (msg._transcript ? caseyText("src/hooks/case-intake.js#s0") : '')
   let inboundEvent
   try {
 
     inboundEvent = await store.recordInbound(caseRow, {
       channel,
-      text: inboundText || (media ? `[${media}]` : '[empty message]'),
+      text: inboundText || (media ? `[${media}]` : caseyText("src/hooks/case-intake.js#s1")),
       data: inboundAudioData(msg, typedText), msg_id: msgId,
     })
   } catch (e) {
@@ -97,7 +98,7 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   if (tagList(caseRow).includes('draft-pending')) {
     try {
       await store.updateCase(caseRow.id, { tags: dropTag(caseRow.tags, 'draft-pending') })
-      await store.appendEvent(caseRow.id, observation('DRAFT SUPERSEDED: a new message arrived; the pending draft reply was set aside for a fresh one.'))
+      await store.appendEvent(caseRow.id, observation(caseyText("src/hooks/case-intake.js#0")))
     } catch (e) { log.warn?.('[casey] draft supersede failed', { caseId: caseRow.id, error: e.message }) }
   }
 
@@ -124,7 +125,7 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   else if (route?.mode !== 'relay') promptNote += (await recordInboundLocation({ store, log, caseId: caseRow.id, msg })) || ''
   if (!created) return { promptNote, ingressRecorded, inboundChoices }
   if (!caseRow.subject) {
-    const subj = truncate(inboundText || media || 'New conversation', 80)
+    const subj = truncate(inboundText || media || caseyText("src/hooks/case-intake.js#s2"), 80)
     try { await store.updateCase(caseRow.id, { subject: subj }) } catch (e) { log.warn?.('[casey] seed subject failed', { error: e.message }) }
   }
 
@@ -133,7 +134,7 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
       await store.updateCase(caseRow.id, { tags: mergeTag(caseRow.tags, 'intake_mode:channel') })
     }
   } catch (e) { log.warn?.('[casey] intake_mode tag failed', { error: e.message }) }
-  try { await store.appendEvent(caseRow.id, { kind: 'note', actor: 'system', text: `Case opened from ${channel}` }) }
+  try { await store.appendEvent(caseRow.id, { kind: 'note', actor: 'system', text: caseyText("src/hooks/case-intake.js#s3", [channel]) }) }
   catch (e) { log.warn?.('[casey] case-opened note failed', { caseId: caseRow.id, error: e.message }) }
 
   if (caseRow.contact_id && resolveTierValue(caseRow.reporter_tier) === TIER.reporter) {
@@ -151,10 +152,10 @@ export async function applyPreTurnControls({ store, log, llmStatus, notifyHandof
   if (controlled) return controlled
 
   if (fresh.autonomy === 'observe') {
-    await store.appendEvent(fresh.id, observation('autonomy=observe: awaiting operator (no auto-reply)'))
+    await store.appendEvent(fresh.id, observation(caseyText("src/hooks/case-intake.js#1")))
 
     if (!isContactAssignee(fresh.assignee)) {
-      await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, flagLabel: 'observe needs-human', notifyLabel: 'observe handoff' })
+      await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, flagLabel: caseyText("src/hooks/case-intake.js#s4"), notifyLabel: caseyText("src/hooks/case-intake.js#s5") })
     }
     return { to: replyTo, text: '', platform, caseId: fresh.id, observed: true }
   }

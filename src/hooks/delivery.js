@@ -6,6 +6,7 @@ import { synthesizeVoice } from './media.js'
 import { fitChoices, appendFallback, stampChoices, rememberChoices } from '../choices.js'
 import { isRealReplyFor, isFallbackFor, recordedFor } from './reply-key.js'
 import { TURN_SOFT_DEADLINE_MS, STILL_WORKING_TEXT, TURN_TIMEOUT_TEXT } from './turn-deadlines.js'
+import { caseyText } from '../deployment-text.js';
 
 export function resolveAdapter(receiver, platform) {
   return receiver?.adapters?.[platform] || null
@@ -42,7 +43,7 @@ export async function sendGuaranteedFallback({
     fallbackDelivered = false
     await raiseOperatorItem({ store, log, caseId: fresh.id, code: 'delivery.failed', level: 'error', fields: { kind: 'fallback', channel } })
 
-    await store.appendEvent(fresh.id, observation(`fallback send failed on ${channel}: ${e.message}`))
+    await store.appendEvent(fresh.id, observation(caseyText("src/hooks/delivery.js#s0", [channel, e.message])))
   }
   fallbackReply.delivered = fallbackDelivered
   return fallbackReply
@@ -98,15 +99,15 @@ export async function sendAgentReply({
     catch (e) {
       delivered = false
       await raiseOperatorItem({ store, log, caseId: fresh.id, code: 'delivery.failed', level: 'error', fields: { kind: 'reply', channel, platform } })
-      await store.appendEvent(fresh.id, observation(`send failed on ${channel}: ${e.message}`))
+      await store.appendEvent(fresh.id, observation(caseyText("src/hooks/delivery.js#s1", [channel, e.message])))
 
       await markOutboundUndelivered(store, outboundEvent, replyTo, isFallback, e.message, log)
     }
   } else {
     await raiseOperatorItem({ store, log, caseId: fresh.id, code: 'delivery.no_adapter', level: 'error', fields: { kind: 'reply', channel } })
     await markOutboundUndelivered(store, outboundEvent, replyTo, isFallback,
-      `no adapter for channel "${channel}" -- nothing was sent`, log)
-    await store.appendEvent(fresh.id, observation(`reply not sent: no adapter for channel "${channel}"`))
+      caseyText("src/hooks/delivery.js#0", [channel]), log)
+    await store.appendEvent(fresh.id, observation(caseyText("src/hooks/delivery.js#1", [channel])))
   }
 
   return { reply, delivered }

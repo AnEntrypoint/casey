@@ -17,8 +17,9 @@ import { NOT_ASSIGNED, doneStages, findCase, teamRow, actorData, stripSavedPaths
 import { inSignOffQueue, withdrawHandoff, isHandedOff, sendBackToRanger } from './signoff-desk.js'
 import { mergeTag } from './hooks/heuristics.js'
 import { RANGER_NOTE, notesTagged } from './relay.js'
+import { caseyText } from './deployment-text.js';
 
-const NO_SUCH = { error: 'No such record. Ask for the reference again.' }
+const NO_SUCH = { error: caseyText("src/case-tools-team-review.js#0") }
 const REVIEW_EVENT_CAP = 60
 
 const done = (c) => doneStages().includes(c.status)
@@ -43,7 +44,7 @@ async function lookup(store, ctx, ref, { gate = false } = {}) {
 export function buildTeamReviewTools(store) {
   return [
     defTool('signoff_queue', 'cases',
-      `The sign-off queue: open ${REPORT_ENTITY_LABEL}s that already hold every required fact${MANDATORY_MINIMUM_FIELDS.length ? '' : ' (no required-fact list is configured, so every open one counts)'} and are not yet finished, that a ranger has handed over, that nobody holds, or that are assigned to this person. Call it when they ask what is ready to finish or what needs their sign-off. Listing a record does not finish it.`,
+      caseyText("src/case-tools-team-review.js#1", [REPORT_ENTITY_LABEL, MANDATORY_MINIMUM_FIELDS.length ? '' : caseyText("src/case-tools-team-review.js#2")]),
       { type: 'object', properties: { limit: { type: 'number', default: 15 } } },
       async ({ limit = 15 }, ctx) => {
         const rows = await signOffCandidates(store(), ctx)
@@ -56,8 +57,8 @@ export function buildTeamReviewTools(store) {
         return { total: rows.length, shown: Math.min(rows.length, n), cases: rows.slice(0, n).map(c => teamRow(c, ctx, { reporter_asked_us_to_stop: tagList(c).includes(OPTED_OUT_TAG), ...who(c), ...noteOf(c) })) }
       }),
     defTool('case_review', 'cases',
-      'Review ONE record in full before acting on it: every recorded fact, which required ones are missing, the timeline, and the photo and voice-note entries (with the voice-note transcripts). The photo entries here are notes only; to show the actual photos use case_photos. For records assigned to this person or unassigned.',
-      { type: 'object', properties: { case: str('Record reference or id') }, required: ['case'] },
+      caseyText("src/case-tools-team-review.js#3"),
+      { type: 'object', properties: { case: str(caseyText("src/case-tools-team-review.js#s0")) }, required: ['case'] },
       async ({ case: ref }, ctx) => {
         const r = await lookup(store, ctx, ref); if (r.fail) return r.fail
         const { c } = r
@@ -83,24 +84,24 @@ export function buildTeamReviewTools(store) {
         }
       }),
     defTool('case_reopen', 'cases',
-      'Reopen a FINISHED record so work can continue (it goes back to in progress). Use when new information arrives after sign-off or it was finished by mistake. Give the reason.',
-      { type: 'object', properties: { case: str('Record reference or id'), reason: str('Why it is being reopened') }, required: ['case', 'reason'] },
+      caseyText("src/case-tools-team-review.js#4"),
+      { type: 'object', properties: { case: str(caseyText("src/case-tools-team-review.js#s1")), reason: str(caseyText("src/case-tools-team-review.js#s2")) }, required: ['case', 'reason'] },
       async ({ case: ref, reason }, ctx) => {
         const r = await lookup(store, ctx, ref, { gate: true }); if (r.fail) return r.fail
         const { c } = r
-        if (!done(c)) return { error: 'That record is not finished, so there is nothing to reopen.' }
+        if (!done(c)) return { error: caseyText("src/case-tools-team-review.js#5") }
         const by = staffLabel(ctx.contact)
 
         const user = AGENT_USER
         const steps = c.status === 'closed' ? ['resolved', 'in_progress'] : ['in_progress']
         try { for (const to of steps) await store().transition(c.id, to, { user, reason: `${by}: reopened -- ${String(reason).slice(0, 300)}` }) }
-        catch (e) { return { error: `Could not reopen it: ${e.message}` } }
-        await store().appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `REOPENED by ${by}: ${String(reason).slice(0, 500)}`, data: actorData(ctx) })
+        catch (e) { return { error: caseyText("src/case-tools-team-review.js#s3", [e.message]) } }
+        await store().appendEvent(c.id, { kind: 'observation', actor: 'operator', text: caseyText("src/case-tools-team-review.js#s4", [by, String(reason).slice(0, 500)]), data: actorData(ctx) })
         return { ok: true, recorded_on: r.on, ref: c.ref, reopened_to: 'in_progress' }
       }),
     defTool(visibleToolName('case_ask_specialist'), 'cases',
-      'Ask the field worker who filed a record for a missing fact, by WhatsApp through the assistant\'s number. Only when the person who filed it is a field worker; a member of the public is asked by the assistant itself, so for a record a ranger handed over this instead sends it back to that ranger with your text as the question (nothing is sent to anyone). Omit `text` and the missing required facts are asked for. Refused, and says so, if they asked us to stop or last wrote more than 24 hours ago.',
-      { type: 'object', properties: { case: str('Record reference or id'), text: str('Optional: what to ask, in their language') }, required: ['case'] },
+      caseyText("src/case-tools-team-review.js#6"),
+      { type: 'object', properties: { case: str(caseyText("src/case-tools-team-review.js#s5")), text: str(caseyText("src/case-tools-team-review.js#7")) }, required: ['case'] },
       async ({ case: ref, text }, ctx) => {
         const r = await lookup(store, ctx, ref, { gate: true }); if (r.fail) return r.fail
         const { c } = r
@@ -112,19 +113,19 @@ export function buildTeamReviewTools(store) {
             const back = await sendBackToRanger(store(), c.id, { by: staffLabel(ctx.contact), user: AGENT_USER, text: String(text || '').trim(), data: actorData(ctx) })
             return back.ok ? { ok: true, sent_back_to_the_ranger: true, delivered: false, recorded_on: r.on, taken_off_the_sign_off_desk: true } : { error: back.error }
           }
-          return { error: 'The person who filed this is a member of the public, not a field worker, so the assistant asks them itself. Do not message them from here.' }
+          return { error: caseyText("src/case-tools-team-review.js#8") }
         }
         const missing = missingMandatoryMinimum(parseReport(c)).map(fieldLabel)
         const body = String(text || '').trim() || (missing.length
-          ? `Hello -- about the ${REPORT_ENTITY_LABEL} ${c.ref}: could you tell us ${missing.join(', ')}? Thank you.`
-          : `Hello -- about the ${REPORT_ENTITY_LABEL} ${c.ref}: is there anything more you can add? Thank you.`)
+          ? caseyText("src/case-tools-team-review.js#9", [REPORT_ENTITY_LABEL, c.ref, missing.join(', ')])
+          : caseyText("src/case-tools-team-review.js#10", [REPORT_ENTITY_LABEL, c.ref]))
         const sent = await sendStaffMessage({
           store: store(), sendReply: ctx?.sendReply, canSend: ctx?.canSend, caseRow: c, text: body,
           staff: { ...(ctx.contact || {}), tier: ctx.tier }, claim: false, answers: false, extra: { asked_missing: true },
         })
         if (!sent.ok) return { ok: false, delivered: false, recorded_on: r.on, error: sent.error }
 
-        const back = await withdrawHandoff(store(), c.id, { by: staffLabel(ctx.contact), user: AGENT_USER, reason: 'more information asked for', data: actorData(ctx) })
+        const back = await withdrawHandoff(store(), c.id, { by: staffLabel(ctx.contact), user: AGENT_USER, reason: caseyText("src/case-tools-team-review.js#s6"), data: actorData(ctx) })
         if (back.was) { const fresh = await store().getCase(c.id); await store().updateCase(c.id, { tags: mergeTag(fresh.tags || '', 'sent-back') }, AGENT_USER) }
         return { ok: true, delivered: true, recorded_on: r.on, asked_for: missing, ...(back.was ? { taken_off_the_sign_off_desk: true } : {}) }
       }),

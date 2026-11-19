@@ -3,6 +3,7 @@ import { googleSttConfig, googleSttEnabled } from './config.js'
 import { accessToken, projectId } from './gcp-auth.js'
 import { googleVoiceRepliesEnabled, TTS_VOICES } from './tts.js'
 import { SA_LANGUAGES } from './languages.js'
+import { caseyText } from '../deployment-text.js';
 
 const MODEL_LOCATIONS = { chirp_3: ['us', 'eu'], chirp_2: ['us-central1', 'europe-west4', 'asia-southeast1'], long: ['global', 'us', 'eu'], short: ['global', 'us', 'eu'] }
 
@@ -12,25 +13,25 @@ export async function sttDoctorRows({ offline = false, env = process.env, hasOth
   const rows = []
   if (!googleSttEnabled(env)) {
     rows.push(hasOtherEngine
-      ? { level: 'skip', text: 'voice transcription: legacy engines (OpenRouter chat audio, local whisper); set CASEY_STT_ENGINE=google for Google Cloud Speech-to-Text' }
-      : { level: 'warn', text: 'voice transcription: NO engine is configured, so every voice note is saved untranscribed and the person is asked to type', fix: 'set CASEY_STT_ENGINE=google on a GCP host (service account needs roles/speech.client) or install the local engine' })
+      ? { level: 'skip', text: caseyText("src/stt/doctor.js#0") }
+      : { level: 'warn', text: caseyText("src/stt/doctor.js#1"), fix: caseyText("src/stt/doctor.js#2") })
   } else {
     const cfg = googleSttConfig(env)
     const allowed = MODEL_LOCATIONS[cfg.model]
-    if (allowed && !allowed.includes(cfg.location)) rows.push({ level: 'fail', text: `STT model ${cfg.model} is not offered in location ${cfg.location} (offered in ${allowed.join(', ')})`, fix: 'fix CASEY_STT_GOOGLE_MODEL / CASEY_STT_GOOGLE_LOCATION' })
-    else rows.push({ level: 'ok', text: `voice transcription: Google Cloud Speech-to-Text ${cfg.model} in ${cfg.location}, language ${cfg.languageCodes.join(',')}; audio goes to Google under this project's own account (no data-logging opt-in is used)` })
+    if (allowed && !allowed.includes(cfg.location)) rows.push({ level: 'fail', text: caseyText("src/stt/doctor.js#3", [cfg.model, cfg.location, allowed.join(', ')]), fix: caseyText("src/stt/doctor.js#4") })
+    else rows.push({ level: 'ok', text: caseyText("src/stt/doctor.js#5", [cfg.model, cfg.location, cfg.languageCodes.join(',')]) })
     const chirp = SA_LANGUAGES.filter(l => l.chirp).map(l => l.label).join(', ')
     const long = SA_LANGUAGES.filter(l => !l.chirp).map(l => l.label).join(', ')
-    rows.push({ level: 'skip', text: `languages: ${chirp} on ${cfg.model} with detection; ${long} only through the older long model when the case already records that language (no confidence score, always read back)` })
-    if (offline) rows.push({ level: 'skip', text: 'service-account token not checked (offline mode)' })
+    rows.push({ level: 'skip', text: caseyText("src/stt/doctor.js#6", [chirp, cfg.model, long]) })
+    if (offline) rows.push({ level: 'skip', text: caseyText("src/stt/doctor.js#7") })
     else {
-      try { await accessToken(); rows.push({ level: 'ok', text: `service-account token available for project ${await projectId()}` }) }
-      catch (e) { rows.push({ level: 'fail', text: `no Google service-account token: ${e.message}`, fix: 'run on the GCP VM, or unset CASEY_STT_ENGINE' }) }
+      try { await accessToken(); rows.push({ level: 'ok', text: caseyText("src/stt/doctor.js#8", [await projectId()]) }) }
+      catch (e) { rows.push({ level: 'fail', text: caseyText("src/stt/doctor.js#s0", [e.message]), fix: caseyText("src/stt/doctor.js#9") }) }
     }
     rows.push(await ffmpegPresent(cfg.ffmpeg)
-      ? { level: 'ok', text: `ffmpeg present (${cfg.ffmpeg}): notes longer than ${cfg.chunkSeconds}s are split on silence, up to ${cfg.maxSeconds}s` }
-      : { level: 'warn', text: `ffmpeg not found (${cfg.ffmpeg}): voice notes over ${cfg.chunkSeconds}s fail with a truthful message`, fix: 'apt-get install ffmpeg (deploy/gcp/vm/startup.sh installs it)' })
+      ? { level: 'ok', text: caseyText("src/stt/doctor.js#10", [cfg.ffmpeg, cfg.chunkSeconds, cfg.maxSeconds]) }
+      : { level: 'warn', text: caseyText("src/stt/doctor.js#11", [cfg.ffmpeg, cfg.chunkSeconds]), fix: caseyText("src/stt/doctor.js#12") })
   }
-  if (googleVoiceRepliesEnabled(env)) rows.push({ level: 'skip', text: `voice replies ON (Google Text-to-Speech): only cases tagged voice-replies, only languages with a real voice (${Object.keys(TTS_VOICES).join(', ')}), never for opted-out or needs-human cases, text always sent too` })
+  if (googleVoiceRepliesEnabled(env)) rows.push({ level: 'skip', text: caseyText("src/stt/doctor.js#13", [Object.keys(TTS_VOICES).join(', ')]) })
   return rows
 }

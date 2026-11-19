@@ -9,6 +9,7 @@ import { isHandedOff } from './signoff-desk.js'
 import { isOwnConversation } from './case-assignment.js'
 import { TECHNICIAN_NOTE, notesTagged, offersFor, offerLine } from './relay.js'
 import { firstTimeStaff, issuesGroupUrl, issuesInviteDue, markIssuesInvited } from './staff-help.js'
+import { caseyText } from './deployment-text.js';
 
 export const NOTICE_CASE_CAP = 25
 
@@ -65,7 +66,7 @@ export async function staffNotices(store, contact, { mark = false, cap = NOTICE_
     const flags = assignedCaseState(events, contact)
     assigned.push({ c, flags })
     if (mark && (flags.new_assignment || flags.new_reply || flags.sent_back || flags.new_technician_note)) {
-      await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: 'NOTICE ANNOUNCED to the assignee', data: { announced_to: contact.id }, touch: false })
+      await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: caseyText("src/staff-notices.js#s0"), data: { announced_to: contact.id }, touch: false })
     }
   }
   const everything = await store.listCases({}, { limit: 10000, offset: 0 })
@@ -77,7 +78,7 @@ export async function staffNotices(store, contact, { mark = false, cap = NOTICE_
       const events = await store.listEvents(c.id)
       if (lastIndex(events, e => dataOf(e).handed_off === true) > lastIndex(events, e => e.kind === 'observation' && dataOf(e).announced_to === contact.id)) {
         handoffs.push({ c })
-        if (mark) await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: 'NOTICE ANNOUNCED to the sign-off desk', data: { announced_to: contact.id }, touch: false })
+        if (mark) await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: caseyText("src/staff-notices.js#s1"), data: { announced_to: contact.id }, touch: false })
       }
     }
   }
@@ -106,8 +107,8 @@ export async function ownReplyUndelivered(store, contact, { mark = false } = {})
     const iBad = lastIndex(events, e => e.kind === 'outbound' && dataOf(e).delivered === false)
     const iAnnounced = lastIndex(events, e => e.kind === 'observation' && dataOf(e).undelivered_announced_to === contact.id)
     if (iBad < 0 || iBad <= iAnnounced) continue
-    if (mark) await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: 'NOTICE ANNOUNCED: the last reply was not delivered', data: { undelivered_announced_to: contact.id }, touch: false })
-    return { reason: String(dataOf(events[iBad]).send_error || 'the channel refused it'), began: String(events[iBad].text || '').slice(0, 160) }
+    if (mark) await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: caseyText("src/staff-notices.js#0"), data: { undelivered_announced_to: contact.id }, touch: false })
+    return { reason: String(dataOf(events[iBad]).send_error || caseyText("src/staff-notices.js#s2")), began: String(events[iBad].text || '').slice(0, 160) }
   }
   return null
 }
@@ -116,23 +117,23 @@ export async function staffNoticeNote(store, contact) {
   let n
   let own = null
   try { n = (await staffNotices(store, contact)).counts; own = await ownReplyUndelivered(store, contact, { mark: true }) } catch { return '' }
-  const ownNote = own ? `\n\n[System note: your previous reply to this person was NOT fully delivered by WhatsApp (${own.reason}); it began "${own.began}". Tell them so in one plain sentence before anything else and offer to send it again in shorter pieces.]` : ''
+  const ownNote = own ? caseyText("src/staff-notices.js#1", [own.reason, own.began]) : ''
   const first = await firstTimeStaff(store, contact)
   let inviteNote = ''
   if (await issuesInviteDue(store, contact)) {
-    inviteNote = `\n\n[System note: this team member has not yet been invited to the issues group for reporting problems with this bot. In this reply, once, in your own words, invite them to join it: ${issuesGroupUrl()} Ask them to post any problem with the bot there. The system records the invite as sent once this turn is saved.]`
+    inviteNote = caseyText("src/staff-notices.js#2", [issuesGroupUrl()])
     await markIssuesInvited(store, contact)
   }
-  const firstNote = first ? `\n\n[System note: this is the first time this team member has talked to you. After dealing with what they just said, call case_help and give them the short welcome it returns, in their language.]` : ''
+  const firstNote = first ? caseyText("src/staff-notices.js#3") : ''
   if (!n.new_assignments && !n.new_replies && !n.dispatches && !n.undelivered && !n.sent_back && !n.new_handoffs && !n.handover_offers && !n.technician_notes) return ownNote + firstNote + inviteNote
   const bits = []
-  if (n.handover_offers) bits.push(`${n.handover_offers} hand-over offered to them by another ranger (accept or decline)`)
-  if (n.technician_notes) bits.push(`${n.technician_notes} with a new note from the technician`)
-  if (n.new_assignments) bits.push(`${n.new_assignments} newly assigned to them`)
-  if (n.new_replies) bits.push(`${n.new_replies} where the reporter has answered`)
-  if (n.dispatches) bits.push(`${n.dispatches} suggested for them to attend`)
-  if (n.sent_back) bits.push(`${n.sent_back} sent back to them by the technician`)
-  if (n.new_handoffs) bits.push(`${n.new_handoffs} handed over to the sign-off desk by a ranger`)
-  if (n.undelivered) bits.push(`${n.undelivered} where WhatsApp did not deliver the last reply (the reporter has to message first, or be phoned)`)
-  return `${ownNote}${firstNote}${inviteNote}\n\n[System note: waiting for this team member: ${bits.join('; ')}. Call case_pending, and after dealing with what they just said, tell them briefly in your own words. It is queued news, not a new message from them.]`
+  if (n.handover_offers) bits.push(caseyText("src/staff-notices.js#4", [n.handover_offers]))
+  if (n.technician_notes) bits.push(caseyText("src/staff-notices.js#s3", [n.technician_notes]))
+  if (n.new_assignments) bits.push(caseyText("src/staff-notices.js#s4", [n.new_assignments]))
+  if (n.new_replies) bits.push(caseyText("src/staff-notices.js#s5", [n.new_replies]))
+  if (n.dispatches) bits.push(caseyText("src/staff-notices.js#s6", [n.dispatches]))
+  if (n.sent_back) bits.push(caseyText("src/staff-notices.js#s7", [n.sent_back]))
+  if (n.new_handoffs) bits.push(caseyText("src/staff-notices.js#5", [n.new_handoffs]))
+  if (n.undelivered) bits.push(caseyText("src/staff-notices.js#6", [n.undelivered]))
+  return caseyText("src/staff-notices.js#7", [ownNote, firstNote, inviteNote, bits.join('; ')])
 }

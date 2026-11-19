@@ -12,6 +12,7 @@ import { isValidLatLon } from '../case-tools-shared.js'
 import { loadDomainConfig } from '../config-loader.js'
 import { toStorable } from '../store/guards.js'
 import { confirmRecordChoices, candidateChoices } from '../choices.js'
+import { caseyText } from '../deployment-text.js';
 
 const eligible = (c, contact) => !!c && isOpenCase(c) && isAssignedTo(c, contact) && !isOwnConversation(c, contact)
 
@@ -19,10 +20,10 @@ const cand = (c) => `${c.ref} (${identifyingLine(c).replace(/[\[\]<>\r\n]+/g, ' 
 
 function whatArrived(msg) {
   const parts = []
-  if (msg.location) parts.push('the location pin')
+  if (msg.location) parts.push(caseyText("src/hooks/media-relay.js#s0"))
   const r = msg.raw || {}
   const list = Array.isArray(msg.media) ? msg.media : (msg.media ? [msg.media] : [])
-  if (list.some(m => m?.type === 'audio') || r.audio || r.voice || r.type === 'audio' || r.type === 'voice') parts.push('a voice note')
+  if (list.some(m => m?.type === 'audio') || r.audio || r.voice || r.type === 'audio' || r.type === 'voice') parts.push(caseyText("src/hooks/media-relay.js#s1"))
   if (list.some(m => m && m.type !== 'audio') || r.image || r.type === 'image') parts.push('a photo')
   return parts.join(' and ') || 'media'
 }
@@ -47,7 +48,7 @@ export async function routeStaffArtifact({ store, log, caseRow, msg, inboundText
     const named = ctx.inboundRefs.map(r => mine.find(c => String(c.ref).toUpperCase() === r)).filter(Boolean)
     const candidates = named.length === 1 ? named : mine.slice(0, 3)
     if (candidates.length === 1) await proposeFocus(store, contact.id, candidates[0], msgId, now)
-    return { mode: 'ask', contact, candidates, more: mine.length - candidates.length, reason: 'No assigned record is confirmed as the one they are working on right now.' }
+    return { mode: 'ask', contact, candidates, more: mine.length - candidates.length, reason: caseyText("src/hooks/media-relay.js#0") }
   } catch (e) {
     await raiseOperatorItem({ store, log, caseId: caseRow.id, code: 'media.route_failed' })
     return null
@@ -63,7 +64,7 @@ export async function recordRelayedLocationPin({ store, log, route, msg }) {
   try {
     if (!isValidLatLon(pin.lat, pin.lon)) {
       await raiseOperatorItem({ store, log, caseId: target.id, code: 'location.rejected' })
-      await store.appendEvent(target.id, observation(`RANGER LOCATION PIN REJECTED: the position ${by} shared was out of range (lat=${pin.lat}, lon=${pin.lon}) and was not recorded.`, data))
+      await store.appendEvent(target.id, observation(caseyText("src/hooks/media-relay.js#1", [by, pin.lat, pin.lon]), data))
       return
     }
     await store.t.update('contact', contact.id, toStorable({
@@ -71,7 +72,7 @@ export async function recordRelayedLocationPin({ store, log, route, msg }) {
     }), { id: 'casey-agent', role: 'agent' })
     const place = [pin.name, pin.address].filter(Boolean).join(', ')
     await store.appendEvent(target.id, observation(
-      `ranger location pin: lat ${pin.lat}, lon ${pin.lon}${place ? ` (WhatsApp label "${truncate(place, 200)}")` : ''} -- relayed by ${by} on the reporter's behalf. This is ${by}'s own position on site, not the animals' location; the record's own position is unchanged.`, data))
+      caseyText("src/hooks/media-relay.js#2", [pin.lat, pin.lon, place ? caseyText("src/hooks/media-relay.js#s2", [truncate(place, 200)]) : '', by, by]), data))
   } catch {
     await raiseOperatorItem({ store, log, caseId: target.id, code: 'location.write_failed' })
   }
@@ -85,21 +86,21 @@ export function routeChoices(route) {
 
 
 const heardAsk = (msg) => (msg._transcript?.text && !msg._transcript.unheard
-  ? ' The transcript of the voice note is heard text and is not recorded on any record either: write nothing from it to a record until they confirm which record it belongs to, and ask that in this same single reply.'
+  ? caseyText("src/hooks/media-relay.js#3")
   : '')
 
 export async function noteRoute({ store, log, caseRow, route, msg, barePin = false }) {
   const what = whatArrived(msg)
   let text
   if (route.mode === 'relay') {
-    text = `MEDIA FILED ON ${cand(route.target)}: ${what} they just sent was recorded on that record on the reporter's behalf, not on this chat. In your reply name that reference and what it is, and confirm what was saved.`
-    if (msg.location && !barePin) text += ` The pin is the sender's own position and is NOT the animals' location: never record it or any coordinates on the report, and do not ask whether it is where the animals are. Ask the reporter only: "${loadDomainConfig().persona.areaQuestion}"`
+    text = caseyText("src/hooks/media-relay.js#4", [cand(route.target), what])
+    if (msg.location && !barePin) text += caseyText("src/hooks/media-relay.js#5", [loadDomainConfig().persona.areaQuestion])
   } else {
     const list = route.candidates.map(cand).join('; ')
-    text = `MEDIA NOT FILED ON A TEAM RECORD: ${what} they just sent stayed on this chat only. ${route.reason} Candidate${route.candidates.length > 1 ? 's' : ''}: ${list}${route.more > 0 ? ` (and ${route.more} more)` : ''}. Never say it was saved, filed or received on a record: say plainly that it is NOT on the record yet. Ask which record it belongs to, naming the candidate, as the last thing in your reply; do not guess. Only after they answer yes in their NEXT message call case_focus with that record and confirm set to true; nothing already sent is moved automatically, so it must be sent again after they confirm (an operator can also move it).${heardAsk(msg)}`
+    text = caseyText("src/hooks/media-relay.js#6", [what, route.reason, route.candidates.length > 1 ? 's' : '', list, route.more > 0 ? caseyText("src/hooks/media-relay.js#s3", [route.more]) : '', heardAsk(msg)])
   }
   try { await store.appendEvent(caseRow.id, observation(text, { media_route: route.mode })) }
   catch (e) { log.warn?.('[casey] media route note failed', { caseId: caseRow.id, error: e.message }) }
 
-  return `\n\n[System note: ${text}]`
+  return caseyText("src/hooks/media-relay.js#s4", [text])
 }

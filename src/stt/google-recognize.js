@@ -1,6 +1,7 @@
 import { SttError, STT_FAILURE } from './errors.js'
 import { accessToken, projectId } from './gcp-auth.js'
 import { speechHost } from './config.js'
+import { caseyText } from '../deployment-text.js';
 
 export function buildRecognizeRequest({ project, location, model, languageCodes, content, wordConfidence, origin = '' }) {
   const features = { enableAutomaticPunctuation: true }
@@ -65,7 +66,7 @@ export async function recognizeChunk({ content, target, cfg, signalMs }) {
         signal: AbortSignal.timeout(signalMs()),
       })
     } catch (e) {
-      throw new SttError(e?.name === 'TimeoutError' ? STT_FAILURE.TIMEOUT : STT_FAILURE.UNAVAILABLE, `speech request failed: ${e.message}`)
+      throw new SttError(e?.name === 'TimeoutError' ? STT_FAILURE.TIMEOUT : STT_FAILURE.UNAVAILABLE, caseyText("src/stt/google-recognize.js#s0", [e.message]))
     }
     const j = await r.json().catch(() => ({}))
     if (!r.ok) throw new SttError(statusFailure(r.status), `speech ${r.status}: ${String(j?.error?.message || '').slice(0, 200)}`)

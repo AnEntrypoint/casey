@@ -14,6 +14,7 @@ import {
   MANDATORY_MINIMUM_FIELDS, CRITICAL_FIELDS, REPORT_KEYS, AREA_FIELD, SIGNOFF_DIAGNOSIS_FIELDS, missingMandatoryMinimum, fieldLabel,
 } from './store/report-shape.js'
 import { REPORT_CONCEPT as K } from './report-concepts.js'
+import { caseyText } from './deployment-text.js';
 
 const SCAN_LIMIT = 10000
 const DEFAULT_LIMIT = 8
@@ -27,6 +28,7 @@ const FLAGS = ['sent_back', 'handed_off', 'complete', 'incomplete', 'needs_reply
 const HOLD_STATES = ['open', 'claimed', 'closed', 'unassigned', 'any']
 const DATE_BY = ['activity', 'created']
 const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 }
+const KIND_ARG = K.kind
 const DISEASE_KEY = SIGNOFF_DIAGNOSIS_FIELDS[0]
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -80,15 +82,15 @@ function resolveInstant(value, edge, now) {
 }
 
 function agoWords(ms, now) {
-  if (!ms) return 'no activity recorded'
+  if (!ms) return caseyText("src/case-tools-search.js#s0")
   const s = Math.max(0, (now - ms) / 1000)
-  if (s < 60) return 'just now'
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`
-  if (s < 86400) { const h = Math.floor(s / 3600); return `${h} hour${h === 1 ? '' : 's'} ago` }
+  if (s < 60) return caseyText("src/case-tools-search.js#s1")
+  if (s < 3600) return caseyText("src/case-tools-search.js#s2", [Math.floor(s / 60)])
+  if (s < 86400) { const h = Math.floor(s / 3600); return caseyText("src/case-tools-search.js#s3", [h, h === 1 ? '' : 's']) }
   if (s < 172800) return 'yesterday'
-  if (s < 14 * 86400) return `${Math.floor(s / 86400)} days ago`
-  if (s < 60 * 86400) return `${Math.floor(s / (7 * 86400))} weeks ago`
-  return `${Math.floor(s / (30 * 86400))} months ago`
+  if (s < 14 * 86400) return caseyText("src/case-tools-search.js#s4", [Math.floor(s / 86400)])
+  if (s < 60 * 86400) return caseyText("src/case-tools-search.js#s5", [Math.floor(s / (7 * 86400))])
+  return caseyText("src/case-tools-search.js#s6", [Math.floor(s / (30 * 86400))])
 }
 
 const compareKeys = (a, b) => {
@@ -103,8 +105,8 @@ function encodeCursor(sig, key) {
 function decodeCursor(raw, sig) {
   let c
   try { c = JSON.parse(Buffer.from(String(raw), 'base64url').toString('utf8')) } catch { c = null }
-  if (!c || !Array.isArray(c.k) || typeof c.s !== 'string') return fail('`after` is not a cursor from an earlier case_search. Run the search again without it.')
-  if (c.s !== sig) return fail('`after` belongs to a different search (the filters or the date changed). Run the search again without it.')
+  if (!c || !Array.isArray(c.k) || typeof c.s !== 'string') return fail(caseyText("src/case-tools-search.js#0"))
+  if (c.s !== sig) return fail(caseyText("src/case-tools-search.js#1"))
   return { key: c.k }
 }
 
@@ -119,14 +121,14 @@ function whatOf(report) {
   const species = has(report[K.kind]) ? String(report[K.kind]).trim() : ''
   const place = has(report.location) ? `in ${String(report.location).trim()}` : ''
   const what = scrubNumbers([species, place].filter(Boolean).join(' ')).slice(0, 90)
-  return what || 'no details yet'
+  return what || caseyText("src/case-tools-search.js#s7")
 }
 
 function describeFilters(f) {
   const out = { scope: f.scope, state: f.state, sort: f.sort }
   if (f.q) out.q = f.q
   if (f.flags.length) out.flag = f.flags
-  if (f.species) out.species = f.species
+  if (KIND_ARG && f.kind) out[KIND_ARG] = f.kind
   if (f.disease) out.disease = f.disease
   if (f.missing) out.missing = f.missing
   if (f.since != null) out.since = new Date(f.since).toISOString()
@@ -139,52 +141,52 @@ function describeFilters(f) {
 function parseArgs(args, ctx, now) {
   const scopeDefault = atLeast(ctx?.tier, TIER.specialist) ? 'all' : 'mine'
   const scope = fold(args.scope) || scopeDefault
-  if (!SCOPES.includes(scope)) return fail(`scope must be one of ${SCOPES.join(', ')}`)
+  if (!SCOPES.includes(scope)) return fail(caseyText("src/case-tools-search.js#s8", [SCOPES.join(', ')]))
   const q = String(args.q ?? '').trim()
   const words = fold(q).split(/[\s,]+/).filter(Boolean)
   const refAsked = !!q.match(CASE_REF_RE)
   const stateRaw = fold(args.state || args.stage)
   const state = stateRaw || (refAsked ? 'any' : 'open')
   const flags = asList(args.flag).map(fold)
-  for (const f of flags) if (!FLAGS.includes(f)) return fail(`flag "${f}" is not known`, { allowed_flags: FLAGS })
+  for (const f of flags) if (!FLAGS.includes(f)) return fail(caseyText("src/case-tools-search.js#s9", [f]), { allowed_flags: FLAGS })
   const sort = fold(args.sort) || (scope === 'mine' ? 'worst_first' : 'newest')
-  if (!SORTS.includes(sort)) return fail(`sort must be one of ${SORTS.join(', ')}`)
+  if (!SORTS.includes(sort)) return fail(caseyText("src/case-tools-search.js#s10", [SORTS.join(', ')]))
   const dateBy = fold(args.date_by) || 'activity'
-  if (!DATE_BY.includes(dateBy)) return fail(`date_by must be one of ${DATE_BY.join(', ')}`)
+  if (!DATE_BY.includes(dateBy)) return fail(caseyText("src/case-tools-search.js#s11", [DATE_BY.join(', ')]))
   const since = has(args.since) ? resolveInstant(args.since, 'since', now) : null
   const until = has(args.until) ? resolveInstant(args.until, 'until', now) : null
-  if (has(args.since) && since == null) return fail(`since "${args.since}" is not understood. Use YYYY-MM-DD, today, yesterday, this_week or this_month.`)
-  if (has(args.until) && until == null) return fail(`until "${args.until}" is not understood. Use YYYY-MM-DD, today, yesterday, this_week or this_month.`)
+  if (has(args.since) && since == null) return fail(caseyText("src/case-tools-search.js#2", [args.since]))
+  if (has(args.until) && until == null) return fail(caseyText("src/case-tools-search.js#3", [args.until]))
   const missing = has(args.missing) ? String(args.missing).trim() : ''
   const missingAllowed = [...new Set([...MANDATORY_MINIMUM_FIELDS, ...CRITICAL_FIELDS])]
-  if (missing && !missingAllowed.includes(missing)) return fail(`missing "${missing}" is not a required or critical field`, { allowed_fields: missingAllowed })
+  if (missing && !missingAllowed.includes(missing)) return fail(caseyText("src/case-tools-search.js#4", [missing]), { allowed_fields: missingAllowed })
   const disease = has(args.disease) ? fold(args.disease) : ''
-  if (disease && !REPORT_KEYS.has(DISEASE_KEY)) return fail('this deployment records no disease field, so disease cannot be searched')
+  if (disease && !REPORT_KEYS.has(DISEASE_KEY)) return fail(caseyText("src/case-tools-search.js#5"))
   const radius = Number(args.radius_km)
-  if (has(args.radius_km) && !(Number.isFinite(radius) && radius >= 0)) return fail(`radius_km must be a number >= 0, got ${args.radius_km}`)
+  if (has(args.radius_km) && !(Number.isFinite(radius) && radius >= 0)) return fail(caseyText("src/case-tools-search.js#s12", [args.radius_km]))
   let near = null
   const nearMe = args.near_me === true
   if (nearMe) {
     const me = ctx?.contact
     const lat = Number(me?.last_location_lat), lon = Number(me?.last_location_lon)
-    if (me?.last_location_lat == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return fail('No check-in on record for this person. Ask where they are now, then call case_checkin, or pass near with your own lat/lon estimate.')
+    if (me?.last_location_lat == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return fail(caseyText("src/case-tools-search.js#6"))
     near = { lat, lon, radius: has(args.radius_km) ? radius : null }
   } else if (args.near && typeof args.near.lat === 'number' && typeof args.near.lon === 'number') {
     const r = has(args.radius_km) ? radius : (typeof args.near.radius_km === 'number' ? args.near.radius_km : null)
-    if (r != null && !(Number.isFinite(r) && r >= 0)) return fail(`radius_km must be a number >= 0, got ${r}`)
+    if (r != null && !(Number.isFinite(r) && r >= 0)) return fail(caseyText("src/case-tools-search.js#s13", [r]))
     near = { lat: args.near.lat, lon: args.near.lon, radius: r }
-  } else if (args.near != null) return fail('near needs numeric lat and lon')
-  if (sort === 'nearest' && !near) return fail('sort nearest needs near or near_me')
+  } else if (args.near != null) return fail(caseyText("src/case-tools-search.js#s14"))
+  if (sort === 'nearest' && !near) return fail(caseyText("src/case-tools-search.js#s15"))
   const limit = Math.min(Math.max(Math.floor(Number(args.limit)) || DEFAULT_LIMIT, 1), MAX_LIMIT)
   return {
     scope, q, words, state, flags, sort, dateBy, since, until, missing, disease,
-    species: has(args.species) ? fold(args.species) : '', near, nearMe, limit, after: args.after || '',
+    kind: KIND_ARG && has(args[KIND_ARG]) ? fold(args[KIND_ARG]) : '', near, nearMe, limit, after: args.after || '',
   }
 }
 
 function checkState(state, stageValues) {
   if (HOLD_STATES.includes(state) || stageValues.includes(state)) return null
-  return fail(`state "${state}" is not known`, { allowed_states: [...HOLD_STATES, ...stageValues] })
+  return fail(caseyText("src/case-tools-search.js#s16", [state]), { allowed_states: [...HOLD_STATES, ...stageValues] })
 }
 
 function filterSignature(f) {
@@ -205,14 +207,14 @@ export async function searchCases(store, ctx, args = {}, { now = Date.now() } = 
   const keys = new Set(await keysForContact(store, ctx?.contact))
   const pool = (await store.listCases({}, { limit: SCAN_LIMIT, offset: 0 })).filter(c => c.channel !== 'system')
   const notes = []
-  if (pool.length >= SCAN_LIMIT) notes.push(`Only the ${SCAN_LIMIT} most recently active reports were searched.`)
+  if (pool.length >= SCAN_LIMIT) notes.push(caseyText("src/case-tools-search.js#7", [SCAN_LIMIT]))
 
   let areaIds = null
   let areas = null
   if (f.scope === 'area') {
     areas = await loadAreas(store)
     areaIds = new Set(areasOfRanger(areas, [...keys]).map(a => a.id))
-    if (!areaIds.size) notes.push('No area is set for this person, so scope area covers only the reports assigned to them.')
+    if (!areaIds.size) notes.push(caseyText("src/case-tools-search.js#8"))
   }
   const inArea = (report) => !!areaIds && areaIds.size > 0 && areaIds.has(resolveArea(areas, { stated: statedArea(report), location: report.location })?.area?.id)
 
@@ -269,7 +271,7 @@ export async function searchCases(store, ctx, args = {}, { now = Date.now() } = 
   let matched = visible.filter(r => {
     if (!stateOk(r)) return false
     for (const fl of f.flags) if (flagOk[fl] && !flagOk[fl](r)) return false
-    if (f.species && !fold(r.report[K.kind]).includes(f.species)) return false
+    if (f.kind && !fold(r.report[K.kind]).includes(f.kind)) return false
     if (f.disease && !fold(r.report[DISEASE_KEY]).includes(f.disease)) return false
     if (f.missing && has(r.report[f.missing])) return false
     if (f.since != null && dateMs(r) < f.since) return false
@@ -289,7 +291,7 @@ export async function searchCases(store, ctx, args = {}, { now = Date.now() } = 
     matched.sort((a, b) => b.lastMs - a.lastMs)
     const open = matched.filter(r => !r.isDone)
     const checked = open.slice(0, REPLY_SCAN_CAP)
-    if (open.length > checked.length) notes.push(`needs_reply was checked on the ${REPLY_SCAN_CAP} most recently active matches only; ${open.length - checked.length} older ones were not checked.`)
+    if (open.length > checked.length) notes.push(caseyText("src/case-tools-search.js#9", [REPLY_SCAN_CAP, open.length - checked.length]))
     const waiting = []
     for (const r of checked) if (await awaitingAnswer(store, r.c)) waiting.push(r)
     matched = waiting
@@ -343,7 +345,7 @@ export async function searchCases(store, ctx, args = {}, { now = Date.now() } = 
     for (const r of matched) {
       const h = r.isDone ? 'Closed' : (r.held ? 'Claimed' : 'Open')
       byHold[h] = (byHold[h] || 0) + 1
-      const sp = fold(r.report[K.kind]) || 'not recorded'
+      const sp = fold(r.report[K.kind]) || caseyText("src/case-tools-search.js#s17")
       bySpecies[sp] = (bySpecies[sp] || 0) + 1
     }
     const ranked = Object.entries(bySpecies).sort((a, b) => b[1] - a[1])
@@ -352,10 +354,10 @@ export async function searchCases(store, ctx, args = {}, { now = Date.now() } = 
     out.summary = { by_hold_state: byHold, [`by_${K.kind}`]: rest ? { ...top, other: rest } : top }
   }
   if (hiddenOptedOut) out.hidden_opted_out = hiddenOptedOut
-  if (f.near && noCoordinates) notes.push(`${noCoordinates} otherwise-matching reports have no recorded coordinates and are left out of a distance search.`)
-  if (more) notes.unshift(`Showing ${page.length} of ${total}${behind ? ` (${behind} already shown earlier)` : ''}. Tell them the total and offer more; for "more" call again with the same filters and after set to next.`)
-  if (!total) notes.unshift('Nothing matched these filters. Say which filters were used (filters_applied) and offer to widen one: a wider scope (area or all), state any, a longer date range, fewer words in q.')
-  else if (!page.length) notes.unshift('That was the last page; there is nothing further.')
+  if (f.near && noCoordinates) notes.push(caseyText("src/case-tools-search.js#10", [noCoordinates]))
+  if (more) notes.unshift(caseyText("src/case-tools-search.js#11", [page.length, total, behind ? caseyText("src/case-tools-search.js#s18", [behind]) : '']))
+  if (!total) notes.unshift(caseyText("src/case-tools-search.js#12"))
+  else if (!page.length) notes.unshift(caseyText("src/case-tools-search.js#13"))
   if (notes.length) out.note = notes.join(' ')
   return out
 }
@@ -363,27 +365,27 @@ export async function searchCases(store, ctx, args = {}, { now = Date.now() } = 
 export function buildSearchTools(store, { stageValues }) {
   return [
     defTool('case_search', 'cases',
-      'THE tool for finding and listing reports for a team member: "what is open near X", "cases with no photo", "anything sent back", "goats this week", "show me CASE-... again", "more". Matches free text, filters, orders worst first (sent back, then priority, then most missing, then oldest activity) and pages. Rows never carry phone numbers. Answer from the rows only: state `total`, read a few as one short line each starting with the ref (ref - what - stage - still needed), never invent a ref, and if `next` is set offer "more" and pass it as `after`. On zero results say which filters_applied were used and offer to widen. Today\'s date is in the prompt; compute "this week"/"last 3 days" yourself or pass since as this_week/today/yesterday/this_month/YYYY-MM-DD (South African time). State defaults to open unless q holds a CASE ref or state is given.',
+      caseyText("src/case-tools-search.js#14"),
       {
         type: 'object',
         properties: {
-          q: str('Free text, all words must match (any order, case and accents ignored): ref fragment, species, signs, place or area, disease, subject, and for reports assigned to you the reporter first name'),
-          scope: str('mine = assigned to me (default for rangers), area = in my areas plus mine, all = any public report', { enum: SCOPES }),
-          state: str(`open, claimed (someone holds it), closed, unassigned, any, or one stage name (${stageValues.join(', ')}). Default open.`),
-          stage: str('Alias of state'),
-          flag: { type: 'array', items: { type: 'string', enum: FLAGS }, description: 'All listed flags must hold. opted_out reports are hidden unless asked for.' },
-          species: str('Species word, e.g. goats'),
-          disease: str('Identified disease word'),
-          missing: str('A required or critical field key that is still blank'),
-          since: str('Lower date bound: YYYY-MM-DD, today, yesterday, this_week or this_month (South African time)'),
-          until: str('Upper date bound, inclusive of that day; same forms as since'),
-          date_by: str('What since/until measure: activity (last activity, default) or created (when it was filed)', { enum: DATE_BY }),
-          near: { type: 'object', description: 'Your own best-estimate lat/lon of a place they name; rows get distance_km', properties: { lat: { type: 'number' }, lon: { type: 'number' } } },
-          near_me: { type: 'boolean', description: 'Use this person\'s last check-in as the point' },
-          radius_km: { type: 'number', description: 'Only within this many km of near/near_me' },
-          sort: str('worst_first (default for scope mine), newest (default otherwise), oldest, nearest (needs near or near_me)', { enum: SORTS }),
-          limit: { type: 'number', description: `Rows per page, default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}` },
-          after: str('The `next` value from the previous result, to continue the same search'),
+          q: str(caseyText("src/case-tools-search.js#15")),
+          scope: str(caseyText("src/case-tools-search.js#16"), { enum: SCOPES }),
+          state: str(caseyText("src/case-tools-search.js#17", [stageValues.join(', ')])),
+          stage: str(caseyText("src/case-tools-search.js#s19")),
+          flag: { type: 'array', items: { type: 'string', enum: FLAGS }, description: caseyText("src/case-tools-search.js#18") },
+          ...(KIND_ARG ? { [KIND_ARG]: str(caseyText("src/case-tools-search.js#s20")) } : {}),
+          disease: str(caseyText("src/case-tools-search.js#s21")),
+          missing: str(caseyText("src/case-tools-search.js#19")),
+          since: str(caseyText("src/case-tools-search.js#20")),
+          until: str(caseyText("src/case-tools-search.js#21")),
+          date_by: str(caseyText("src/case-tools-search.js#22"), { enum: DATE_BY }),
+          near: { type: 'object', description: caseyText("src/case-tools-search.js#23"), properties: { lat: { type: 'number' }, lon: { type: 'number' } } },
+          near_me: { type: 'boolean', description: caseyText("src/case-tools-search.js#24") },
+          radius_km: { type: 'number', description: caseyText("src/case-tools-search.js#25") },
+          sort: str(caseyText("src/case-tools-search.js#26"), { enum: SORTS }),
+          limit: { type: 'number', description: caseyText("src/case-tools-search.js#s22", [DEFAULT_LIMIT, MAX_LIMIT]) },
+          after: str(caseyText("src/case-tools-search.js#27")),
         },
       },
       async (args, ctx) => searchCases(store(), ctx, args)),

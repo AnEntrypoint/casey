@@ -30,6 +30,7 @@ import { noteReturn } from '../return-clarify.js'
 import { areaAskOwed, areaAskValue } from '../area-ask.js'
 import { buildPromptContext, otherFieldsOwed } from './prompt-context.js'
 import { pendingNoticesFor, pendingNoticeNote, markNoticesDelivered } from './pending-notices.js'
+import { caseyText } from '../deployment-text.js';
 
 const BURST_SETTLE_MS = Math.max(0, Number(process.env.CASEY_BURST_SETTLE_MS ?? 2500) || 0)
 
@@ -76,7 +77,7 @@ async function absorbBurst(receiver, deps, ctx, first, msg, settled) {
     }
   }
   if (group.ids.length > 1) {
-    await store.appendEvent(first.caseRow.id, observation(`BURST-GROUPED: ${group.ids.length} messages (${group.media || 'text'}) were answered in one turn`, { grouped: group.ids })).catch((e) => log.warn?.('[casey] burst group marker failed', { caseId: first.caseRow.id, error: e.message }))
+    await store.appendEvent(first.caseRow.id, observation(caseyText("src/hooks/inbound-turn.js#0", [group.ids.length, group.media || 'text']), { grouped: group.ids })).catch((e) => log.warn?.('[casey] burst group marker failed', { caseId: first.caseRow.id, error: e.message }))
   }
   return group
 }
@@ -114,15 +115,15 @@ export async function runInboundTurn(receiver, deps, { platform, msg, channel, e
   }
   const isVoice = media && /audio|voice/i.test(media)
   const basePrompt = inboundText || (isVoice
-    ? 'The contact sent a voice note that could not be turned into text. It is saved with their report for the team to listen to. Do not guess what it said and record nothing from it: tell them kindly, in their language, that it is saved and that you cannot hear it yourself, and ask them to type the important facts (or say them again in a short voice note).'
-    : media ? `The contact sent ${media} with no text. Acknowledge and ask how you can help.` : 'The contact sent an empty message. Acknowledge politely.')
+    ? caseyText("src/hooks/inbound-turn.js#1")
+    : media ? caseyText("src/hooks/inbound-turn.js#2", [media]) : caseyText("src/hooks/inbound-turn.js#3"))
   const prompt = basePrompt + promptNote
 
   const queued = await llmDownQueueGate({ store, log, llmStatus, fresh, events, msg, msgId, replyTo, platform })
   if (queued) return queued
 
   if (msg.burstReplay) {
-    await store.appendEvent(fresh.id, observation('concurrent turn skipped: prior LLM turn still in-flight for this contact; buffered for replay'))
+    await store.appendEvent(fresh.id, observation(caseyText("src/hooks/inbound-turn.js#4")))
   }
 
   const staffSend = typeof receiver?.sendReply === 'function'
@@ -207,7 +208,7 @@ async function driveAgentTurn(deps, {
     const plain = normaliseReply(text, { keepLists: atLeast(resolveContactTier(contact), TIER.field) })
     if (plain.changed) {
       text = plain.text
-      try { await store.appendEvent(fresh.id, observation('REPLY-FORMAT-NORMALISED: markdown syntax rewritten for WhatsApp')) }
+      try { await store.appendEvent(fresh.id, observation(caseyText("src/hooks/inbound-turn.js#5"))) }
       catch (e) { log.warn?.('[casey] format-normalised marker failed', { caseId: fresh.id, error: e.message }) }
     }
   }
@@ -223,7 +224,7 @@ async function driveAgentTurn(deps, {
 
   if (startedOnId && startedOnId !== fresh?.id) {
 
-    try { await store.appendEvent(startedOnId, observation(`TURN-HANDED-OFF:${msgId} continued on ${fresh?.ref || fresh?.id}`)) }
+    try { await store.appendEvent(startedOnId, observation(caseyText("src/hooks/inbound-turn.js#s0", [msgId, fresh?.ref || fresh?.id]))) }
     catch (e) { log.warn?.('[casey] turn hand-off marker failed', { caseId: startedOnId, error: e.message }) }
     const departed = await store.getCase(startedOnId).catch(() => null)
     if (departed?.report) {
@@ -233,7 +234,7 @@ async function driveAgentTurn(deps, {
   if (degraded) await tagAiOffline({ store, log, fresh })
 
   if (msg.queuedRedrive && degraded) {
-    await store.appendEvent(fresh.id, observation('degraded re-drive; still degraded, nothing sent'))
+    await store.appendEvent(fresh.id, observation(caseyText("src/hooks/inbound-turn.js#6")))
     return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true }
   }
 
@@ -278,7 +279,7 @@ async function driveAgentTurn(deps, {
     if (notice) {
       const body = early.body
       if (body) text = `${text}\n\n${body}`
-      else { notice = null; await store.appendEvent(fresh.id, observation('NOTICE-NOT-COMPOSED: the first-contact notice could not be composed; it is still owed')).catch(() => {}) }
+      else { notice = null; await store.appendEvent(fresh.id, observation(caseyText("src/hooks/inbound-turn.js#7"))).catch(() => {}) }
     }
   }
   const staffTier = atLeast(resolveContactTier(contact), TIER.field)
@@ -304,5 +305,5 @@ async function driveAgentTurn(deps, {
 }
 
 async function holdOwedNotices(store, fresh, owed, msgId) {
-  await store.appendEvent(fresh.id, observation(`NOTICE-HELD: ${owed.length} queued notice(s) kept for the next reply; no reply carried them in this turn`, { notice_held: owed.map(i => i.id), in_reply_to: msgId })).catch(() => {})
+  await store.appendEvent(fresh.id, observation(caseyText("src/hooks/inbound-turn.js#8", [owed.length]), { notice_held: owed.map(i => i.id), in_reply_to: msgId })).catch(() => {})
 }

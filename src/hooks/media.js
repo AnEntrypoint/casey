@@ -14,6 +14,7 @@ import { STT_FAILURE } from '../stt/errors.js'
 import { googleVoiceRepliesEnabled, voiceReplyEligible, synthesizeGoogle } from '../stt/tts.js'
 import { parseReport } from '../timestamp.js'
 import { dataPolicyMode, openrouterProviderField, auditWrite } from '../llm-data-policy.js'
+import { caseyText } from '../deployment-text.js';
 
 const MEDIA_TOOL_TIMEOUT_MS = Number(process.env.CASEY_MEDIA_TOOL_TIMEOUT_MS) || 12000
 
@@ -44,7 +45,7 @@ function audioFormat(mimeType) {
 
 async function transcribeViaOpenrouter(buffer, mimeType, model) {
   const key = openrouterKey()
-  if (!key) return { text: '', error: 'no OPENROUTER_API_KEY' }
+  if (!key) return { text: '', error: caseyText("src/hooks/media.js#s0") }
   const r = await fetchWithTimeout('https://openrouter.ai/api/v1/audio/transcriptions', {
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
@@ -53,19 +54,19 @@ async function transcribeViaOpenrouter(buffer, mimeType, model) {
   const j = await r.json().catch(() => ({}))
   if (!r.ok) return { text: '', error: `${model} ${r.status}: ${truncate(j?.error?.message || '', 160)}` }
   const text = String(j?.text || '').trim()
-  return { text, error: text ? '' : `${model}: no intelligible speech` }
+  return { text, error: text ? '' : caseyText("src/hooks/media.js#s1", [model]) }
 }
 
 async function transcribeViaOpenrouterChat(buffer, mimeType, model, providerField) {
   const key = openrouterKey()
-  if (!key) return { text: '', error: 'no OPENROUTER_API_KEY' }
+  if (!key) return { text: '', error: caseyText("src/hooks/media.js#s2") }
   const r = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify({
       model, max_tokens: 1024, provider: providerField,
       messages: [{ role: 'user', content: [
-        { type: 'text', text: `Transcribe this voice note verbatim in the language spoken. Output only the transcript. If there is no intelligible speech, output exactly ${NO_SPEECH}.` },
+        { type: 'text', text: caseyText("src/hooks/media.js#0", [NO_SPEECH]) },
         { type: 'input_audio', input_audio: { data: buffer.toString('base64'), format: audioFormat(mimeType) } },
       ] }],
     }),
@@ -74,7 +75,7 @@ async function transcribeViaOpenrouterChat(buffer, mimeType, model, providerFiel
   if (!r.ok) return { text: '', error: `${model} ${r.status}: ${truncate(j?.error?.message || '', 160)}` }
   const raw = j?.choices?.[0]?.message?.content
   const text = String(Array.isArray(raw) ? raw.map(p => p?.text || '').join('') : (raw || '')).trim()
-  if (!text || text === NO_SPEECH) return { text: '', error: `${model}: no intelligible speech`, noSpeech: true, served_by: j?.provider || null }
+  if (!text || text === NO_SPEECH) return { text: '', error: caseyText("src/hooks/media.js#s3", [model]), noSpeech: true, served_by: j?.provider || null }
   return { text, error: '', served_by: j?.provider || null }
 }
 
@@ -120,8 +121,8 @@ export async function transcribeAudioDetailed(buffer, mimeType, { hintLanguage =
 
 async function transcribeLegacy(buffer, mimeType) {
   const t0 = Date.now()
-  if (process.env.CASEY_TRANSCRIBE_VOICE_NOTES === '0') return { text: '', provider: 'off', ms: 0, error: 'disabled (CASEY_TRANSCRIBE_VOICE_NOTES=0)' }
-  if (!buffer?.length) return { text: '', provider: 'none', ms: 0, error: 'no audio bytes downloaded' }
+  if (process.env.CASEY_TRANSCRIBE_VOICE_NOTES === '0') return { text: '', provider: 'off', ms: 0, error: caseyText("src/hooks/media.js#1") }
+  if (!buffer?.length) return { text: '', provider: 'none', ms: 0, error: caseyText("src/hooks/media.js#s4") }
   try {
     if (process.env.OPENAI_API_KEY) {
       const tmpPath = path.join(os.tmpdir(), `casey-voice-${Date.now()}-${Math.random().toString(36).slice(2)}.${audioFormat(mimeType) === 'ogg' ? 'ogg' : audioFormat(mimeType)}`)
@@ -133,7 +134,7 @@ async function transcribeLegacy(buffer, mimeType) {
         if (text) return { text, provider: 'whisper', ms: Date.now() - t0, error: '' }
       } finally { try { fs.unlinkSync(tmpPath) } catch {  } }
     }
-    let last = { text: '', error: 'no transcription model configured', provider: 'none' }
+    let last = { text: '', error: caseyText("src/hooks/media.js#s5"), provider: 'none' }
     const mode = dataPolicyMode()
     const providerField = openrouterProviderField(mode)
     const chatPath = mode !== 'allow'
@@ -172,7 +173,7 @@ export async function describePhoto(buffer, mimeType) {
     const { describeImage } = await import('../agent/media-tools.js')
     const parsed = await withTimeout(describeImage({
       image_url: dataUri,
-      prompt: 'This is a photo of livestock a field worker sent while reporting a possible animal-health incident. Describe only what is visibly relevant to animal health: any visible signs of illness or injury (e.g. lesions, swelling, discharge, lameness, posture), the apparent species, and how many animals are visible. Do not speculate on a diagnosis.',
+      prompt: caseyText("src/hooks/media.js#2"),
     }), MEDIA_TOOL_TIMEOUT_MS)
     return typeof parsed?.content === 'string' ? parsed.content.trim() : ''
   } catch {

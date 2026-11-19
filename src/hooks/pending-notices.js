@@ -1,3 +1,4 @@
+import { caseyText } from '../deployment-text.js';
 export const PENDING_NOTICE_KIND = 'pending_notice'
 export const NOTICE_DELIVERED_KIND = 'notice_delivered'
 
@@ -59,5 +60,5 @@ export async function markNoticesDelivered(store, items, { msgId = '' } = {}) {
 
 export function pendingNoticeNote(items) {
   const lines = items.map(i => `- ${i.text}${i.at ? ` (noted ${i.at})` : ''}`)
-  return `\n\n[System note: these notices are owed to this person and have not reached them yet. Work every one of them into your reply naturally, in the language they are writing in, as part of what you are saying anyway. Never send them as a separate message, a list, a block or a heading, and never ask them to act on them. Each line is a fact to convey, not wording to copy.]\n${lines.join('\n')}`
+  return caseyText("src/hooks/pending-notices.js#0", [lines.join('\n')])
 }

@@ -2,6 +2,7 @@ import { tagList } from '../timestamp.js'
 import { evData } from '../safe.js'
 import { STOP_PENDING_PREFIX } from './heuristics.js'
 import { observation } from './case-writes.js'
+import { caseyText } from '../deployment-text.js';
 
 export const STOP_PENDING_TTL_MS = 24 * 3600e3
 
@@ -23,6 +24,6 @@ export function stopPendingState(caseRow, events, nowMs = Date.now()) {
 export function stopConfirmEvent(events, actor) {
   const lastInbound = events.filter(e => e.kind === 'inbound').at(-1)
   if (!lastInbound) throw new Error('STOP-CONFIRM needs the inbound message that asked to stop, and none is recorded')
-  const text = 'STOP-CONFIRM: contact asked to stop; waiting for them to confirm. Messages continue until they do.'
+  const text = caseyText("src/hooks/stop-pending.js#0")
   return observation(text, { stop_confirm: true, stop_inbound: lastInbound.id, ...actor })
 }

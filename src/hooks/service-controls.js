@@ -6,6 +6,7 @@ import { stopPendingState, stopPendingTag, stopConfirmEvent } from './stop-pendi
 import { observation, raiseOperatorItem } from './case-writes.js'
 import { controlActor, forgetSpeakerAfterHelp } from '../phone-persons.js'
 import { resolveTierValue, TIER } from '../contact-tiers.js'
+import { caseyText } from '../deployment-text.js';
 
 const isPublicPhone = (caseRow) => !!caseRow?.contact_id && resolveTierValue(caseRow.reporter_tier) === TIER.reporter
 
@@ -25,19 +26,19 @@ export async function applyServiceControls({ store, log, llmStatus, caseRow, typ
     optedOut = false
 
     const actor = isPublicPhone(caseRow) ? await controlActor(store, caseRow.contact_id) : {}
-    await store.appendEvent(caseRow.id, observation('OPT-BACK-IN: contact asked for help after opting out; messages resumed.', Object.keys(actor).length ? { opt_back_in: true, ...actor } : undefined))
+    await store.appendEvent(caseRow.id, observation(caseyText("src/hooks/service-controls.js#0"), Object.keys(actor).length ? { opt_back_in: true, ...actor } : undefined))
     if (isPublicPhone(caseRow)) await forgetSpeakerAfterHelp(store, caseRow.contact_id)
 
     if (await isLlmDown(llmStatus)) {
       await raiseOperatorItem({ store, log, caseId: caseRow.id, code: 'control.ack_degraded', level: 'error', fields: { intent: 'resume' } })
-      await store.appendEvent(caseRow.id, observation('RESUME-ACK-DEGRADED: LLM unreachable; opt-back-in was applied, but no acknowledgement reply could be composed.', { degraded_turn: true, reason: 'llm_down_on_irreversible_control' }))
+      await store.appendEvent(caseRow.id, observation(caseyText("src/hooks/service-controls.js#1"), { degraded_turn: true, reason: 'llm_down_on_irreversible_control' }))
       return { to: replyTo, text: '', platform, caseId: caseRow.id, intent: 'resume', degraded: true }
     }
     return null
   }
 
   if (optedOut) {
-    await store.appendEvent(caseRow.id, observation('contact previously opted out; no auto-reply'))
+    await store.appendEvent(caseRow.id, observation(caseyText("src/hooks/service-controls.js#2")))
     return { to: replyTo, text: '', platform, caseId: caseRow.id, optedOut: true }
   }
 
@@ -50,7 +51,7 @@ export async function applyServiceControls({ store, log, llmStatus, caseRow, typ
     confirmed = pending.valid && intent === 'stop'
     if (!confirmed) {
       await store.updateCase(caseRow.id, { tags })
-      if (pending.valid) await store.appendEvent(caseRow.id, observation('STOP-CANCELLED: contact sent another message instead of confirming; they are not opted out.', { stop_cancelled: true }))
+      if (pending.valid) await store.appendEvent(caseRow.id, observation(caseyText("src/hooks/service-controls.js#3"), { stop_cancelled: true }))
     }
   }
 
@@ -65,12 +66,12 @@ export async function applyServiceControls({ store, log, llmStatus, caseRow, typ
 
   try { await store.updateCase(caseRow.id, { tags: mergeTag(tags, OPTED_OUT_TAG) }) }
   catch (e) { log.warn?.('[casey] opt-out flag failed', { caseId: caseRow.id, error: e.message }) }
-  try { await store.appendEvent(caseRow.id, observation('OPT-OUT: contact asked to stop messaging.', Object.keys(stopActor).length ? { opt_out: true, ...stopActor } : undefined)) }
+  try { await store.appendEvent(caseRow.id, observation(caseyText("src/hooks/service-controls.js#4"), Object.keys(stopActor).length ? { opt_out: true, ...stopActor } : undefined)) }
   catch (e) { log.warn?.('[casey] opt-out audit event failed', { caseId: caseRow.id, error: e.message }) }
 
   if (await isLlmDown(llmStatus)) {
     await raiseOperatorItem({ store, log, caseId: caseRow.id, code: 'control.ack_degraded', level: 'error', fields: { intent: 'stop' } })
-    await store.appendEvent(caseRow.id, observation(`STOP-ACK-DEGRADED: LLM unreachable; the opt-out itself was applied, but no acknowledgement reply could be composed.`, { degraded_turn: true, reason: 'llm_down_on_irreversible_control' }))
+    await store.appendEvent(caseRow.id, observation(caseyText("src/hooks/service-controls.js#5"), { degraded_turn: true, reason: 'llm_down_on_irreversible_control' }))
     return { to: replyTo, text: '', platform, caseId: caseRow.id, intent, degraded: true }
   }
 

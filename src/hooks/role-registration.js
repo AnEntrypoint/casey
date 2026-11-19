@@ -4,27 +4,28 @@ import { extractCode, claimInvite, attemptsExhausted, noteFailedAttempt, without
 import { TIER_LABELS } from '../store/report-shape.js'
 import { tierLabel, TIER } from '../contact-tiers.js'
 import { vocabText } from '../config-loader.js'
+import { caseyText } from '../deployment-text.js';
 
 const WELCOME = {
-  [TIER.field]: (label) => vocabText('ui.role_welcome_field_worker', 'You are registered as {label}. Message me the way you already do: describe what you see (animal, how many, where, what is wrong) and send photos or a voice note. Ask "my cases" or "what is open near me" any time. I will also record where you are if you share a location pin.', { label }),
-  [TIER.specialist]: (label) => vocabText('ui.role_welcome_technician', 'You are registered as {label}. You can see and update your cases here, and you are the one who signs a case off as resolved once help has been given -- tell me when a case is done and I will check the record is complete first. Ask "my cases" or "waiting for sign off" any time.', { label }),
-  [TIER.operator]: (label) => vocabText('ui.role_welcome_operator', 'You are registered as {label}. You can work the queue from here: ask what needs attention, reply to a reporter, assign a case, or say "invite eco ranger" / "invite technician" to get a one-time code for a new team member. Signing a case off stays with the technician.', { label }),
+  [TIER.field]: (label) => vocabText('ui.role_welcome_field_worker', caseyText("src/hooks/role-registration.js#0"), { label }),
+  [TIER.specialist]: (label) => vocabText('ui.role_welcome_technician', caseyText("src/hooks/role-registration.js#1"), { label }),
+  [TIER.operator]: (label) => vocabText('ui.role_welcome_operator', caseyText("src/hooks/role-registration.js#2"), { label }),
 }
 
 const REFUSAL_DEFAULTS = {
-  unknown: ['ui.role_refusal_unknown', 'That code was not recognised. Check it with the person who sent it and try again.'],
-  expired: ['ui.role_refusal_expired', 'That code has expired. Ask for a new one.'],
-  used: ['ui.role_refusal_used', 'That code has already been used. Ask for a new one.'],
-  revoked: ['ui.role_refusal_revoked', 'That code is no longer valid. Ask for a new one.'],
-  already: ['ui.role_refusal_already', 'You already have this role (or a higher one), so nothing changed.'],
-  locked: ['ui.role_refusal_locked', 'Too many attempts. Please wait {wait} and try again.'],
-  alone: ['ui.role_refusal_alone', 'That message has a registration code in it, so it was not used. To register, send the code on its own, with nothing else in the message.'],
+  unknown: ['ui.role_refusal_unknown', caseyText("src/hooks/role-registration.js#3")],
+  expired: ['ui.role_refusal_expired', caseyText("src/hooks/role-registration.js#4")],
+  used: ['ui.role_refusal_used', caseyText("src/hooks/role-registration.js#5")],
+  revoked: ['ui.role_refusal_revoked', caseyText("src/hooks/role-registration.js#6")],
+  already: ['ui.role_refusal_already', caseyText("src/hooks/role-registration.js#7")],
+  locked: ['ui.role_refusal_locked', caseyText("src/hooks/role-registration.js#8")],
+  alone: ['ui.role_refusal_alone', caseyText("src/hooks/role-registration.js#9")],
 }
 
 function lockoutWait() {
   const hours = Math.round(ATTEMPT_WINDOW_MS / 3600e3)
   return hours === 1
-    ? vocabText('ui.role_wait_one_hour', 'an hour')
+    ? vocabText('ui.role_wait_one_hour', caseyText("src/hooks/role-registration.js#s0"))
     : vocabText('ui.role_wait_hours', '{hours} hours', { hours })
 }
 
@@ -62,7 +63,7 @@ export async function tryRegisterByCode({ store, log, adapter, msg, channel, ext
     outcome = await claimInvite(store, code, contact)
   } catch (e) {
     log.error?.('[casey] role-registration failed', { channel, error: e.message })
-    return say('Sorry, I could not process that just now. Please send the code again in a minute.')
+    return say(caseyText("src/hooks/role-registration.js#10"))
   }
   if (!outcome.ok) {
     if (outcome.reason === 'unknown') noteFailedAttempt(key)

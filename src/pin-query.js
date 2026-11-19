@@ -9,6 +9,7 @@ import { identifyingLine } from './team-focus.js'
 import { toStorable } from './store/guards.js'
 import { nearbyChoices } from './choices.js'
 import { observation } from './hooks/case-writes.js'
+import { caseyText } from './deployment-text.js';
 
 export const NEARBY_LIMIT = 5
 
@@ -49,9 +50,9 @@ export async function answerBarePin({ store, log, caseRow, msg }) {
   await storeCheckIn(store, contact, pin)
   const rows = await nearestOpenCases(store, contact, pin)
   const text = rows.length
-    ? `They sent only their location pin, which is their own position and is now saved as their check-in. The system is showing them the ${rows.length} nearest open record${rows.length === 1 ? '' : 's'} as a list they can tap: write ONE short sentence saying so, in their language. Do not write the list, do not ask whether it is where the animals are, and record nothing from the pin.`
-    : 'They sent only their location pin, which is their own position and is now saved as their check-in. No open record with a known position is on file near it. Say so in one short sentence in their language, and record nothing from the pin.'
-  try { await store.appendEvent(caseRow.id, observation(`STAFF PIN QUERY: position saved as check-in; ${rows.length} nearby open record(s) offered`)) }
+    ? caseyText("src/pin-query.js#0", [rows.length, rows.length === 1 ? '' : 's'])
+    : caseyText("src/pin-query.js#1")
+  try { await store.appendEvent(caseRow.id, observation(caseyText("src/pin-query.js#2", [rows.length]))) }
   catch (e) { log.warn?.('[casey] pin query note failed', { caseId: caseRow.id, error: e.message }) }
-  return { promptNote: `\n\n[System note: ${text}]`, choices: rows.length ? nearbyChoices(rows) : null }
+  return { promptNote: caseyText("src/pin-query.js#s0", [text]), choices: rows.length ? nearbyChoices(rows) : null }
 }

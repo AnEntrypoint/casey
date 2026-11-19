@@ -2,6 +2,7 @@ import { SttError, STT_FAILURE } from './errors.js'
 import { accessToken } from './gcp-auth.js'
 import { languageOf } from './languages.js'
 import { tagList } from '../timestamp.js'
+import { caseyText } from '../deployment-text.js';
 
 export const TTS_VOICES = Object.freeze({
   af: { languageCode: 'af-ZA', name: 'af-ZA-Standard-A' },
@@ -35,7 +36,7 @@ export function buildSynthesizeRequest({ text, voice, origin = '' }) {
 
 export async function synthesizeGoogle({ text, language, env = process.env, timeoutMs = 8000 }) {
   const voice = voiceFor(language)
-  if (!voice) throw new SttError(STT_FAILURE.UNSUPPORTED_LANGUAGE, `no Google voice for ${language}`)
+  if (!voice) throw new SttError(STT_FAILURE.UNSUPPORTED_LANGUAGE, caseyText("src/stt/tts.js#s0", [language]))
   const req = buildSynthesizeRequest({ text, voice, origin: env.CASEY_TTS_ENDPOINT_ORIGIN || '' })
   const r = await fetch(req.url, {
     method: 'POST',
@@ -44,6 +45,6 @@ export async function synthesizeGoogle({ text, language, env = process.env, time
     signal: AbortSignal.timeout(timeoutMs),
   })
   const j = await r.json().catch(() => ({}))
-  if (!r.ok || !j.audioContent) throw new SttError(STT_FAILURE.UNAVAILABLE, `tts ${r.status}: ${String(j?.error?.message || 'no audio').slice(0, 200)}`)
+  if (!r.ok || !j.audioContent) throw new SttError(STT_FAILURE.UNAVAILABLE, `tts ${r.status}: ${String(j?.error?.message || caseyText("src/stt/tts.js#s1")).slice(0, 200)}`)
   return { data_base64: j.audioContent, mime: 'audio/ogg' }
 }

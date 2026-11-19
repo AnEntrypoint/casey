@@ -4,6 +4,7 @@ import { isOpenCase } from './format.js'
 import { dropTag } from './hooks/heuristics.js'
 import { AGENT_USER } from './case-store.js'
 import { NOTE_TAGS } from './domain-roles.js'
+import { caseyText } from './deployment-text.js';
 
 export const RANGER_NOTE = NOTE_TAGS.field_note
 export const TECHNICIAN_NOTE = NOTE_TAGS.specialist_note
@@ -14,14 +15,14 @@ export const NOTE_MAX = 600
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g
 const NUMBER_OR_REF = /(CASE-\d+-[a-z0-9]+)|(\+?\d[\d ()\-.]{5,}\d)/gi
 
-export const scrubNumbers = (text) => String(text ?? '').replace(NUMBER_OR_REF, (m, ref) => (ref ? m : '(number not shown)'))
+export const scrubNumbers = (text) => String(text ?? '').replace(NUMBER_OR_REF, (m, ref) => (ref ? m : caseyText("src/relay.js#s0")))
 
 export const cleanNote = (text) => scrubNumbers(String(text ?? '').replace(CONTROL, '')).replace(/\s+/g, ' ').trim().slice(0, NOTE_MAX)
 
 export function notesTagged(events, tag) {
   return events
     .filter(e => evData(e).tag === tag)
-    .map(e => ({ by: evData(e).by || 'a team member', at: e.created_at, text: scrubNumbers(evData(e).note ?? e.text) }))
+    .map(e => ({ by: evData(e).by || caseyText("src/relay.js#s1"), at: e.created_at, text: scrubNumbers(evData(e).note ?? e.text) }))
     .reverse()
 }
 
@@ -36,7 +37,7 @@ export function pendingOffer(events, now = Date.now()) {
   return { id: offer.id, by: d.by, from_key: d.from_key, to_contact_id: d.to_contact_id, to_name: d.to_name, expires_at: expiresAt, expired: now > expiresAt }
 }
 
-export const offerLine = (c, offer) => `${c.ref} offered by ${offer.by}: accept or decline`
+export const offerLine = (c, offer) => caseyText("src/relay.js#s2", [c.ref, offer.by])
 
 export async function offersFor(store, contact, cases, { mark = false, now = Date.now() } = {}) {
   const out = []
