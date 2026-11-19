@@ -14,7 +14,6 @@ import {
   relocateCase, resolveArea, statedArea, wrongAreaCases,
 } from '../../areas.js'
 import { assigneeNamer } from '../assignee-names.js'
-import { AREA_FIELD } from '../../store/report-shape.js'
 
 const staffOnly = (req, res) => {
   if (isStaffAccount(req.caseyAccount)) return true
