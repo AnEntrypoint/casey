@@ -34,6 +34,8 @@ export function spaced(s, sizes) {
 
 export const EXAMPLE_LOCAL = text(cfg.examples?.local, '')
 export const EXAMPLE_INTERNATIONAL = text(cfg.examples?.international, '')
+export const EXAMPLE_DISPLAY = text(cfg.examples?.display, '')
+export const LOCATION_NAME = text(cfg.location_name, '') || SAST_TZ
 
 export function phoneDigitsOk(d) {
   if (LOCAL_NUMBER_RE || INTERNATIONAL_PLUS_RE) return Boolean((LOCAL_NUMBER_RE && LOCAL_NUMBER_RE.test(d)) || (INTERNATIONAL_PLUS_RE && INTERNATIONAL_PLUS_RE.test(d)))

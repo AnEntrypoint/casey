@@ -1,3 +1,4 @@
+import { caseyText } from '../src/deployment-text.js'
 import { createCaseStore } from '../src/case-store.js'
 import { TIER_ORDER, resolveTierValue, atLeast, tierLabel, TIER } from '../src/contact-tiers.js'
 import { createInvite, createInvites, listInvites, revokeInvite, normalizeMsisdn } from '../src/role-invites.js'
@@ -96,7 +97,7 @@ export async function cmdRoles({ flags, rest }) {
     if (!phone || !tier) await fail('usage: casey roles assign <phone> <tier> [--name "..."]', `tiers: ${TEAM_TIERS.join(', ')} (or reporter to demote)`)
     if (!TIER_ORDER.includes(tier)) { const m = mapRole(tier); if (m.tier) tier = m.tier; else await fail(`there is no tier "${pos[1]}".`, `one of: ${TIER_ORDER.join(', ')}, or a role word such as "Eco Ranger"`) }
     const external_id = normalizeMsisdn(phone)
-    if (!external_id) await fail(`"${phone}" is not a phone number casey can match.`, 'a South African number is 27 plus nine digits, e.g. "079 091 5297" or "+27 79 091 5297".')
+    if (!external_id) await fail(`"${phone}" is not a phone number casey can match.`, caseyText("bin/casey-roles-command.js#phone-example"))
     try {
       const c = await store.registerContact({ channel: 'whatsapp', external_id, display_name: typeof flags.name === 'string' ? flags.name.slice(0, 80) : '', tier }, CLI)
       console.log(green(`${c.display_name && c.display_name !== c.external_id ? c.display_name : fmtPhone27(external_id)} is now ${tier}`) + dim(`  (${tierLabel(tier, TIER_LABELS)})`))

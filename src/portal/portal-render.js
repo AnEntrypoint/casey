@@ -1,3 +1,4 @@
+import { COUNTRY_CODE, TRUNK_PREFIX, NATIONAL_LENGTH, LOCAL_NUMBER_RE, EXAMPLE_DISPLAY } from '../locale.js'
 import fs from 'node:fs'
 import { loadDefaults, publicBase } from './portal-config.js'
 
@@ -28,6 +29,11 @@ export function paragraphsHtml(text) {
     .join('\n')
 }
 
+export function phoneNormaliseScript() {
+  if (!LOCAL_NUMBER_RE || !COUNTRY_CODE) return ''
+  return `if(/^${TRUNK_PREFIX}\\d{${NATIONAL_LENGTH}}$/.test(s))s="+${COUNTRY_CODE}"+s.slice(${TRUNK_PREFIX.length});`
+}
+
 export function textPlaceholders(settings) {
   return {
     bot_number: settings.bot_number,
@@ -41,6 +47,8 @@ export function templateValues(settings, { routerId, apiBase }) {
   const plainText = (key) => escapeHtml(expandText(settings[key], placeholders))
   const waDigits = settings.bot_number.replace(/\D/g, '')
   return {
+    phone_example: EXAMPLE_DISPLAY,
+    phone_normalise: phoneNormaliseScript(),
     router_id: escapeHtml(routerId),
     api_base: escapeHtml(apiBase),
     phone_key: escapeHtml(loadDefaults().phone_storage_key),

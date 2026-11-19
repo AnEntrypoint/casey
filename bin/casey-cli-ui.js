@@ -1,3 +1,4 @@
+import { TZ_LABEL } from '../src/locale.js'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -264,7 +265,7 @@ casey erase-contact <contact> --person <name|id> --yes [--reason "..."]
   (period, resolved total, top categories, trend against the prior month,
   closed without a resolution). Only already-aggregated figures are used, every group
   below the k-anonymity floor is combined, and no case or personal data is included.
-  Defaults to the last completed month (SAST) and to casey-digest-<month>.csv, with
+  Defaults to the last completed month (${TZ_LABEL}) and to casey-digest-<month>.csv, with
   the summary beside it as .txt. --out-dir <dir> writes both files into that directory
       (created if missing; the console lists <data dir>/digests) and cannot be combined
       with --out. Files are written atomically. --post sends the summary text to CASEY_ALERT_WEBHOOK,

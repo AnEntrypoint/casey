@@ -60,7 +60,7 @@ export function fmtTime(v) {
   if (!d) return '';
   const suffix = tzLabel() ? ' ' + tzLabel() : '';
   try {
-    return d.toLocaleString('en-ZA', {
+    return d.toLocaleString((state.config && state.config.locale) || 'en', {
       timeZone: tz(), year: 'numeric', month: 'short', day: 'numeric',
       hour: '2-digit', minute: '2-digit',
     }) + suffix;

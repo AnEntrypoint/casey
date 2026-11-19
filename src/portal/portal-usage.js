@@ -1,3 +1,4 @@
+import { UTC_OFFSET_HOURS } from '../locale.js'
 import { TABLE, ACTOR, isoOrNull, normaliseMac, validRouterId } from './portal-store.js'
 
 export const DAY_MS = 24 * 3600e3
@@ -138,7 +139,7 @@ export async function usageReport(store, { routerId = null, mac = null, since, u
   return { series: bucketSeries(deltas, bucket), devices: deviceTotals(deltas) }
 }
 
-export const SAST_OFFSET_MS = 2 * 3600e3
+export const SAST_OFFSET_MS = UTC_OFFSET_HOURS * 3600e3
 export const BYTES_PER_MB = 1024 * 1024
 
 export const capBytesFromMb = (mb) => mb * BYTES_PER_MB

@@ -26,7 +26,7 @@ button:disabled{opacity:.6}
 <p>{{login_intro}}</p>
 <form id="f" autocomplete="off">
 <label class="f" for="phone">WhatsApp number</label>
-<input id="phone" type="tel" inputmode="tel" placeholder="+27 82 123 4567" required>
+<input id="phone" type="tel" inputmode="tel" placeholder="{{phone_example}}" required>
 <p class="f"><a href="tc.html">Read the Terms and Conditions</a></p>
 <label class="tc"><input id="tc" type="checkbox"><span>{{login_checkbox}}</span></label>
 <button id="go" type="submit">Connect</button>
@@ -45,7 +45,7 @@ var LOGIN="$(link-login-only)";
 var f=document.getElementById("f"),phone=document.getElementById("phone"),tc=document.getElementById("tc"),msg=document.getElementById("msg"),go=document.getElementById("go");
 var KEY="{{phone_key}}",saved="";try{saved=localStorage.getItem(KEY)||""}catch(e){}
 if(saved)phone.value=saved;
-function norm(v){var s=v.replace(/[\s\-()]/g,"");if(/^0\d{9}$/.test(s))s="+27"+s.slice(1);return /^\+\d{8,15}$/.test(s)?s:null}
+function norm(v){var s=v.replace(/[\s\-()]/g,"");{{phone_normalise}}return /^\+\d{8,15}$/.test(s)?s:null}
 f.addEventListener("submit",function(e){
 e.preventDefault();
 msg.textContent="";

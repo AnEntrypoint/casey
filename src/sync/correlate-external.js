@@ -1,3 +1,4 @@
+import { COUNTRY_CODE, TRUNK_PREFIX } from '../locale.js';
 
 import { syncConfig } from './sync-config.js';
 
@@ -8,9 +9,12 @@ const DATE_PROXIMITY_WEIGHT = 0.05;
 const DATE_PROXIMITY_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 const MIN_CONFIDENCE_TO_PROPOSE = 0.35;
 
-function normPhone(p) {
+export function normPhone(p) {
   if (!p) return '';
-  return String(p).replace(/[^\d]/g, '').replace(/^0/, '27').replace(/^27?27/, '27');
+  let d = String(p).replace(/[^\d]/g, '');
+  if (COUNTRY_CODE && TRUNK_PREFIX) d = d.replace(new RegExp('^' + TRUNK_PREFIX), COUNTRY_CODE);
+  if (COUNTRY_CODE) d = d.replace(new RegExp('^' + COUNTRY_CODE.slice(0, -1) + COUNTRY_CODE.slice(-1) + '?' + COUNTRY_CODE), COUNTRY_CODE);
+  return d;
 }
 
 function normText(s) {

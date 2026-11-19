@@ -30,7 +30,7 @@ let timer = null;
 
 const weeksOf = (pts) => [...new Set(pts.map((p) => p.resolved_at))].sort();
 const addDays = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 86400e3).toISOString().slice(0, 10);
-const say = (iso) => { try { return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }); } catch { return iso; } };
+const say = (iso) => { try { return new Date(iso + 'T00:00:00Z').toLocaleDateString((state.config && state.config.locale) || 'en', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }); } catch { return iso; } };
 
 function diseaseRank(pts) {
   const n = new Map();

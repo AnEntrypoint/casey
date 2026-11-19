@@ -33,16 +33,15 @@ package (`pack.cjs`, `report-fields.yml`, `persona.cjs`).
   reporting entirely (this is a hard requirement, not a nice-to-have: a
   platform that refuses an honest report over a location refusal teaches
   people not to report).
-- **Data protection compliance.** For a South African deployment (casey's
-  shipped default, `CASEY_COUNTRY_CODE=27`), POPIA (Protection of Personal
-  Information Act) governs. casey's existing PII-free enquiry/aggregate
+- **Data protection compliance.** For a deployment in a jurisdiction with its own personal-information law (the deployment names it in its docs; casey's
+  shipped default country code is none), that law governs. casey's existing PII-free enquiry/aggregate
   projections (AGENTS.md: `enquiryRow` excludes `external_id`/`contact_id`
   on every list/enquiry surface; every management report/audit export is
   aggregate-only) already satisfy the core minimization principle POPIA
   requires -- a deployment's compliance review should confirm this holds
   for whatever NEW dashboard views this subsystem adds (data-quality
   monitoring, the drilldown endpoint), which must inherit the same PII-free
-  discipline. A deployment outside South Africa must confirm its own
+  discipline. A deployment must confirm its own
   jurisdiction's equivalent law and any cross-border data-transfer rules
   before aggregate data crosses a border (e.g. to a regional authority).
 - **Harm-protection incentive design.** This is upstream of any code this

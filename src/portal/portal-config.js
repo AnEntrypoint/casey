@@ -1,3 +1,5 @@
+import { LOCATION_NAME } from '../locale.js'
+import { EXAMPLE_INTERNATIONAL } from '../locale.js'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -30,7 +32,7 @@ const SCHEMA = Object.freeze({
   idle_heartbeat_interval_s: { type: 'int', min: 60, max: 86400, label: 'Idle heartbeat interval (seconds)', help: 'How often a router reports health while no client is connected. Equal to the heartbeat interval changes nothing.' },
   router_status_grace_s: { type: 'int', min: 0, max: 3600, serverOnly: true, label: 'Router status grace (seconds)', help: 'Allowance added to one heartbeat before a router reads Online; a router reads Quiet until twice that total, and Offline after it.' },
   idle_sync_interval_s: { type: 'int', min: 60, max: 86400, label: 'Idle sync interval (seconds)', help: 'How often a router on the fallback protocol fetches settings while no client is connected. Equal to the usage interval changes nothing.' },
-  daily_cap_mb: { type: 'int', min: 1, max: 1000, serverOnly: true, label: 'Daily data cap (MB)', help: 'Data one guest device may use per day, up and down together, in MB of 1,048,576 bytes. The day resets at midnight in Johannesburg, and the cap is enforced while the device is in use.' },
+  daily_cap_mb: { type: 'int', min: 1, max: 1000, serverOnly: true, label: 'Daily data cap (MB)', help: 'Data one guest device may use per day, up and down together, in MB of 1,048,576 bytes. The day resets at midnight in ' + LOCATION_NAME + ', and the cap is enforced while the device is in use.' },
   guest_ssid: { type: 'ssid', maxBytes: 32, label: 'Guest Wi-Fi name', help: 'The network name guests see, up to 32 bytes.' },
   walled_garden: { type: 'domains', maxItems: 100, label: 'Walled garden', help: 'Domains reachable before registration, one per line. Wildcards such as *.example.com are allowed.' },
   wa_asn: { type: 'asn', label: 'WhatsApp ASN', help: 'Autonomous system number that carries WhatsApp traffic, for example AS32934.' },
@@ -71,7 +73,7 @@ const ROUTER_KEYS = Object.freeze(SETTING_KEYS.filter(key => SCHEMA[key].type !=
 const describe = (spec) => {
   if (spec.type === 'int') return `a whole number from ${spec.min} to ${spec.max}`
   if (spec.type === 'bool') return 'true or false'
-  if (spec.type === 'e164') return 'a phone number in E.164 form, for example +27821234567'
+  if (spec.type === 'e164') return 'a phone number in E.164 form' + (EXAMPLE_INTERNATIONAL ? ', for example ' + EXAMPLE_INTERNATIONAL : '')
   if (spec.type === 'ssid') return `text of 1 to ${spec.maxBytes} bytes`
   if (spec.type === 'asn') return 'an AS number, for example AS32934'
   if (spec.type === 'domains') return `a list of 1 to ${spec.maxItems} domains`

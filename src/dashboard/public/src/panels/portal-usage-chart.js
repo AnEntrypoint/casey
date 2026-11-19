@@ -48,7 +48,7 @@ function axisTime(t, bucket) {
   const options = bucket === 'day'
     ? { timeZone: zone, day: 'numeric', month: 'short' }
     : { timeZone: zone, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' };
-  return new Date(t).toLocaleString('en-ZA', options);
+  return new Date(t).toLocaleString((state.config && state.config.locale) || 'en', options);
 }
 
 function LegendItem(swatchClass, text) {

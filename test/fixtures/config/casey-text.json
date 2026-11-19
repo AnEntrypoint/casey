@@ -1300,5 +1300,9 @@
   "src/dashboard/routes/auth.js#phone-hint": "[src/dashboard/routes/auth.js#phone-hint] {$0}",
   "src/dashboard/routes/auth.js#phone-js-error": "[src/dashboard/routes/auth.js#phone-js-error]",
   "src/dashboard/routes/portal.js#phone-sa": "[src/dashboard/routes/portal.js#phone-sa]",
-  "src/dashboard/routes/contacts.js#phone-example": "[src/dashboard/routes/contacts.js#phone-example]"
+  "src/dashboard/routes/contacts.js#phone-example": "[src/dashboard/routes/contacts.js#phone-example]",
+  "src/team-import.js#phone": "[src/team-import.js#phone]",
+  "bin/casey-roles-command.js#phone-example": "[bin/casey-roles-command.js#phone-example]",
+  "bin/casey-setup.js#tz-ok": "[bin/casey-setup.js#tz-ok] {$0}",
+  "bin/casey-setup.js#tz-warn": "[bin/casey-setup.js#tz-warn] {$0} {$1}"
 }

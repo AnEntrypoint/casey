@@ -32,7 +32,7 @@ export function roleWord(k) {
 
 function weekWord(iso) {
   const d = new Date(iso + 'T00:00:00Z');
-  return isNaN(d) ? iso : word('ui.feedback_panel_week_of', { date: d.toLocaleDateString('en-ZA', { timeZone: 'UTC', day: 'numeric', month: 'short' }) });
+  return isNaN(d) ? iso : word('ui.feedback_panel_week_of', { date: d.toLocaleDateString((state.config && state.config.locale) || 'en', { timeZone: 'UTC', day: 'numeric', month: 'short' }) });
 }
 
 export function FeedbackPanel() {

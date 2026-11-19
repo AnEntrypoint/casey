@@ -1,3 +1,4 @@
+import { TZ_LABEL } from '../../locale.js'
 import { tagList } from '../../timestamp.js'
 import { fmtTimeSAST } from '../../format.js'
 import { BRAND } from '../brand.js'
@@ -199,7 +200,7 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
     for (const e of rows) { const d = evData(e); held.push(d.claimed_by, d.was) }
     const named = await assigneeNamer(store, held, (v) => v)
     const lines = []
-    lines.push(['case_ref', 'timestamp_sast', 'actor', 'action', 'field', 'old_value', 'new_value', 'reason'].join(','))
+    lines.push(['case_ref', 'timestamp_' + ((TZ_LABEL || 'local').toLowerCase()), 'actor', 'action', 'field', 'old_value', 'new_value', 'reason'].join(','))
     for (const e of rows) {
       const d = evData(e)
       const ext = extById.get(e.case_id) || ''
