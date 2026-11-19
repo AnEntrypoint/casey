@@ -15,17 +15,24 @@ export function* walk(root, dir = root) {
   }
 }
 
+const BINARY_EXT = /\.(sqlite|woff2?|png|jpe?g|gif|ico|pdf)$/i
+
 export function countProjectTerms(root) {
   let total = 0
   const byFile = {}
+  const skippedBinary = []
   for (const file of walk(root)) {
-    const text = readFileSync(file, 'utf8')
-    if (text.includes('\u0000')) continue
-    const hits = text.match(PROJECT_TERMS)
+    const raw = readFileSync(file)
+    const rel = path.relative(root, file)
+    if (raw.includes(0) && BINARY_EXT.test(file)) {
+      skippedBinary.push(rel)
+      continue
+    }
+    const hits = raw.toString('utf8').match(PROJECT_TERMS)
     if (hits) {
-      byFile[path.relative(root, file)] = hits.length
+      byFile[rel] = hits.length
       total += hits.length
     }
   }
-  return { total, byFile }
+  return { total, byFile, skippedBinary: skippedBinary.sort() }
 }

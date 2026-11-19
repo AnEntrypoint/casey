@@ -1,4 +1,5 @@
 {
-  "total": 508,
-  "note": "recorded 2026-11-19 after area B-fields (was 810 after area 1); the ratchet only goes down. Areas C, D, E, F, G are not yet moved, so the remaining hits are their text and the uhh words in PROVENANCE, README and AGENTS (see uhh docs/casey-generic-inventory.md)"
+  "total": 215,
+  "skippedBinary": ["data/db.sqlite"],
+  "note": "recorded 2026-11-19 after areas B-fields to G: the prompt, tool and speech wording is in config/casey-text.json, the brand in config/brand.yml and config/public, the CLI help in config/cli-help.json, the router names in config/router-bundle.yml and the sync aliases in config/domain.yml and config/external-schema.cjs. The 215 hits left are code identifiers, vocabulary key names, client identifiers, stored stopword data and docs, each listed in the uhh inventory docs/casey-generic-inventory.md with its reason. The ratchet only goes down."
 }

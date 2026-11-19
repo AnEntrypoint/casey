@@ -14,6 +14,11 @@ test('project-term hits in casey do not rise above the recorded baseline (the ra
   assert.ok(total <= baseline.total, `project-term hits ${total} exceed the baseline ${baseline.total}`)
 })
 
+test('every file the ratchet cannot read as text is listed in the baseline, so no file is skipped silently', () => {
+  const { skippedBinary } = countProjectTerms(root)
+  assert.deepEqual(skippedBinary, baseline.skippedBinary)
+})
+
 test('casey test fixtures carry no project content: the generic config casey runs with has no uhh terms', () => {
   const { total } = countProjectTerms(path.join(here, 'fixtures'))
   assert.equal(total, 0)
