@@ -1,3 +1,4 @@
+import { CK } from '../report-keys.js';
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Select } from '/design/src/components/content/fields.js';
 import { FilterPills } from '/design/src/components/content/feedback.js';
@@ -107,8 +108,8 @@ function mapFilterRow() {
     const options = filterOptions();
     return h('div', { class: 'ds-btn-row ds-map-filters' },
         Select({
-            key: 'sp', placeholder: word('ui.map_rail_all_species'), value: f.species,
-            options: options.species, onChange: (v) => { setMapFilter({ species: v }); applyFilterToMap(); },
+            key: 'sp', placeholder: word('ui.map_rail_all_species'), value: f.kind,
+            options: options.kind, onChange: (v) => { setMapFilter({ kind: v }); applyFilterToMap(); },
         }),
         Select({
             key: 'ty', placeholder: word('ui.map_rail_all_types'), value: f.type,
@@ -143,9 +144,9 @@ function mapUnresolvedList() {
         },
             h('b', {}, p.ref),
             ' ', h('span', { class: 'ds-muted' }, String(p.status || '').replace(/_/g, ' ')),
-            p.species ? ' -- ' + p.species : '',
+            p[CK.kind] ? ' -- ' + p[CK.kind] : '',
             p.location ? ` (${p.location})` : '',
-            p.symptoms ? ' -- ' + p.symptoms : '')));
+            p[CK.signs] ? ' -- ' + p[CK.signs] : '')));
 }
 
 function mapUnresolvedDisclosure() {

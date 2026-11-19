@@ -1,3 +1,4 @@
+import { CK } from '../report-keys.js';
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
@@ -18,7 +19,7 @@ const loader = createPanelLoader({
 });
 
 function mixOf(p) {
-    return Object.entries(p.species || {}).sort((a, b) => b[1] - a[1]).slice(0, 3)
+    return Object.entries(p[CK.kind] || {}).sort((a, b) => b[1] - a[1]).slice(0, 3)
         .map(([s, n]) => word('ui.geo_panel_species_count', { species: s, count: n })).join(', ') || word('ui.geo_panel_none_recorded');
 }
 

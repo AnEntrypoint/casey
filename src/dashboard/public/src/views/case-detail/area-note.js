@@ -1,3 +1,4 @@
+import { CK, AREA_KEY } from '../../report-keys.js';
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Alert } from '/design/src/components/content/feedback.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
@@ -33,7 +34,7 @@ export function AreaNote({ c, area, onReload }) {
   const flag = area.possibly_wrong_area;
   const where = area.area
     ? word('ui.area_note_area', { name: area.area.name })
-    : (area.association ? word('ui.area_note_written', { association: area.association }) : null);
+    : (area[AREA_KEY] ? word('ui.area_note_written', { association: area[AREA_KEY] }) : null);
   const target = suggestedArea(flag);
   return h('div', { class: 'casey-area-note' },
     where ? h('p', { key: 'where', class: 'casey-hint' }, where) : null,

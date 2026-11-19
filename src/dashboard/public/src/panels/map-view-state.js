@@ -10,7 +10,7 @@ import { word } from '../words.js';
 
 export const mapStateRef = { current: null };
 
-let options = { species: [], types: [], statuses: [] };
+let options = { kind: [], types: [], statuses: [] };
 let summary = { unresolvedCount: 0, unresolved: [], truncated: false, cap: 0, totalConsidered: 0 };
 let error = null;
 let loadedOnce = false;

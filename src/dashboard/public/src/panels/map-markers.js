@@ -32,7 +32,7 @@ function mapMarkerIcon(statusTok, locationSource, urgency, selected) {
 
 function markerSignature(mapState, filters, urgency) {
     const f = filters || {};
-    return [f.species || '', f.type || '', f.status || '', f.band || '', mapState.showClusters ? 1 : 0]
+    return [f.kind || '', f.type || '', f.status || '', f.band || '', mapState.showClusters ? 1 : 0]
         .concat((mapState.pins || []).map((p) => `${p.id}:${p.status}:${p.lat}:${p.lon}:${p.location_source}:${p.location_confidence}:${urgency.get(p.id) || 0}`))
         .join('|');
 }

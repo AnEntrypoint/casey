@@ -1,3 +1,4 @@
+import { CK } from '../report-keys.js';
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Alert, Skeleton, FilterPills } from '/design/src/components/content/feedback.js';
@@ -24,7 +25,7 @@ const OTHER = '--fg-3';
 const PLAY_MS = 500;
 
 const HEAT_CACHE_MAX = 12;
-const rm = { mode: 'dots', disease: '', idx: null, playing: false, drv: null, heat: null, heatBusy: false, seen: null, advice: '', species: '', status: '', wantKey: '', heatCache: new Map(), paintKey: null, paintPts: null, paintEl: null };
+const rm = { mode: 'dots', disease: '', idx: null, playing: false, drv: null, heat: null, heatBusy: false, seen: null, advice: '', kind: '', status: '', wantKey: '', heatCache: new Map(), paintKey: null, paintPts: null, paintEl: null };
 let timer = null;
 
 const weeksOf = (pts) => [...new Set(pts.map((p) => p.resolved_at))].sort();
@@ -60,7 +61,7 @@ function rememberHeat(entry) {
 }
 
 function ensureHeat(untilIso) {
-  const key = [rm.mode, untilIso, rf.region, rf.period, rm.disease, rm.advice, rm.species, rm.status].join('|');
+  const key = [rm.mode, untilIso, rf.region, rf.period, rm.disease, rm.advice, rm.kind, rm.status].join('|');
   rm.wantKey = key;
   if (rm.heat && rm.heat.key === key) return;
   const cached = rm.heatCache.get(key);
@@ -68,9 +69,9 @@ function ensureHeat(untilIso) {
   if (rm.heatBusy) return;
   rm.heatBusy = true;
   const w = windowParams();
-  const p = { from: w.from, to: untilIso, region: rf.region, species: rm.species, status: rm.status };
+  const p = { from: w.from, to: untilIso, region: rf.region, [CK.kind]: rm.kind, status: rm.status };
   if (rm.mode === 'all') p.scope = 'all'; else { p.scope = 'resolved'; if (rm.disease) p.disease = rm.disease; if (rm.advice) p.advice = rm.advice; }
-  (rm.mode === 'areas' ? fetchAreas({ from: w.from, to: untilIso, region: rf.region, species: rm.species, status: rm.status }) : fetchHeat(p))
+  (rm.mode === 'areas' ? fetchAreas({ from: w.from, to: untilIso, region: rf.region, [CK.kind]: rm.kind, status: rm.status }) : fetchHeat(p))
     .then((data) => { rm.heat = { key, data, error: '' }; rememberHeat(rm.heat); })
     .catch(() => { rm.heat = { key, data: null, error: word('ui.resolved_map_panel_heat_failed') }; })
     .finally(() => { rm.heatBusy = false; schedule(); });
@@ -106,7 +107,7 @@ function tableAlternative(dots) {
   let headers, rows;
   if (rm.mode === 'dots') {
     const n = new Map();
-    for (const p of dots) n.set(p.disease + '\u0000' + p.species, (n.get(p.disease + '\u0000' + p.species) || 0) + 1);
+    for (const p of dots) n.set(p.disease + '\u0000' + p[CK.kind], (n.get(p.disease + '\u0000' + p[CK.kind]) || 0) + 1);
     headers = [word('ui.resolved_map_panel_h_disease'), word('ui.resolved_map_panel_h_animal'), word('ui.resolved_map_panel_h_cases_shown')];
     rows = [...n.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, c]) => [...k.split('\u0000'), String(c)]);
   } else if (rm.mode === 'areas' && heat) {
@@ -175,18 +176,18 @@ export function ResolvedMapPanel() {
   if (rm.idx == null || rm.idx > weeks.length - 1) rm.idx = Math.max(weeks.length - 1, 0);
   const until = weeks[rm.idx] || null;
   const untilEnd = until ? addDays(until, 6) : null;
-  const speciesKinds = [...new Set(all.map((p) => p.species))].sort();
-  if (rm.species && !speciesKinds.includes(rm.species)) rm.species = '';
+  const speciesKinds = [...new Set(all.map((p) => p[CK.kind]))].sort();
+  if (rm.kind && !speciesKinds.includes(rm.kind)) rm.kind = '';
   if (rm.status && !all.some((p) => p.status === rm.status)) rm.status = '';
   const statusKinds = [...new Set(all.map((p) => p.status))].sort();
   const adviceKinds = [...new Set(all.flatMap((p) => p.advice || []))].filter((k) => k !== 'Not stated').sort();
-  const pool = all.filter((p) => (!rm.disease || p.disease === rm.disease) && (!rm.species || p.species === rm.species) && (!rm.status || p.status === rm.status) && (!rm.advice || (p.advice || []).includes(rm.advice)));
+  const pool = all.filter((p) => (!rm.disease || p.disease === rm.disease) && (!rm.kind || p[CK.kind] === rm.kind) && (!rm.status || p.status === rm.status) && (!rm.advice || (p.advice || []).includes(rm.advice)));
   const dots = until ? pool.filter((p) => p.resolved_at <= until) : [];
   const ranked = diseaseRank(all);
   if (rm.mode !== 'dots' && untilEnd) ensureHeat(untilEnd);
 
   const canvas = h('div', { id: 'rm-canvas', key: 'rm-canvas', class: 'ds-map-canvas rep-map', role: 'region', 'aria-label': word('ui.resolved_map_panel_map_aria'), 'aria-describedby': 'rm-summary' });
-  const paintKey = [rm.mode, until, rm.disease, rm.species, rm.status, rm.advice, rf.region, rf.period, state.theme, liveHeat() ? rm.wantKey : ''].join('|');
+  const paintKey = [rm.mode, until, rm.disease, rm.kind, rm.status, rm.advice, rf.region, rf.period, state.theme, liveHeat() ? rm.wantKey : ''].join('|');
   const pts = rd.points;
   queueMicrotask(() => {
     const c = document.getElementById('rm-canvas');
@@ -222,7 +223,7 @@ export function ResolvedMapPanel() {
       ReportFilters(),
       rd.loading || (rm.mode !== 'dots' && rm.heatBusy) ? h('p', { class: 'casey-hint', 'aria-live': 'polite' }, word('ui.resolved_map_panel_updating')) : null,
       FilterPills({ label: word('ui.resolved_map_panel_what_shows'), options: MODES, selected: rm.mode, onSelect: (v) => { rm.mode = v; rm.heat = null; schedule(); } }),
-      rm.mode !== 'all' && speciesKinds.length > 1 ? FilterPills({ label: word('ui.resolved_map_panel_animal'), options: [{ id: '', label: word('ui.resolved_map_panel_every_animal') }, ...speciesKinds.map((k) => ({ id: k, label: k }))], selected: rm.species, onSelect: (v) => { rm.species = v; rm.heat = null; schedule(); } }) : null,
+      rm.mode !== 'all' && speciesKinds.length > 1 ? FilterPills({ label: word('ui.resolved_map_panel_animal'), options: [{ id: '', label: word('ui.resolved_map_panel_every_animal') }, ...speciesKinds.map((k) => ({ id: k, label: k }))], selected: rm.kind, onSelect: (v) => { rm.kind = v; rm.heat = null; schedule(); } }) : null,
       rm.mode !== 'all' && statusKinds.length > 1 ? FilterPills({ label: word('ui.resolved_map_panel_diagnosis'), options: [{ id: '', label: word('ui.resolved_map_panel_confirmed_and_suspected') }, ...statusKinds.map((k) => ({ id: k, label: k === 'suspected' ? word('ui.resolved_map_panel_suspected_only') : word('ui.resolved_map_panel_confirmed_only') }))], selected: rm.status, onSelect: (v) => { rm.status = v; rm.heat = null; schedule(); } }) : null,
       rm.mode === 'heat' || rm.mode === 'dots' ? FilterPills({ label: word('ui.resolved_map_panel_disease'), options: [{ id: '', label: word('ui.resolved_map_panel_every_disease') }, ...ranked.slice(0, 8).map((d) => ({ id: d, label: d }))], selected: rm.disease, onSelect: (v) => { rm.disease = v; rm.heat = null; schedule(); } }) : null,
       (rm.mode === 'dots' || rm.mode === 'heat') && adviceKinds.length ? FilterPills({ label: word('ui.resolved_map_panel_advice'), options: [{ id: '', label: word('ui.resolved_map_panel_any_advice') }, ...adviceKinds.map((k) => ({ id: k, label: k }))], selected: rm.advice, onSelect: (v) => { rm.advice = v; rm.heat = null; schedule(); } }) : null,

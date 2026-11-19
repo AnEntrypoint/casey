@@ -3,6 +3,7 @@
 import { caseSignature, correlationScoreFromSignatures, SUGGEST_THRESHOLD, tokens, nameTokens } from './correlate.js'
 
 import { parseReportTolerant as parseReport } from './timestamp.js'
+import { REPORT_CONCEPT as K } from './report-concepts.js'
 
 function makeUF(n) {
   const parent = Array.from({ length: n }, (_, i) => i)
@@ -47,9 +48,9 @@ export function buildClusters(cases, threshold = SUGGEST_THRESHOLD) {
       count: members.length,
       members: members.map(c => ({ id: c.id, ref: c.ref, status: c.status, subject: c.subject || '', case_type: c.case_type || 'unset' })),
       location: dominantTokens(members, 'location'),
-      species: dominantTokens(members, 'species', 3, nameTokens),
-      symptoms: dominantTokens(members, 'symptoms', 3, nameTokens),
-      reported_disease_names: dominantTokens(members, 'suspected_disease', 3, nameTokens),
+      [K.kind]: dominantTokens(members, K.kind, 3, nameTokens),
+      [K.signs]: dominantTokens(members, K.signs, 3, nameTokens),
+      reported_disease_names: dominantTokens(members, K.suspected_condition, 3, nameTokens),
       span: { from: created.length ? Math.min(...created) : null, to: created.length ? Math.max(...created) : null },
     }
     clusters.push(cluster)

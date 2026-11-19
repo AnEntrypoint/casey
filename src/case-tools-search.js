@@ -11,8 +11,9 @@ import { OPTED_OUT_TAG, CASE_REF_RE } from './hooks/heuristics.js'
 import { reportersForCases, firstName } from './phone-persons.js'
 import { atLeast, TIER } from './contact-tiers.js'
 import {
-  MANDATORY_MINIMUM_FIELDS, CRITICAL_FIELDS, REPORT_KEYS, AREA_FIELD, missingMandatoryMinimum, fieldLabel,
+  MANDATORY_MINIMUM_FIELDS, CRITICAL_FIELDS, REPORT_KEYS, AREA_FIELD, SIGNOFF_DIAGNOSIS_FIELDS, missingMandatoryMinimum, fieldLabel,
 } from './store/report-shape.js'
+import { REPORT_CONCEPT as K } from './report-concepts.js'
 
 const SCAN_LIMIT = 10000
 const DEFAULT_LIMIT = 8
@@ -26,7 +27,7 @@ const FLAGS = ['sent_back', 'handed_off', 'complete', 'incomplete', 'needs_reply
 const HOLD_STATES = ['open', 'claimed', 'closed', 'unassigned', 'any']
 const DATE_BY = ['activity', 'created']
 const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 }
-const DISEASE_KEY = 'identified_disease'
+const DISEASE_KEY = SIGNOFF_DIAGNOSIS_FIELDS[0]
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 const fold = (s) => String(s ?? '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
@@ -115,7 +116,7 @@ async function awaitingAnswer(store, caseRow) {
 }
 
 function whatOf(report) {
-  const species = has(report.species) ? String(report.species).trim() : ''
+  const species = has(report[K.kind]) ? String(report[K.kind]).trim() : ''
   const place = has(report.location) ? `in ${String(report.location).trim()}` : ''
   const what = scrubNumbers([species, place].filter(Boolean).join(' ')).slice(0, 90)
   return what || 'no details yet'
@@ -213,7 +214,7 @@ export async function searchCases(store, ctx, args = {}, { now = Date.now() } = 
     areaIds = new Set(areasOfRanger(areas, [...keys]).map(a => a.id))
     if (!areaIds.size) notes.push('No area is set for this person, so scope area covers only the reports assigned to them.')
   }
-  const inArea = (report) => !!areaIds && areaIds.size > 0 && areaIds.has(resolveArea(areas, { association: statedArea(report), location: report.location })?.area?.id)
+  const inArea = (report) => !!areaIds && areaIds.size > 0 && areaIds.has(resolveArea(areas, { stated: statedArea(report), location: report.location })?.area?.id)
 
   const rows = pool.map(c => {
     const report = parseReport(c)
@@ -259,7 +260,7 @@ export async function searchCases(store, ctx, args = {}, { now = Date.now() } = 
     no_photo: (r) => !has(r.report.photos),
     opted_out: (r) => r.optedOut,
   }
-  const haystack = (r) => fold([r.c.ref, r.report.species, r.report.symptoms, r.report.location,
+  const haystack = (r) => fold([r.c.ref, r.report[K.kind], r.report[K.signs], r.report.location,
     AREA_FIELD ? r.report[AREA_FIELD] : '', r.report[DISEASE_KEY], r.c.subject, named.get(r.c.id)].filter(has).join(' '))
   const dateMs = (r) => (f.dateBy === 'created' ? r.createdMs : r.lastMs)
 
@@ -268,7 +269,7 @@ export async function searchCases(store, ctx, args = {}, { now = Date.now() } = 
   let matched = visible.filter(r => {
     if (!stateOk(r)) return false
     for (const fl of f.flags) if (flagOk[fl] && !flagOk[fl](r)) return false
-    if (f.species && !fold(r.report.species).includes(f.species)) return false
+    if (f.species && !fold(r.report[K.kind]).includes(f.species)) return false
     if (f.disease && !fold(r.report[DISEASE_KEY]).includes(f.disease)) return false
     if (f.missing && has(r.report[f.missing])) return false
     if (f.since != null && dateMs(r) < f.since) return false
@@ -342,13 +343,13 @@ export async function searchCases(store, ctx, args = {}, { now = Date.now() } = 
     for (const r of matched) {
       const h = r.isDone ? 'Closed' : (r.held ? 'Claimed' : 'Open')
       byHold[h] = (byHold[h] || 0) + 1
-      const sp = fold(r.report.species) || 'not recorded'
+      const sp = fold(r.report[K.kind]) || 'not recorded'
       bySpecies[sp] = (bySpecies[sp] || 0) + 1
     }
     const ranked = Object.entries(bySpecies).sort((a, b) => b[1] - a[1])
     const top = Object.fromEntries(ranked.slice(0, SPECIES_SHOWN))
     const rest = ranked.slice(SPECIES_SHOWN).reduce((n, [, c]) => n + c, 0)
-    out.summary = { by_hold_state: byHold, by_species: rest ? { ...top, other: rest } : top }
+    out.summary = { by_hold_state: byHold, [`by_${K.kind}`]: rest ? { ...top, other: rest } : top }
   }
   if (hiddenOptedOut) out.hidden_opted_out = hiddenOptedOut
   if (f.near && noCoordinates) notes.push(`${noCoordinates} otherwise-matching reports have no recorded coordinates and are left out of a distance search.`)

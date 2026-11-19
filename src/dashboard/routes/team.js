@@ -151,7 +151,7 @@ export function getTeamMetrics({ store, authed, UNCLAIMED_ASSIGNEE, listAccounts
     const groupOf = (c) => {
       const report = parseReport(c)
       const stated = statedArea(report)
-      const hit = resolveArea(areas, { association: stated, location: report.location })
+      const hit = resolveArea(areas, { stated: stated, location: report.location })
       return hit ? hit.area.name : (stated || 'unknown')
     }
     const out = buildTeamMetrics({ cases, eventsByCase, people, groupOf, now, stuckHours, sinceMs: sinceDays > 0 ? now - sinceDays * 24 * HOUR : 0, unclaimed: UNCLAIMED_ASSIGNEE })

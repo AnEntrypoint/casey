@@ -1,3 +1,4 @@
+import { CK, AREA_KEY } from '../report-keys.js';
 import { fetchTeamMembers } from '../api-team.js';
 import { word } from '../words.js';
 
@@ -28,7 +29,7 @@ export function wrongAreaSentences(w, report) {
   if (!w) return [];
   const place = placeOf(report);
   const placeText = place ? ' (' + place + ')' : '';
-  const stated = report && report.association != null ? String(report.association).trim() : '';
+  const stated = report && report[AREA_KEY] != null ? String(report[AREA_KEY]).trim() : '';
   const out = [];
   for (const reason of w.reasons || []) {
     if (reason === 'location_elsewhere' && w.location_area) {
@@ -38,10 +39,10 @@ export function wrongAreaSentences(w, report) {
         area: w.location_area.name,
         covers: covers || word('ui.area_common_different_area'),
       }));
-    } else if (reason === 'association_disagrees' && w.location_area && w.association_area) {
-      const written = stated && stated !== w.association_area.name ? word('ui.area_common_written_as', { stated }) : '';
+    } else if (reason === 'stated_disagrees' && w.location_area && w.stated_area) {
+      const written = stated && stated !== w.stated_area.name ? word('ui.area_common_written_as', { stated }) : '';
       out.push(word('ui.area_common_association_disagrees', {
-        association: w.association_area.name,
+        association: w.stated_area.name,
         written,
         place: placeText,
         area: w.location_area.name,

@@ -1,3 +1,4 @@
+import { AREA_FIELD } from './store/report-shape.js'
 
 
 import { AGENT_USER } from './case-store.js'
@@ -148,7 +149,7 @@ async function mergeIncomingReport(store, id, incoming) {
 }
 
 async function assignByArea(store, id, incoming) {
-  if (!('location' in incoming) && !('association' in incoming)) return
+  if (!('location' in incoming) && !(AREA_FIELD in incoming)) return
   try { const { autoAssignByArea } = await import('./areas.js'); await autoAssignByArea(store(), id) } catch (e) { store().log?.warn?.('[casey] area auto-assign failed', { caseId: id, error: e.message }) }
 }
 

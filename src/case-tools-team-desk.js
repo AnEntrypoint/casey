@@ -82,7 +82,7 @@ export function buildTeamDeskTools(store) {
           assignee = assigneeKeyFor(r.contact)
         }
         const by = staffLabel(ctx.contact)
-        const out = await relocateCase(store(), c.id, { area, association, assignee, reassign: !keep_holder, reason, by, user: { id: by, role: 'operator' } })
+        const out = await relocateCase(store(), c.id, { area, stated: association, assignee, reassign: !keep_holder, reason, by, user: { id: by, role: 'operator' } })
         return out.ok ? { ok: true, ref: c.ref, from_area: out.from_area, to_area: out.to_area, area_is_mapped: out.mapped, reassigned: out.reassigned, now_with: out.assigned_to?.name || null } : { ok: false, error: out.error }
       }),
   ]

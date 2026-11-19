@@ -1,3 +1,4 @@
+import { REPORT_CONCEPT as K } from './report-concepts.js'
 
 
 import { CASE_REF_RE } from './hooks/heuristics.js'
@@ -15,7 +16,7 @@ export const refsIn = (text) => [...new Set((String(text || '').match(CASE_REF_R
 
 export function identifyingLine(c) {
   const r = parseReport(c)
-  const what = String(r.species || '').trim() || 'animals'
+  const what = String(r[K.kind] || '').trim() || 'animals'
   const where = String(r.location || '').trim() || 'place not recorded'
   return `${what.slice(0, 60)} at ${where.slice(0, 80)}`
 }

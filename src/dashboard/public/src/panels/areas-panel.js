@@ -1,3 +1,4 @@
+import { CK } from '../report-keys.js';
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Row } from '/design/src/components/content/row.js';
@@ -164,7 +165,7 @@ function Unmapped() {
     if (g.kind === 'none' || !g.value) {
       return h('div', { key: 'none-' + i, class: 'ds-area-item' }, Row({ title: word('ui.areas_panel_no_place_title'), sub: word('ui.areas_panel_no_place_sub', { what }) }));
     }
-    const label = g.kind === 'association' ? word('ui.areas_panel_label_association') : word('ui.areas_panel_label_place');
+    const label = g.kind === 'stated' ? word('ui.areas_panel_label_association') : word('ui.areas_panel_label_place');
     const pick = ui.pick[g.value] || '';
     return h('div', { key: 'g-' + g.value, class: 'ds-area-item' },
       Row({ title: g.value, sub: word('ui.areas_panel_row_sub', { label, what }) }),
@@ -234,7 +235,7 @@ function WrongArea() {
       const sug = suggestedArea(r.flag);
       const chosenId = ui.wrongPick[r.id] || (sug && areas.some((a) => a.id === sug.id) ? sug.id : '');
       const chosen = areas.find((a) => a.id === chosenId);
-      const what = [r.report.species, r.report.location ? word('ui.areas_panel_at_place', { place: r.report.location }) : ''].filter(Boolean).join(' ');
+      const what = [r.report[CK.kind], r.report.location ? word('ui.areas_panel_at_place', { place: r.report.location }) : ''].filter(Boolean).join(' ');
       return h('div', { key: r.id, class: 'ds-area-item' },
         Row({ title: what || r.ref, sub: word('ui.areas_panel_wrong_sub', {
           ref: r.ref,

@@ -1,3 +1,4 @@
+import { REPORT_CONCEPT as K } from '../../report-concepts.js'
 import { assigneeNamer } from '../assignee-names.js'
 import { createHash } from 'node:crypto'
 import { classifyWorkerCheckins, WORKER_CHECKIN_WINDOW_MS } from '../../case-health.js'
@@ -14,8 +15,8 @@ const MAP_CASE_CAP = 2000
 export function mapCaseProjection(c, report, clusterIndex, name = (v) => v) {
   return {
     id: c.id, ref: c.ref, status: c.status, case_type: c.case_type || 'unset',
-    species: report.species || null, location: report.location || null,
-    symptoms: report.symptoms || null,
+    [K.kind]: report[K.kind] || null, location: report.location || null,
+    [K.signs]: report[K.signs] || null,
     affected_count: report.affected_count ?? null, dead_count: report.dead_count ?? null,
     onset: report.onset || null,
     assignee: c.assignee ? name(c.assignee) : null, priority: c.priority,
@@ -103,7 +104,7 @@ export function getMapCases({ store, authed, isOpenCase, UNCLAIMED_ASSIGNEE }) {
       pins, unresolved, unresolved_count: unresolved.length,
       clusters: clusters.map((cl, i) => ({
         index: i, count: cl.count, location: cl.location,
-        species: cl.species, symptoms: cl.symptoms, reported_disease_names: cl.reported_disease_names,
+        [K.kind]: cl[K.kind], [K.signs]: cl[K.signs], reported_disease_names: cl.reported_disease_names,
       })),
       truncated, cap: MAP_CASE_CAP, total_considered: all.length,
     }

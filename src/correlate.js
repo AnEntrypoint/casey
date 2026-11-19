@@ -1,6 +1,7 @@
 
 
 import { parseReportTolerant as parseReport } from './timestamp.js'
+import { REPORT_CONCEPT as K } from './report-concepts.js'
 
 const STOP = new Set(['the', 'a', 'an', 'of', 'at', 'in', 'on', 'near', 'by', 'and',
   'farm', 'plaas', 'area', 'district', 'town', 'next', 'to', 'road', 'r', 'n'])
@@ -48,9 +49,9 @@ export function caseSignature(c) {
     nums: [normPhone(c?.external_id), normPhone(r.contact_fallback)].filter(Boolean),
     loc: tokens(r.location),
     find: tokens(r.how_to_find),
-    species: tokens(r.species),
+    [K.kind]: tokens(r[K.kind]),
 
-    sym: new Set([...tokens(r.symptoms), ...tokens(r.suspected_disease)]),
+    sym: new Set([...tokens(r[K.signs]), ...tokens(r[K.suspected_condition])]),
   }
 }
 
@@ -72,7 +73,7 @@ export function correlationScoreFromSignatures(a, b) {
   const findOv = tokenOverlap(a.find, b.find)
   if (findOv > 0) { content += 0.2 * findOv; reasons.push('shared directions to the place') }
 
-  const spOv = tokenOverlap(a.species, b.species)
+  const spOv = tokenOverlap(a[K.kind], b[K.kind])
   if (spOv > 0) { content += 0.2 * spOv; reasons.push('same species') }
 
   const symOv = tokenOverlap(a.sym, b.sym)

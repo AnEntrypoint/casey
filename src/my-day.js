@@ -44,7 +44,7 @@ export async function myDay(store, { keys = [], contact = null, tier = '', name 
 
   const all = (await store.listCases({}, { limit: 10000, offset: 0 })).filter(c => c.channel !== 'system')
   const heldByMe = (c) => myKeys.includes(String(c.assignee || '').trim())
-  const areaOf = (c) => { const r = parseReport(c); return resolveArea(areas, { association: statedArea(r), location: r.location })?.area || null }
+  const areaOf = (c) => { const r = parseReport(c); return resolveArea(areas, { stated: statedArea(r), location: r.location })?.area || null }
   const cached = new Map()
   const inMyArea = (c) => { if (!cached.has(c.id)) cached.set(c.id, mineAreaIds.size ? mineAreaIds.has(areaOf(c)?.id) : false); return cached.get(c.id) }
   const scope = all.filter(c => heldByMe(c) || inMyArea(c))

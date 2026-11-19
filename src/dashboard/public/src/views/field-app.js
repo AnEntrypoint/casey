@@ -1,3 +1,4 @@
+import { CK, AREA_KEY } from '../report-keys.js';
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { AppShell, Topbar, Side, Crumb, Status, Icon, Btn } from '/design/src/components/shell.js';
 import { Skeleton, Alert, Panel, Row as KitRow, SearchInput } from '/design/src/components/content.js';
@@ -173,7 +174,7 @@ function handedNote(c) {
 function Row(c, { showMissing = true } = {}) {
   const r = parseReport(c.report);
   const missing = missingOf(c);
-  const what = [has(r, 'species') ? String(r.species) : '', has(r, 'location') ? word('ui.field_app_in_location', { location: String(r.location) }) : ''].filter(Boolean).join(' ');
+  const what = [has(r, CK.kind) ? String(r[CK.kind]) : '', has(r, 'location') ? word('ui.field_app_in_location', { location: String(r.location) }) : ''].filter(Boolean).join(' ');
   const sentBack = tagsOf(c).includes('sent-back');
   const need = showMissing && mandatory().length ? (missing.length ? word('ui.field_app_still_needed', { list: missing.map((f) => f.label).join(word('ui.field_app_sep_comma')) }) : word('ui.field_app_all_recorded')) : '';
   return KitRow({

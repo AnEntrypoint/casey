@@ -1,3 +1,4 @@
+import { AREA_FIELD } from './store/report-shape.js'
 
 
 import fs from 'node:fs'
@@ -6,7 +7,7 @@ import { load as yamlLoad } from 'js-yaml'
 import { parseReport } from './timestamp.js'
 import { CRITICAL_FIELDS, FIELD_LABELS, REPORT_FIELD_DEFS, missingMandatoryMinimum, fieldLabel } from './store/report-shape.js'
 
-const SKIP = new Set(['photos', 'audio', 'language_detected', 'association', 'lat', 'lon', 'sites', 'reported_by', 'owner_contact', 'notes'])
+const SKIP = new Set(['photos', 'audio', 'language_detected', AREA_FIELD, 'lat', 'lon', 'sites', 'reported_by', 'owner_contact', 'notes'])
 const MAX_FACTS = 8
 const MAX_NEEDED = 5
 const MAX_VALUE = 90

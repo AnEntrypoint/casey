@@ -1,3 +1,4 @@
+import { REPORT_CONCEPT as K } from './report-concepts.js'
 
 
 import { evData } from './safe.js'
@@ -53,7 +54,7 @@ export async function returnState(store, caseRow, contact, { events = null } = {
     const r = parseReport(caseRow) || {}
     const sp = await speakerState(store, contact.id).catch(() => null)
     const person = r.reported_by || sp?.current?.name || sp?.previous?.name || sp?.people?.[0]?.name || null
-    return { owed: true, species: r.species || '', location: r.location || '', person }
+    return { owed: true, [K.kind]: r[K.kind] || '', location: r.location || '', person }
   } catch { return none }
 }
 

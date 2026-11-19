@@ -1,3 +1,4 @@
+import { CK } from '../report-keys.js';
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Alert } from '/design/src/components/content/feedback.js';
@@ -20,8 +21,8 @@ const loader = createPanelLoader({
 
 function clusterRow(c, i) {
     const loc = (c.location || []).join(', ');
-    const sp = (c.species || []).join(', ');
-    const sym = (c.symptoms || []).join(', ');
+    const sp = (c[CK.kind] || []).join(', ');
+    const sym = (c[CK.signs] || []).join(', ');
     const reported = (c.reported_disease_names || []).join(', ');
     return h('div', { key: i, class: 'ds-cluster-row' },
         h('div', { class: 'ds-cluster-head' },

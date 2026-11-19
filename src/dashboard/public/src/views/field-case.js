@@ -1,3 +1,4 @@
+import { CK, AREA_KEY } from '../report-keys.js';
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Icon } from '/design/src/components/shell.js';
 import { TextField, Section, Alert, Skeleton, Panel, Row, DetailRow } from '/design/src/components/content.js';
@@ -57,7 +58,7 @@ async function failed(e, fallback) {
 
 function identity(c) {
   const r = parseReport(c.report);
-  const bits = [has(r, 'species') ? String(r.species) : '', has(r, 'location') ? word('ui.field_case_in_location', { location: String(r.location) }) : ''].filter(Boolean).join(' ');
+  const bits = [has(r, CK.kind) ? String(r[CK.kind]) : '', has(r, 'location') ? word('ui.field_case_in_location', { location: String(r.location) }) : ''].filter(Boolean).join(' ');
   return bits ? word('ui.field_case_identity', { ref: c.ref, bits }) : c.ref;
 }
 
@@ -76,7 +77,7 @@ const safeWa = (u) => (typeof u === 'string' && u.startsWith('https://wa.me/') ?
 
 function Header(c, data, write) {
   const r = parseReport(c.report);
-  const where = [has(r, 'species') ? String(r.species) : '', has(r, 'location') ? String(r.location) : ''].filter(Boolean);
+  const where = [has(r, CK.kind) ? String(r[CK.kind]) : '', has(r, 'location') ? String(r.location) : ''].filter(Boolean);
   const holderText = holderName(c.assignee) || assigneeName(c.assignee);
   const hold = doneStages().has(c.status) ? word('ui.field_case_hold_closed')
     : (write ? word('ui.field_case_hold_mine') : (holderText ? word('ui.field_case_hold_claimed', { name: holderText }) : word('ui.field_case_hold_open')));

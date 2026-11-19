@@ -5,14 +5,15 @@ import { tokens, nameTokens } from './correlate.js'
 import { parseReportTolerant as parseReport } from './timestamp.js'
 
 import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY as SPARSE_PLACE_KEY, UNSUPPRESSED_BUCKET_KEYS } from './privacy.js'
+import { REPORT_CONCEPT as K } from './report-concepts.js'
 
 export function buildGeo(cases) {
   const places = new Map()
   const bump = (place, c, rep) => {
     let g = places.get(place)
-    if (!g) { g = { place, count: 0, species: {}, latest: null }; places.set(place, g) }
+    if (!g) { g = { place, count: 0, [K.kind]: {}, latest: null }; places.set(place, g) }
     g.count++
-    for (const sp of nameTokens(rep.species)) g.species[sp] = (g.species[sp] || 0) + 1
+    for (const sp of nameTokens(rep[K.kind])) g[K.kind][sp] = (g[K.kind][sp] || 0) + 1
     const t = Number(c.created_at)
     if (Number.isFinite(t) && (g.latest == null || t > g.latest)) g.latest = t
   }
@@ -27,9 +28,9 @@ export function buildGeo(cases) {
   let sparse = null
   for (const g of places.values()) {
     if (!UNSUPPRESSED_BUCKET_KEYS.has(g.place) && g.count < MIN_AGGREGATE_CELL) {
-      if (!sparse) sparse = { place: SPARSE_PLACE_KEY, count: 0, species: {}, latest: null }
+      if (!sparse) sparse = { place: SPARSE_PLACE_KEY, count: 0, [K.kind]: {}, latest: null }
       sparse.count += g.count
-      for (const [sp, n] of Object.entries(g.species)) sparse.species[sp] = (sparse.species[sp] || 0) + n
+      for (const [sp, n] of Object.entries(g[K.kind])) sparse[K.kind][sp] = (sparse[K.kind][sp] || 0) + n
       if (g.latest != null && (sparse.latest == null || g.latest > sparse.latest)) sparse.latest = g.latest
       continue
     }

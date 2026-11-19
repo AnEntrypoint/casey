@@ -1,3 +1,4 @@
+import { CK } from './report-keys.js';
 import { state } from './state.js';
 import { word } from './words.js';
 
@@ -31,8 +32,8 @@ export function urgencyByCaseId() {
 
 export function pinMatches(pin, filter, urgency, extent) {
   const f = filter || state.mapFilter;
-  const sp = f.species || '', ty = f.type || '', st = f.status || '';
-  if (sp && !String(pin.species || '').toLowerCase().includes(sp.toLowerCase())) return false;
+  const sp = f.kind || '', ty = f.type || '', st = f.status || '';
+  if (sp && !String(pin[CK.kind] || '').toLowerCase().includes(sp.toLowerCase())) return false;
   if (ty && pin.case_type !== ty) return false;
   if (st && pin.status !== st) return false;
   if (f.band === 'attention' && !(urgency && urgency.get(pin.id))) return false;
@@ -66,12 +67,12 @@ export function isToday(ts) {
 
 export function filterIsActive(f) {
   const x = f || state.mapFilter;
-  return !!(x.species || x.type || x.status || x.band || x.inView);
+  return !!(x[CK.kind] || x.type || x.status || x.band || x.inView);
 }
 
 export function filterOptionsFrom(pins) {
   return {
-    species: [...new Set(pins.map((p) => p.species).filter(Boolean))].sort(),
+    kind: [...new Set(pins.map((p) => p[CK.kind]).filter(Boolean))].sort(),
     types: [...new Set(pins.map((p) => p.case_type).filter((t) => t && t !== 'unset'))].sort(),
     statuses: [...new Set(pins.map((p) => p.status))].sort(),
   };

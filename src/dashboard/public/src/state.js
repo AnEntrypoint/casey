@@ -3,7 +3,7 @@ function readHomeView() {
 }
 
 export function defaultMapFilter() {
-  return { species: '', type: '', status: '', days: '0', band: null, inView: false };
+  return { kind: '', type: '', status: '', days: '0', band: null, inView: false };
 }
 
 export const state = {
@@ -67,7 +67,7 @@ export function setActiveId(id) {
 }
 export function setMapFilter(partial) { Object.assign(state.mapFilter, partial); schedule(); }
 export function clearMapFilter() {
-  Object.assign(state.mapFilter, { species: '', type: '', status: '', band: null, inView: false });
+  Object.assign(state.mapFilter, { kind: '', type: '', status: '', band: null, inView: false });
   schedule();
 }
 export function setMapExtent(bounds) {

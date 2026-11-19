@@ -28,7 +28,7 @@ async function mayNavigate(store, ctx, c) {
   const mine = areasOfRanger(areas, await keysForContact(store, ctx?.contact))
   if (!mine.length) return false
   const r = parseReport(c)
-  const hit = resolveArea(areas, { association: statedArea(r), location: r.location })?.area
+  const hit = resolveArea(areas, { stated: statedArea(r), location: r.location })?.area
   return !!hit && mine.some(a => a.id === hit.id)
 }
 

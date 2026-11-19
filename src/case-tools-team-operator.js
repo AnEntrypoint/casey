@@ -69,7 +69,7 @@ export function buildTeamOperatorTools(store) {
         }
         const reasons = new Map(ranked.items.map(x => [x.c.id, x.reason]))
 
-        for (const [id, w] of wrongArea) reasons.set(id, `${reasons.has(id) ? reasons.get(id) + '; ' : ''}may belong in ${w.location_area?.name || w.association_area?.name || 'another area'}`)
+        for (const [id, w] of wrongArea) reasons.set(id, `${reasons.has(id) ? reasons.get(id) + '; ' : ''}may belong in ${w.location_area?.name || w.stated_area?.name || 'another area'}`)
         const n = Math.min(Math.max(Number(limit) || 5, 1), 25)
         const pick = section && SECTIONS.includes(section) ? [section] : SECTIONS
         const counts = Object.fromEntries(SECTIONS.map(s => [s, by[s].length]))

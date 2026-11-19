@@ -14,6 +14,7 @@ import {
   relocateCase, resolveArea, statedArea, wrongAreaCases,
 } from '../../areas.js'
 import { assigneeNamer } from '../assignee-names.js'
+import { AREA_FIELD } from '../../store/report-shape.js'
 
 const staffOnly = (req, res) => {
   if (isStaffAccount(req.caseyAccount)) return true
@@ -43,7 +44,7 @@ export function getAreas({ store, authed }) {
     const counts = new Map()
     for (const c of open) {
       const r = parseReport(c)
-      const hit = resolveArea(areas, { association: statedArea(r), location: r.location })
+      const hit = resolveArea(areas, { stated: statedArea(r), location: r.location })
       if (hit) counts.set(hit.area.id, (counts.get(hit.area.id) || 0) + 1)
     }
     const name = await namerFor(store, [...keysOfAreas(areas), ...areas.map(a => a.updated_by)])
@@ -113,7 +114,7 @@ export function postRelocate({ store, authed, actingOperator }) {
     const b = req.body || {}
     const op = actingOperator(req)
     const out = await relocateCase(store, c.id, {
-      area: typeof b.area === 'string' ? b.area : '', association: typeof b.association === 'string' ? b.association : '',
+      area: typeof b.area === 'string' ? b.area : '', stated: typeof b[AREA_FIELD] === 'string' ? b[AREA_FIELD] : '',
       assignee: typeof b.assignee === 'string' ? b.assignee : '', reassign: b.reassign !== false,
       reason: typeof b.reason === 'string' ? b.reason : '', by: op.name || op.id, user: op,
     })

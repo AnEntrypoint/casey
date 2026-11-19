@@ -10,6 +10,7 @@ import { assigneeKeyFor, isContactAssignee, contactIdOfAssignee, isOwnConversati
 import { staffLabel, releaseCase } from './hooks/staff-outbound.js'
 import { clearFocusForCase } from './team-focus.js'
 import { AREA_FIELD } from './store/report-shape.js'
+import { REPORT_CONCEPT as K } from './report-concepts.js'
 import { FIELD_ROLES } from './domain-roles.js'
 import { haversineKm } from './case-tools-shared.js'
 
@@ -50,10 +51,10 @@ function indexAreas(areas) {
   return idx
 }
 
-export function resolveArea(areas, { association = '', location = '' } = {}) {
+export function resolveArea(areas, { stated = '', location = '' } = {}) {
   const idx = indexAreas(areas)
-  const a = norm(association)
-  if (a && idx.has(a)) return { area: idx.get(a), matched_by: 'association', matched: a }
+  const a = norm(stated)
+  if (a && idx.has(a)) return { area: idx.get(a), matched_by: 'stated', matched: a }
 
   if (a) return null
   for (const piece of locationPieces(location)) {
@@ -63,7 +64,7 @@ export function resolveArea(areas, { association = '', location = '' } = {}) {
 }
 
 export function resolveAreaFromLocation(areas, location) {
-  return resolveArea(areas, { association: '', location })
+  return resolveArea(areas, { stated: '', location })
 }
 
 export async function generalAreaFor(store, stated) {
@@ -264,7 +265,7 @@ export async function autoAssignByArea(store, caseId, { user = SYSTEM_ACTOR, nea
     const areas = await loadAreas(store)
     if (!areas.length) return { assigned: false, why: 'no areas mapped' }
     const report = parseReport(c)
-    const named = resolveArea(areas, { association: statedArea(report), location: report.location })
+    const named = resolveArea(areas, { stated: statedArea(report), location: report.location })
       || resolveAreaFromLocation(areas, report.location)
     const candidates = []
     if (named) candidates.push({ area: named.area, matched_by: named.matched_by, km: null })
@@ -302,7 +303,7 @@ export async function applyAreasToUnassigned(store, { user = SYSTEM_ACTOR, area 
   const open = (await store.listCases({}, { limit: 10000, offset: 0 })).filter(c => c.channel !== 'system' && isOpenCase(c) && isUnheld(c))
   for (const c of open) {
     const r = parseReport(c)
-    const hit = resolveArea(areas, { association: statedArea(r), location: r.location })
+    const hit = resolveArea(areas, { stated: statedArea(r), location: r.location })
     if (!hit || hit.area.id !== area.id) continue
     const res = await autoAssignByArea(store, c.id, { user }).catch(() => ({ assigned: false }))
     if (res.assigned) out.assigned.push({ ref: res.ref, area: res.area, to: res.name })
@@ -318,8 +319,8 @@ export async function unmappedAreas(store, { areas = null, cap = 100 } = {}) {
   for (const c of open) {
     const r = parseReport(c)
     const stated = statedArea(r)
-    if (resolveArea(list, { association: stated, location: r.location })) continue
-    const kind = stated ? 'association' : (String(r.location || '').trim() ? 'location' : 'none')
+    if (resolveArea(list, { stated, location: r.location })) continue
+    const kind = stated ? 'stated' : (String(r.location || '').trim() ? 'location' : 'none')
     const value = stated || String(r.location || '').trim().slice(0, 120)
     const k = `${kind}|${norm(value)}`
     const g = groups.get(k) || { value, kind, count: 0, refs: [] }
@@ -335,16 +336,16 @@ export function possiblyWrongArea(caseRow, areas) {
   if (!caseRow || !areas?.length) return null
   const report = parseReport(caseRow)
   const stated = statedArea(report)
-  const assocHit = stated ? resolveArea(areas, { association: stated }) : null
+  const assocHit = stated ? resolveArea(areas, { stated }) : null
   const locHit = resolveAreaFromLocation(areas, report.location)
   const held = !isUnheld(caseRow) ? String(caseRow.assignee).trim() : ''
   const mine = held ? areasOfRanger(areas, [held]) : []
   const reasons = []
   if (locHit && mine.length && !mine.some(a => a.id === locHit.area.id)) reasons.push('location_elsewhere')
-  if (assocHit && locHit && assocHit.area.id !== locHit.area.id) reasons.push('association_disagrees')
+  if (assocHit && locHit && assocHit.area.id !== locHit.area.id) reasons.push('stated_disagrees')
   if (!reasons.length) return null
   const brief = (a) => (a ? { id: a.id, name: a.name } : null)
-  return { reasons, location_area: brief(locHit?.area), association_area: brief(assocHit?.area), assignee_areas: mine.map(brief) }
+  return { reasons, location_area: brief(locHit?.area), stated_area: brief(assocHit?.area), assignee_areas: mine.map(brief) }
 }
 
 export async function wrongAreaCases(store, areas = null) {
@@ -358,13 +359,13 @@ export async function wrongAreaCases(store, areas = null) {
     const flag = possiblyWrongArea(c, list)
     if (!flag) continue
     const r = parseReport(c)
-    const now = resolveArea(list, { association: statedArea(r), location: r.location })
-    const sug = flag.location_area || flag.association_area
+    const now = resolveArea(list, { stated: statedArea(r), location: r.location })
+    const sug = flag.location_area || flag.stated_area
     const target = sug ? list.find(a => a.id === sug.id) : null
     if (target && !rangerOf.has(target.id)) rangerOf.set(target.id, (await pickRanger(store, target, null))?.key || '')
     rows.push({
       id: c.id, ref: c.ref, subject: c.subject || '',
-      report: { species: r.species != null ? String(r.species) : '', location: r.location != null ? String(r.location) : '', association: statedArea(r) },
+      report: { [K.kind]: r[K.kind] != null ? String(r[K.kind]) : '', location: r.location != null ? String(r.location) : '', [AREA_FIELD]: statedArea(r) },
       current_area: now ? { id: now.area.id, name: now.area.name } : null,
       suggested_area: sug ? { id: sug.id, name: sug.name } : null,
       suggested_ranger_key: target ? rangerOf.get(target.id) : '',
@@ -379,15 +380,15 @@ export async function areaInfoFor(store, caseRow, areas = null) {
   if (!AREA_FIELD) return null
   const list = areas || await loadAreas(store)
   const report = parseReport(caseRow)
-  const hit = resolveArea(list, { association: statedArea(report), location: report.location })
+  const hit = resolveArea(list, { stated: statedArea(report), location: report.location })
   return {
-    association: statedArea(report) || null,
+    [AREA_FIELD]: statedArea(report) || null,
     area: hit ? { id: hit.area.id, name: hit.area.name, matched_by: hit.matched_by } : null,
     possibly_wrong_area: possiblyWrongArea(caseRow, list),
   }
 }
 
-export async function relocateCase(store, caseId, { area = '', association = '', assignee = '', reassign = true, reason = '', by = 'an operator', user = SYSTEM_ACTOR } = {}) {
+export async function relocateCase(store, caseId, { area = '', stated = '', assignee = '', reassign = true, reason = '', by = 'an operator', user = SYSTEM_ACTOR } = {}) {
   if (!AREA_FIELD) return { ok: false, error: 'areas are not set up for this system' }
   return store._withLock(`assign|${caseId}`, async () => {
     const c = await store.getCase(caseId)
@@ -397,12 +398,12 @@ export async function relocateCase(store, caseId, { area = '', association = '',
     const wanted = String(area || '').trim()
     const target = wanted ? findArea(areas, wanted) : null
     if (wanted && !target) return { ok: false, error: `No area called "${wanted.slice(0, 80)}". Add the area first, or write the place in your own words.` }
-    const spelling = target ? target.name : String(association || '').trim().slice(0, 120)
+    const spelling = target ? target.name : String(stated || '').trim().slice(0, 120)
     if (!spelling) return { ok: false, error: 'Say which area the report belongs in.' }
 
     const report = parseReport(c)
     const oldStated = statedArea(report)
-    const oldHit = resolveArea(areas, { association: oldStated, location: report.location })
+    const oldHit = resolveArea(areas, { stated: oldStated, location: report.location })
     const had = String(c.assignee || '').trim()
 
     let next = null

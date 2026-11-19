@@ -219,7 +219,13 @@ export function clientVocabulary() {
     if (spec.view) out['roles.view.' + role] = vocabWordOrFail(vocabulary.words, spec.view)
   }
   out['tiers.order'] = Object.values(domain.tiers)
+  for (const [name, field] of Object.entries(vocabularyConceptsOf(loadDomainConfig().reportFields))) out['report.concept.' + name] = field
+  out['report.area_field'] = loadDomainConfig().reportFields.area_field || ''
   return out
+}
+
+function vocabularyConceptsOf(reportFields) {
+  return reportFields.concepts || {}
 }
 
 function vocabWordOrFail(words, key) {

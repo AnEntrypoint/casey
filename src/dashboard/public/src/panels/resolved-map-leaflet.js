@@ -1,3 +1,4 @@
+import { CK } from '../report-keys.js';
 import { schedule } from '../state.js';
 import { word } from '../words.js';
 
@@ -59,7 +60,7 @@ export function drawDots(drv, dots, styleFor) {
             fillOpacity: s.mark.fill ? 0.75 : 0, dashArray: s.mark.dash,
         }).bindTooltip(esc(word('ui.resolved_map_leaflet_dot', {
             disease: p.disease,
-            species: p.species,
+            species: p[CK.kind],
             advice: p.advice && p.advice[0] !== 'Not stated' ? word('ui.resolved_map_leaflet_advice', { advice: p.advice.join(', ') }) : '',
             week: p.resolved_at,
         }))).addTo(drv.layer);
