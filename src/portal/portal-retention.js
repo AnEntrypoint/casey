@@ -17,9 +17,14 @@ async function deleteOlderThan(store, entity, field, cutoff) {
   return removed
 }
 
-export function createPurgeGate({ everyMs = HOUR_MS } = {}) {
+export function purgeEnabled(env = process.env) {
+  return env.PORTAL_RETENTION_PURGE === 'on'
+}
+
+export function createPurgeGate({ everyMs = HOUR_MS, enabled = () => purgeEnabled() } = {}) {
   let lastRunAt = Number.NEGATIVE_INFINITY
   return async function purgeIfDue(store, now = Date.now(), days = retentionDays()) {
+    if (!enabled()) return 0
     if (now - lastRunAt < everyMs) return 0
     lastRunAt = now
     const cutoff = new Date(now - days * DAY_MS).toISOString()
