@@ -15,6 +15,7 @@ import {
 } from './store/report-shape.js'
 import { REPORT_CONCEPT as K } from './report-concepts.js'
 import { caseyText } from './deployment-text.js';
+import { TOOL_ARG } from './tool-arguments.js'
 
 const SCAN_LIMIT = 10000
 const DEFAULT_LIMIT = 8
@@ -129,7 +130,7 @@ function describeFilters(f) {
   if (f.q) out.q = f.q
   if (f.flags.length) out.flag = f.flags
   if (KIND_ARG && f.kind) out[KIND_ARG] = f.kind
-  if (f.disease) out.disease = f.disease
+  if (f.disease) out[TOOL_ARG.condition] = f.disease
   if (f.missing) out.missing = f.missing
   if (f.since != null) out.since = new Date(f.since).toISOString()
   if (f.until != null) out.until = new Date(f.until).toISOString()
@@ -160,7 +161,7 @@ function parseArgs(args, ctx, now) {
   const missing = has(args.missing) ? String(args.missing).trim() : ''
   const missingAllowed = [...new Set([...MANDATORY_MINIMUM_FIELDS, ...CRITICAL_FIELDS])]
   if (missing && !missingAllowed.includes(missing)) return fail(caseyText("src/case-tools-search.js#4", [missing]), { allowed_fields: missingAllowed })
-  const disease = has(args.disease) ? fold(args.disease) : ''
+  const disease = has(args[TOOL_ARG.condition]) ? fold(args[TOOL_ARG.condition]) : ''
   if (disease && !REPORT_KEYS.has(DISEASE_KEY)) return fail(caseyText("src/case-tools-search.js#5"))
   const radius = Number(args.radius_km)
   if (has(args.radius_km) && !(Number.isFinite(radius) && radius >= 0)) return fail(caseyText("src/case-tools-search.js#s12", [args.radius_km]))
@@ -375,7 +376,7 @@ export function buildSearchTools(store, { stageValues }) {
           stage: str(caseyText("src/case-tools-search.js#s19")),
           flag: { type: 'array', items: { type: 'string', enum: FLAGS }, description: caseyText("src/case-tools-search.js#18") },
           ...(KIND_ARG ? { [KIND_ARG]: str(caseyText("src/case-tools-search.js#s20")) } : {}),
-          disease: str(caseyText("src/case-tools-search.js#s21")),
+          [TOOL_ARG.condition]: str(caseyText("src/case-tools-search.js#s21")),
           missing: str(caseyText("src/case-tools-search.js#19")),
           since: str(caseyText("src/case-tools-search.js#20")),
           until: str(caseyText("src/case-tools-search.js#21")),

@@ -9,6 +9,7 @@ import {
 import { NOT_ASSIGNED, findCase, authorityOn, actorData, cleanRelayed } from './case-tools-team-shared.js'
 import { visitOf, newVisit, saveVisit, endVisit, VISIT_IDLE_MS } from './visit-state.js'
 import { caseyText } from './deployment-text.js';
+import { TOOL_ARG, treatedFields } from './tool-arguments.js'
 
 const empty = (v) => v == null || String(v).trim() === ''
 const NOT_EDITABLE = new Set(['photos', 'audio', ...SYSTEM_SET_FIELDS])
@@ -145,11 +146,13 @@ export function buildVisitTools(store, editTool) {
             description: caseyText("src/case-tools-visit.js#16"),
             items: { type: 'object', properties: { id: str(caseyText("src/case-tools-visit.js#17")), type: str(caseyText("src/case-tools-visit.js#18")) }, required: ['id'] },
           },
-          animals_treated: str(caseyText("src/case-tools-visit.js#19")),
+          [TOOL_ARG.treated_count]: str(caseyText("src/case-tools-visit.js#19")),
         },
         required: ['case'],
       },
-      async ({ case: ref, arrived_at, actions, samples, animals_treated }, ctx) => {
+      async (args, ctx) => {
+        const { case: ref, arrived_at, actions, samples } = args
+        const animals_treated = args[TOOL_ARG.treated_count]
         const r = await lookup(ctx, ref); if (r.fail) return r.fail
         const { c } = r
         const clean = (v, max = ITEM_MAX) => { return cleanRelayed(String(v ?? '')).replace(PHONE_SHAPE, 'a number').trim().slice(0, max) }
@@ -173,7 +176,7 @@ export function buildVisitTools(store, editTool) {
         await store().appendEvent(c.id, {
           kind: 'action', actor: 'operator',
           text: caseyText("src/case-tools-visit.js#s6", [by, bits.join('; ')]),
-          data: actorData(ctx, { visit_log: true, on_behalf: true, relayed_by: by, ...(arrived ? { arrived_at: arrived } : {}), actions: acts, samples: smp, ...(treated ? { animals_treated: treated, animals_treated_count: treatedCount } : {}) }),
+          data: actorData(ctx, { visit_log: true, on_behalf: true, relayed_by: by, ...(arrived ? { arrived_at: arrived } : {}), actions: acts, samples: smp, ...(treated ? treatedFields(treated, treatedCount) : {}) }),
         })
         return { ok: true, ref: c.ref, readback: caseyText("src/case-tools-visit.js#s7", [bits.map(b => spoken(b, 120)).join('; ')]) }
       }),
