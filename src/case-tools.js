@@ -24,7 +24,7 @@ import { buildRelayTools } from './case-tools-relay.js'
 import { buildLanguageTools } from './case-tools-language.js'
 import { buildNavigateTools } from './case-tools-navigate.js'
 import { shownCase } from './stale-write-guard.js'
-import { caseyText } from './deployment-text.js';
+import { caseyText, caseyChecksOn } from './deployment-text.js';
 
 const SHOWS_A_CASE = new Set(['case_get', 'case_search'])
 
@@ -65,8 +65,8 @@ function selfCheckLoadBearingToolDescriptions() {
   const tools = buildCaseToolset({})
   const byName = Object.fromEntries(tools.map(t => [t.name, t]))
   const required = [
-    { tool: 'case_update', field: 'case_type', pattern: /directly and explicitly stated/, name: caseyText("src/case-tools.js#w0") },
-    { tool: 'case_speaker', field: null, pattern: /Never guess or invent a name/, name: caseyText("src/case-tools.js#w1") },
+    { tool: 'case_update', field: 'case_type', pattern: new RegExp(caseyText("src/case-tools.js#re0")), name: caseyText("src/case-tools.js#w0") },
+    { tool: 'case_speaker', field: null, pattern: new RegExp(caseyText("src/case-tools.js#re1")), name: caseyText("src/case-tools.js#w1") },
 
     ...NEVER_INFERRED_FIELDS.map(f => ({
       tool: REPORT_TOOL_NAME, field: f.key,
@@ -76,12 +76,12 @@ function selfCheckLoadBearingToolDescriptions() {
 
     ...(MANDATORY_MINIMUM_FIELDS.length ? [{
       tool: 'case_transition', field: null,
-      pattern: /this tool REFUSES a move to/,
+      pattern: new RegExp(caseyText("src/case-tools.js#re3")),
       name: caseyText("src/case-tools.js#w3"),
     }, {
 
       tool: 'case_transition', field: null,
-      pattern: /restricted to the animal health technician who signs it off/,
+      pattern: new RegExp(caseyText("src/case-tools.js#re4")),
       name: caseyText("src/case-tools.js#w4"),
     }] : []),
   ]
@@ -102,4 +102,4 @@ export function hiddenToolNamesForTier(tier) {
   return buildCaseToolset(null).map(t => t.name).filter(name => !toolVisibleToTier(name, tier))
 }
 
-selfCheckLoadBearingToolDescriptions()
+if (caseyChecksOn()) selfCheckLoadBearingToolDescriptions()

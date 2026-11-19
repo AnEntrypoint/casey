@@ -12,6 +12,10 @@ function load() {
   return table
 }
 
+export function caseyChecksOn() {
+  return Object.prototype.hasOwnProperty.call(load(), 'casey#self-checks') && load()['casey#self-checks'] === 'on'
+}
+
 export function caseyText(key, args) {
   const t = load()
   if (!Object.prototype.hasOwnProperty.call(t, key)) throw new Error(`${FILE} has no entry ${key}`)

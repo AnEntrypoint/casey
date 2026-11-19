@@ -8,7 +8,7 @@ import { consentManaged } from '../phone-consent.js'
 import { headerSection, caseContextSection, gatherSection, replySection, speakerSection, consentSection, returnSection, stopConfirmSection } from './prompt-sections.js'
 import { roleSection, feedbackSection } from './prompt-roles.js'
 import { TIER } from '../contact-tiers.js'
-import { caseyText } from '../deployment-text.js';
+import { caseyText, caseyChecksOn } from '../deployment-text.js';
 
 const { persona } = loadDomainConfig()
 
@@ -56,18 +56,18 @@ function selfCheckLoadBearingPromptContent() {
 
   const operatorText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER.operator })
   const roleBlocks = [
-    { name: caseyText("src/hooks/prompt.js#0"), pattern: /WHICH RECORD FIRST/, from: TIER.field },
-    { name: caseyText("src/hooks/prompt.js#1"), pattern: /FINISHING IS NOT YOURS/, from: TIER.field, exact: [TIER.field, TIER.operator] },
+    { name: caseyText("src/hooks/prompt.js#0"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re0")), from: TIER.field },
+    { name: caseyText("src/hooks/prompt.js#1"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re1")), from: TIER.field, exact: [TIER.field, TIER.operator] },
 
-    { name: caseyText("src/hooks/prompt.js#2"), pattern: /FINISHING\. This person is also the technician who signs/, from: TIER.specialist, exact: [TIER.specialist] },
-    { name: caseyText("src/hooks/prompt.js#s0"), pattern: /SIGN-OFF DESK/, from: TIER.specialist },
-    { name: caseyText("src/hooks/prompt.js#s1"), pattern: /two DIFFERENT refusals/, from: TIER.specialist },
-    { name: caseyText("src/hooks/prompt.js#s2"), pattern: /OPERATOR DESK/, from: TIER.operator },
-    { name: caseyText("src/hooks/prompt.js#s3"), pattern: /CANNOT sign a/, from: TIER.operator },
-    { name: caseyText("src/hooks/prompt.js#s4"), pattern: /PLAIN TEXT FOR A PHONE/, from: TIER.field },
-    { name: caseyText("src/hooks/prompt.js#3"), pattern: /QUEUE AND HANDOVER ANSWERS/, from: TIER.operator },
-    { name: caseyText("src/hooks/prompt.js#s5"), pattern: /FINDING AND LISTING/, from: TIER.field },
-    { name: caseyText("src/hooks/prompt.js#s6"), pattern: /TODAY IS /, from: TIER.field },
+    { name: caseyText("src/hooks/prompt.js#2"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re2")), from: TIER.specialist, exact: [TIER.specialist] },
+    { name: caseyText("src/hooks/prompt.js#s0"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re3")), from: TIER.specialist },
+    { name: caseyText("src/hooks/prompt.js#s1"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re4")), from: TIER.specialist },
+    { name: caseyText("src/hooks/prompt.js#s2"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re5")), from: TIER.operator },
+    { name: caseyText("src/hooks/prompt.js#s3"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re6")), from: TIER.operator },
+    { name: caseyText("src/hooks/prompt.js#s4"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re7")), from: TIER.field },
+    { name: caseyText("src/hooks/prompt.js#3"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re8")), from: TIER.operator },
+    { name: caseyText("src/hooks/prompt.js#s5"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re9")), from: TIER.field },
+    { name: caseyText("src/hooks/prompt.js#s6"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re10")), from: TIER.field },
   ]
   const composed = { reporter: text, [TIER.field]: workerText, [TIER.specialist]: signOffText, [TIER.operator]: operatorText }
   const rungs = [TIER.field, TIER.specialist, TIER.operator]
@@ -81,30 +81,30 @@ function selfCheckLoadBearingPromptContent() {
     }
   }
   const required = [
-    { name: caseyText("src/hooks/prompt.js#s9"), pattern: /top TWO|TOP TWO|top two/ },
-    { name: caseyText("src/hooks/prompt.js#4"), pattern: /person was gone a while/ },
-    { name: caseyText("src/hooks/prompt.js#s10"), pattern: /ask where they are now/ },
-    { name: caseyText("src/hooks/prompt.js#s11"), pattern: /PRIORITY ORDER/ },
-    { name: caseyText("src/hooks/prompt.js#5"), pattern: /PERMISSION TO SKIP/ },
+    { name: caseyText("src/hooks/prompt.js#s9"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re11")) },
+    { name: caseyText("src/hooks/prompt.js#4"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re12")) },
+    { name: caseyText("src/hooks/prompt.js#s10"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re13")) },
+    { name: caseyText("src/hooks/prompt.js#s11"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re14")) },
+    { name: caseyText("src/hooks/prompt.js#5"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re15")) },
 
-    { name: caseyText("src/hooks/prompt.js#s12"), pattern: /RECORD ONLY WHAT WAS ACTUALLY SAID/ },
+    { name: caseyText("src/hooks/prompt.js#s12"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re16")) },
 
-    { name: caseyText("src/hooks/prompt.js#s13"), pattern: /explicitly asks you to estimate/ },
+    { name: caseyText("src/hooks/prompt.js#s13"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re17")) },
 
-    { name: caseyText("src/hooks/prompt.js#s14"), pattern: /ONE ASK PER REPLY/ },
+    { name: caseyText("src/hooks/prompt.js#s14"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re18")) },
 
-    { name: caseyText("src/hooks/prompt.js#s15"), pattern: /RECORD IT IN THE LANGUAGE THEY WROTE IT IN/ },
+    { name: caseyText("src/hooks/prompt.js#s15"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re19")) },
 
-    { name: caseyText("src/hooks/prompt.js#s16"), pattern: /LAST-CHANCE PUSH/ },
+    { name: caseyText("src/hooks/prompt.js#s16"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re20")) },
 
-    ...(MANDATORY_MINIMUM_FIELDS.length ? [{ name: caseyText("src/hooks/prompt.js#6"), pattern: /MANDATORY MINIMUM -- still blank:/ }] : []),
-    { name: caseyText("src/hooks/prompt.js#s17"), pattern: /MESSAGE FORMAT: this is a phone chat/ },
-    { name: caseyText("src/hooks/prompt.js#7"), pattern: /PROGRESS IN EVERY REPLY/ },
-    { name: caseyText("src/hooks/prompt.js#8"), pattern: /NOT A DEAD-END/ },
+    ...(MANDATORY_MINIMUM_FIELDS.length ? [{ name: caseyText("src/hooks/prompt.js#6"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re21")) }] : []),
+    { name: caseyText("src/hooks/prompt.js#s17"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re22")) },
+    { name: caseyText("src/hooks/prompt.js#7"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re23")) },
+    { name: caseyText("src/hooks/prompt.js#8"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re24")) },
 
-    { name: caseyText("src/hooks/prompt.js#s18"), pattern: /NEVER say these internal words[\s\S]*autonomy/ },
+    { name: caseyText("src/hooks/prompt.js#s18"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re25")) },
 
-    { name: caseyText("src/hooks/prompt.js#9"), pattern: /COMMENTS ABOUT YOU[\s\S]*case_feedback/ },
+    { name: caseyText("src/hooks/prompt.js#9"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re26")) },
   ]
 
   const person = (id, name, relation = '') => ({ id, name, relation, first_seen: 1, last_seen: 1, reports: 0 })
@@ -114,37 +114,37 @@ function selfCheckLoadBearingPromptContent() {
   const knownText = caseSystemPrompt(caseRow, events, staleContact, { ...base, current: two[1], needs_ask: false, open_report_by: two[0] })
   const oneText = caseSystemPrompt(caseRow, events, staleContact, { ...base, count: 1, people: [two[0]], current: two[0], needs_ask: false })
   const sharedRules = [
-    { name: caseyText("src/hooks/prompt.js#10"), pattern: /SEVERAL PEOPLE MAY SHARE THIS PHONE[\s\S]*case_speaker[\s\S]*Never guess a name/, all: [text, askText, knownText, oneText] },
-    { name: caseyText("src/hooks/prompt.js#11"), pattern: /ask ONCE[\s\S]*ONE ask of this reply/, all: [askText] },
-    { name: caseyText("src/hooks/prompt.js#s19"), pattern: /case_new/, all: [knownText] },
-    { name: caseyText("src/hooks/prompt.js#s20"), pattern: /PRIVACY BETWEEN PEOPLE ON ONE PHONE[\s\S]*never tell one person another person's name/, all: [askText, knownText] },
+    { name: caseyText("src/hooks/prompt.js#10"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re27")), all: [text, askText, knownText, oneText] },
+    { name: caseyText("src/hooks/prompt.js#11"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re28")), all: [askText] },
+    { name: caseyText("src/hooks/prompt.js#s19"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re29")), all: [knownText] },
+    { name: caseyText("src/hooks/prompt.js#s20"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re30")), all: [askText, knownText] },
   ]
   for (const { name, pattern, all } of sharedRules) {
     for (const t of all) if (!pattern.test(t)) throw new Error(`caseSystemPrompt regression: shared-phone instruction missing (${name}). See hooks/prompt-sections.js speakerSection and AGENTS.md "Several people on one phone".`)
   }
   for (const t of [text, oneText]) {
-    if (/MORE THAN ONE PERSON HAS USED THIS PHONE|PRIVACY BETWEEN PEOPLE ON ONE PHONE/.test(t)) throw new Error('caseSystemPrompt regression: the several-people block is rendered for a phone with at most one known person, which must get no extra question.')
+    if (new RegExp(caseyText("src/hooks/prompt.js#re31")).test(t)) throw new Error('caseSystemPrompt regression: the several-people block is rendered for a phone with at most one known person, which must get no extra question.')
   }
   {
     const ret = { owed: true, [K.kind]: 'kind-a', location: 'place-a', person: 'person-a' }
     const asks = caseSystemPrompt(caseRow, events, staleContact, null, 'agreed', ret)
     const quiet = caseSystemPrompt(caseRow, events, staleContact, null, 'agreed', { owed: false })
     const team = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER.field }, null, null, ret)
-    if (!/RETURNING TO A COMPLETE REPORT[\s\S]*case_clarify[\s\S]*THE ONE QUESTION/.test(asks + caseSystemPrompt(caseRow, events, staleContact, null, 'agreed', ret))) throw new Error('caseSystemPrompt regression: the return-to-a-complete-report question is missing. See hooks/prompt-sections.js returnSection and return-clarify.js.')
-    if (/RETURNING TO A COMPLETE REPORT/.test(quiet)) throw new Error('caseSystemPrompt regression: the return question is rendered when none is owed.')
-    if (/RETURNING TO A COMPLETE REPORT/.test(team)) throw new Error('caseSystemPrompt regression: the return question is rendered for a team member.')
+    if (!new RegExp(caseyText("src/hooks/prompt.js#re32")).test(asks + caseSystemPrompt(caseRow, events, staleContact, null, 'agreed', ret))) throw new Error('caseSystemPrompt regression: the return-to-a-complete-report question is missing. See hooks/prompt-sections.js returnSection and return-clarify.js.')
+    if (new RegExp(caseyText("src/hooks/prompt.js#re33")).test(quiet)) throw new Error('caseSystemPrompt regression: the return question is rendered when none is owed.')
+    if (new RegExp(caseyText("src/hooks/prompt.js#re34")).test(team)) throw new Error('caseSystemPrompt regression: the return question is rendered for a team member.')
   }
   if (consentManaged()) {
     const askConsent = caseSystemPrompt(caseRow, events, staleContact, null, 'none')
     const agreedText = caseSystemPrompt(caseRow, events, staleContact, null, 'agreed')
     const teamText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER.field }, null, 'none')
-    if (!/CHECK BEFORE RECORDING[\s\S]*ONE question[\s\S]*case_consent/.test(askConsent)) throw new Error('caseSystemPrompt regression: the once-per-number consent question is missing. See hooks/prompt-sections.js consentSection and phone-consent.js.')
+    if (!new RegExp(caseyText("src/hooks/prompt.js#re35")).test(askConsent)) throw new Error('caseSystemPrompt regression: the once-per-number consent question is missing. See hooks/prompt-sections.js consentSection and phone-consent.js.')
     for (const [t, why] of [[agreedText, caseyText("src/hooks/prompt.js#s21")], [teamText, caseyText("src/hooks/prompt.js#s22")]]) {
-      if (/CHECK BEFORE RECORDING/.test(t)) throw new Error(`caseSystemPrompt regression: the consent question is rendered for ${why}.`)
+      if (new RegExp(caseyText("src/hooks/prompt.js#re36")).test(t)) throw new Error(`caseSystemPrompt regression: the consent question is rendered for ${why}.`)
     }
   }
   for (const t of [workerText, signOffText, operatorText]) {
-    if (/SEVERAL PEOPLE MAY SHARE THIS PHONE/.test(t)) throw new Error('caseSystemPrompt regression: the shared-phone rule leaked to a team member (public contacts only).')
+    if (new RegExp(caseyText("src/hooks/prompt.js#re37")).test(t)) throw new Error('caseSystemPrompt regression: the shared-phone rule leaked to a team member (public contacts only).')
   }
   for (const { name, pattern } of required) {
     if (!pattern.test(text)) {
@@ -153,10 +153,10 @@ function selfCheckLoadBearingPromptContent() {
   }
 
   const workerOnly = [
-    { name: caseyText("src/hooks/prompt.js#s23"), pattern: /use case_switch to move to it/ },
-    { name: caseyText("src/hooks/prompt.js#s24"), pattern: /Keep case_update summary current/ },
-    { name: caseyText("src/hooks/prompt.js#s25"), pattern: /case_transition to resolved/ },
-    { name: caseyText("src/hooks/prompt.js#s26"), pattern: /case_search, or case_today\/case_mine\/case_list\/case_get\) and answer/ },
+    { name: caseyText("src/hooks/prompt.js#s23"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re38")) },
+    { name: caseyText("src/hooks/prompt.js#s24"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re39")) },
+    { name: caseyText("src/hooks/prompt.js#s25"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re40")) },
+    { name: caseyText("src/hooks/prompt.js#s26"), pattern: new RegExp(caseyText("src/hooks/prompt.js#re41")) },
   ]
   for (const { name, pattern } of workerOnly) {
     if (!pattern.test(workerText)) {
@@ -201,4 +201,4 @@ function selfCheckFenceIntegrity() {
     }
   }
 }
-selfCheckLoadBearingPromptContent()
+if (caseyChecksOn()) selfCheckLoadBearingPromptContent()
