@@ -1,7 +1,7 @@
+import { SAST_TZ, TZ_LABEL, LOCALE, COUNTRY_CODE, INTERNATIONAL_DIGITS_RE, INTERNATIONAL_GROUPS, LOCAL_NUMBER_RE, LOCAL_GROUPS, spaced } from './locale.js'
 
 
-export const SAST_TZ = process.env.CASEY_TZ || 'Africa/Johannesburg'
-const TZ_LABEL = process.env.CASEY_TZ_LABEL || (process.env.CASEY_TZ ? '' : 'SAST')
+export { SAST_TZ }
 
 export function isOpenCase(c) {
   return c && c.status !== 'resolved' && c.status !== 'closed'
@@ -26,22 +26,19 @@ export function fmtTimeSAST(v) {
   if (!d) return ''
   const suffix = TZ_LABEL ? ' ' + TZ_LABEL : ''
   try {
-    return d.toLocaleString('en-ZA', {
+    return d.toLocaleString(LOCALE, {
       timeZone: SAST_TZ, year: 'numeric', month: 'short', day: 'numeric',
       hour: '2-digit', minute: '2-digit',
     }) + suffix
   } catch { return d.toLocaleString() + suffix }
 }
 
-const COUNTRY_CODE = (process.env.CASEY_COUNTRY_CODE || '27').replace(/\D/g, '') || '27'
 
 export function fmtPhone27(v) {
   const s = String(v || '')
   const digits = s.replace(/[^0-9]/g, '')
-  const cc = COUNTRY_CODE
-  const ccRe = new RegExp('^' + cc + '[0-9]{9}$')
-  if (ccRe.test(digits)) { const n = digits.slice(cc.length); return '+' + cc + ' ' + n.slice(0, 2) + ' ' + n.slice(2, 5) + ' ' + n.slice(5) }
-  if (/^0[0-9]{9}$/.test(digits)) { return digits.slice(0, 3) + ' ' + digits.slice(3, 6) + ' ' + digits.slice(6) }
+  if (INTERNATIONAL_DIGITS_RE && INTERNATIONAL_DIGITS_RE.test(digits)) return '+' + COUNTRY_CODE + ' ' + spaced(digits.slice(COUNTRY_CODE.length), INTERNATIONAL_GROUPS)
+  if (LOCAL_NUMBER_RE && LOCAL_NUMBER_RE.test(digits)) return spaced(digits, LOCAL_GROUPS)
   return s
 }
 

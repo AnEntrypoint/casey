@@ -1,3 +1,4 @@
+import { TZ_LABEL, COUNTRY_CODE } from '../../locale.js'
 import { tagList, parseReport } from '../../timestamp.js'
 import { snapshotDroppedIntake } from '../../hooks/dropped-intake.js'
 import { snapshotStt } from '../../stt/metrics.js'
@@ -244,8 +245,8 @@ export function getConfig({ store, authed, SAST_TZ, resolveWhatsappAdapter, fmtP
       case_type: typeof store.getFieldEnum === 'function' ? store.getFieldEnum('case.case_type', []) : [],
       priority: typeof store.getFieldEnum === 'function' ? store.getFieldEnum('case.priority', []) : [],
       tz: SAST_TZ,
-      tz_label: process.env.CASEY_TZ_LABEL || (process.env.CASEY_TZ ? '' : 'SAST'),
-      country_code: (process.env.CASEY_COUNTRY_CODE || '27').replace(/\D/g, '') || '27',
+      tz_label: TZ_LABEL,
+      country_code: COUNTRY_CODE,
       entity_label: REPORT_ENTITY_LABEL,
       report_sections: REPORT_SECTIONS.map(sec => ({ ...sec, keys: sec.keys.filter(([k]) => !SYSTEM_SET_FIELDS.has(k)) })).filter(sec => sec.keys.length),
       system_set_fields: [...SYSTEM_SET_FIELDS],

@@ -1294,5 +1294,11 @@
   "src/translate.js#s2": "[src/translate.js#s2]",
   "src/translate.js#s3": "[src/translate.js#s3]",
   "src/role-health.js#o0": "[src/role-health.js#o0]",
-  "src/signoff-desk.js#o0": "[src/signoff-desk.js#o0] {$0}"
+  "src/signoff-desk.js#o0": "[src/signoff-desk.js#o0] {$0}",
+  "src/dashboard/routes/cases.js#phone-sa": "[src/dashboard/routes/cases.js#phone-sa]",
+  "src/dashboard/routes/auth.js#phone-shape": "[src/dashboard/routes/auth.js#phone-shape]",
+  "src/dashboard/routes/auth.js#phone-hint": "[src/dashboard/routes/auth.js#phone-hint] {$0}",
+  "src/dashboard/routes/auth.js#phone-js-error": "[src/dashboard/routes/auth.js#phone-js-error]",
+  "src/dashboard/routes/portal.js#phone-sa": "[src/dashboard/routes/portal.js#phone-sa]",
+  "src/dashboard/routes/contacts.js#phone-example": "[src/dashboard/routes/contacts.js#phone-example]"
 }

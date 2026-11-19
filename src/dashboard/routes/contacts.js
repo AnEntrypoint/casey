@@ -1,3 +1,4 @@
+import { caseyText } from '../../deployment-text.js'
 import { fmtPhone27 } from '../../format.js'
 import { mountRoutes } from './register.js'
 import { TIER_ORDER, ADMIN_ONLY_TIERS, grantableBy, resolveContactTier, TIER } from '../../contact-tiers.js'
@@ -64,7 +65,7 @@ export function postContactRegister({ store, authed, isAdmin, actingOperator }) 
     try {
       const { phone, name, tier } = req.body || {}
       const external_id = normalizeMsisdn(phone)
-      if (!external_id) return res.status(400).json({ error: 'that does not look like a phone number -- use the full number, e.g. 079 091 5297 or +27 79 091 5297' })
+      if (!external_id) return res.status(400).json({ error: caseyText("src/dashboard/routes/contacts.js#phone-example") })
       if (!TIER_ORDER.includes(tier) || tier === TIER.reporter) return res.status(400).json({ error: `role must be one of ${TIER_ORDER.filter(t => t !== TIER.reporter).map(t => `"${t}"`).join(', ')}` })
       if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: `only an admin can make someone ${tier === TIER.operator ? 'an operator' : 'a technician'}` })
       const known = (await store.listContacts({ limit: 1000 })).find(k => k.channel === 'whatsapp' && k.external_id === external_id)

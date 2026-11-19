@@ -2,9 +2,9 @@ import { state } from './state.js';
 import { brandName } from './vocabulary.js';
 import { word, hasWord } from './words.js';
 
-function tz() { return (state.config && state.config.tz) || 'Africa/Johannesburg'; }
-function tzLabel() { return (state.config && state.config.tz_label != null) ? state.config.tz_label : 'SAST'; }
-function countryCode() { return (state.config && state.config.country_code) || '27'; }
+function tz() { return (state.config && state.config.tz) || 'UTC'; }
+function tzLabel() { return (state.config && state.config.tz_label != null) ? state.config.tz_label : 'UTC'; }
+function countryCode() { return (state.config && state.config.country_code) || ''; }
 
 const MS_NOT_SECONDS = 1e11;
 

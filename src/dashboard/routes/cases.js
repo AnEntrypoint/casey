@@ -1,3 +1,5 @@
+import { phoneDigitsOk } from '../../locale.js'
+import { caseyText } from '../../deployment-text.js'
 import { normalizeMsisdn } from '../../role-invites.js'
 import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag, STOP_PENDING_PREFIX } from '../../hooks/heuristics.js'
@@ -153,8 +155,8 @@ export function postCase({ store, authed, str, actingOperator, computeFillRate }
     const phone = str(res, req.body, 'phone', { required: false }); if (phone === undefined) return
     if (phone) {
       const digits = phone.replace(/[\s\-()]/g, '')
-      const valid = /^0[0-9]{9}$/.test(digits) || /^\+27[0-9]{9}$/.test(digits)
-      if (!valid) return res.status(400).json({ error: 'Phone must be a South African number: 0821234567 or +27821234567' })
+      const valid = phoneDigitsOk(digits)
+      if (!valid) return res.status(400).json({ error: caseyText("src/dashboard/routes/cases.js#phone-sa") })
     }
     const normPhone = phone ? normalizeMsisdn(phone) : ''
     const external_id = normPhone || `web-${Date.now()}`

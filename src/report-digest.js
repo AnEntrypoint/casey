@@ -1,3 +1,4 @@
+import { TZ_LABEL } from './locale.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { loadResolved, buildDiseaseReport, reportCsvLines, monthStartOf, monthEndOf, monthOf, previousPeriod, parseBound, periodLabel, printName } from './dashboard/routes/reports-map.js'
@@ -56,7 +57,7 @@ function trendLine(rep, month) {
 export function digestText(rep, month) {
   const lines = [
     `Casey monthly disease digest, ${month}${rep.truncated ? ' (INCOMPLETE)' : ''}`,
-    `Generated ${fmtTimeSAST(Date.now())}. Months are SAST calendar months.`,
+    `Generated ${fmtTimeSAST(Date.now())}. Months are ${TZ_LABEL} calendar months.`,
   ]
   if (rep.month_cases < MIN_AGGREGATE_CELL) {
     lines.push(`Fewer than ${MIN_AGGREGATE_CELL} resolved cases this month, so no figures are published.`)

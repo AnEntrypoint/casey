@@ -9,7 +9,7 @@ fields declared entirely by config -- see "Configuring casey" below)
 **without interrogating them**, and gives the organising team one organised,
 observable view per report. It amplifies the team's own way of working -- it
 does not impose domain-specific rules or escalation; priority stays with the
-people. Times are shown in SAST and phone numbers in +27 format by default
+people. Times and phone numbers are shown in the zone and country format the deployment configures (`locale` in `domain.yml`); casey's defaults are UTC and no country prefix
 (overridable via `CASEY_TZ`/`CASEY_COUNTRY_CODE`).
 
 This repository contains no deployment's domain. A deployment supplies it as a

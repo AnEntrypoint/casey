@@ -1,3 +1,4 @@
+import { UTC_OFFSET_HOURS, TZ_LABEL } from '../../locale.js'
 import { parseReport } from '../../timestamp.js'
 import { statedArea, loadAreas, resolveArea } from '../../areas.js'
 import { isDone } from '../../signoff-desk.js'
@@ -35,7 +36,7 @@ export function conclusionKinds(text) {
   const hit = RESOLUTION_KINDS.filter(([, re]) => re.test(t)).map(([k]) => k)
   return hit.length ? hit : [OTHER_CONCLUSION]
 }
-const SAST_OFFSET_MS = 2 * 3600e3
+const SAST_OFFSET_MS = UTC_OFFSET_HOURS * 3600e3
 const HEAT_CELL_DEG = 0.1
 const POINT_ROUND = 100
 
@@ -65,7 +66,7 @@ export const monthOf = (sec) => isoDate(sec).slice(0, 7)
 export function periodLabel(w) {
   if (w.from == null && w.to == null) return 'all time'
   const today = isoDate(Math.floor(Date.now() / 1000))
-  return `${w.from == null ? 'earliest record' : isoDate(w.from)} to ${w.to == null ? today : isoDate(w.to)} (SAST dates)`
+  return `${w.from == null ? 'earliest record' : isoDate(w.from)} to ${w.to == null ? today : isoDate(w.to)} (${TZ_LABEL} dates)`
 }
 export function periodOf(sec, grain = 'month') {
   const m = monthOf(sec)

@@ -1,3 +1,4 @@
+import { LOCALE } from '../locale.js'
 
 
 import { atLeast, resolveTierValue, TIER } from '../contact-tiers.js'
@@ -12,7 +13,7 @@ const certaintyClause = () => (DIAGNOSIS_STATUS_OPTIONS
 
 const todayLine = () => {
   const now = new Date()
-  const day = new Intl.DateTimeFormat('en-ZA', { timeZone: SAST_TZ, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }).format(now)
+  const day = new Intl.DateTimeFormat(LOCALE, { timeZone: SAST_TZ, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }).format(now)
   return caseyText("src/hooks/prompt-roles.js#1", [day, SAST_TZ])
 }
 

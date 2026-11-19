@@ -1,3 +1,4 @@
+import { caseyText } from '../../deployment-text.js'
 import { mountRoutes } from './register.js'
 import { registerPortalAdmin } from './portal-admin.js'
 import * as portal from '../../portal/portal-store.js'
@@ -67,7 +68,7 @@ export function postRouterRegistration({ store }) {
     const mac = portal.normaliseMac(b.mac)
     if (!mac) return res.status(400).json({ error: BAD_MAC, field: 'mac' })
     const phone = portal.normalisePhone(b.phone)
-    if (!phone) return res.status(400).json({ error: 'phone must be a South African or E.164 number', field: 'phone' })
+    if (!phone) return res.status(400).json({ error: caseyText("src/dashboard/routes/portal.js#phone-sa"), field: 'phone' })
     const macRetry = macLimit(mac)
     if (macRetry) { res.set('Retry-After', String(macRetry)); return res.status(429).json({ error: 'rate limited', retry_after_s: macRetry }) }
     const effective = await portalSettings.effectiveSettings(store, router.router_id)

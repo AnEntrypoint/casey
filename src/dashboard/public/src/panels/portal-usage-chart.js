@@ -44,7 +44,7 @@ function niceCeiling(value) {
 }
 
 function axisTime(t, bucket) {
-  const zone = (state.config && state.config.tz) || 'Africa/Johannesburg';
+  const zone = (state.config && state.config.tz) || 'UTC';
   const options = bucket === 'day'
     ? { timeZone: zone, day: 'numeric', month: 'short' }
     : { timeZone: zone, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' };

@@ -1,3 +1,4 @@
+import { COUNTRY_CODE, TRUNK_PREFIX, NATIONAL_LENGTH } from './locale.js'
 
 
 import crypto from 'node:crypto'
@@ -160,18 +161,19 @@ export function noteFailedAttempt(key, now = Date.now()) {
   for (const k of [key, GLOBAL_KEY]) FAILS.set(k, [...recent(k, now), now])
 }
 
-export function normalizeMsisdn(input, defaultCountryCode = '27') {
+export function normalizeMsisdn(input, defaultCountryCode = COUNTRY_CODE) {
 
   let d = String(input || '').replace(/[\s\u00a0\u200b-\u200f\u202a-\u202f\u2060\ufeff().-]/g, '')
   const plus = d.startsWith('+')
+  const trunk = defaultCountryCode ? TRUNK_PREFIX : ''
   if (plus) d = d.slice(1)
   else if (d.startsWith('00')) d = d.slice(2)
-  else if (d.startsWith('0')) d = defaultCountryCode + d.slice(1)
+  else if (trunk && d.startsWith(trunk)) d = defaultCountryCode + d.slice(trunk.length)
 
-  if (d.startsWith(defaultCountryCode + '0')) d = defaultCountryCode + d.slice(defaultCountryCode.length + 1)
+  if (trunk && d.startsWith(defaultCountryCode + trunk)) d = defaultCountryCode + d.slice(defaultCountryCode.length + trunk.length)
   if (!/^\d{10,15}$/.test(d)) return ''
 
-  if (d.startsWith('27') && d.length !== 11) return ''
+  if (defaultCountryCode && NATIONAL_LENGTH && d.startsWith(defaultCountryCode) && d.length !== defaultCountryCode.length + NATIONAL_LENGTH) return ''
 
   if (plus && d.startsWith('0')) return ''
   return d

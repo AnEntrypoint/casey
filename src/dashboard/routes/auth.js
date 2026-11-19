@@ -1,3 +1,5 @@
+import { caseyText } from '../../deployment-text.js'
+import { EXAMPLE_LOCAL, COUNTRY_CODE, TRUNK_PREFIX, phoneDigitsOk, clientPhoneRuleLines, jsSingle } from '../../locale.js'
 import { mergeTag } from '../../hooks/heuristics.js'
 import { DASHBOARD_UI, REPORTER_FIELD_DEFS, fieldLabel } from '../../store/report-shape.js'
 import { vocabWord } from '../../config-loader.js'
@@ -90,7 +92,7 @@ const PUBLIC_GROUPS = (() => {
 const ERROR_SENTENCES = {
   need_ref_or_phone: () => 'Please enter your reference number, or your phone number.',
   ref_unknown: (ref, esc) => `We could not find the reference "${esc(ref)}". Please check it against your messages, or enter your phone number instead.`,
-  phone_shape: () => 'That does not look like a South African phone number. Please write it as 0821234567 or +27821234567.',
+  phone_shape: () => caseyText("src/dashboard/routes/auth.js#phone-shape"),
   frozen: () => `This ${ENTITY} is not taking updates on this page at the moment. Reply on the same app you first reported from and the team will get it.`,
   save_failed: () => 'Your answers were not saved. They are still in the boxes below, so you can press Send details again. If it keeps failing, reply on the app you first reported from instead.',
   unexpected: () => `This page could not finish that. Your answers are still in the boxes below -- press Send details to try again. If it keeps failing, reply on the app you first reported from and your ${ENTITY} will still reach the team.`,
@@ -168,8 +170,8 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
       <input id="f-find-ref" type="text" name="ref" value="${esc(ref)}" maxlength="50" aria-describedby="f-find-ref-hint">
       <div class="hint" id="f-find-ref-hint">Copy it from the message you were sent when you first reported. If you do not have it, enter your phone number below instead.</div></div>
       <div class="field"><label for="f-find-phone">Or your phone number</label>
-      <input id="f-find-phone" type="tel" name="phone" value="${esc(phone)}" placeholder="0821234567" maxlength="30" autocomplete="tel" aria-describedby="${err === 'phone_shape' ? 'f-find-phone-hint form-err' : 'f-find-phone-hint'}"${err === 'phone_shape' ? ' aria-invalid="true"' : ''}>
-      <div class="hint" id="f-find-phone-hint">A South African number. We use this to find your ${esc(ENTITY)}.</div></div>
+      <input id="f-find-phone" type="tel" name="phone" value="${esc(phone)}" placeholder="${esc(EXAMPLE_LOCAL)}" maxlength="30" autocomplete="tel" aria-describedby="${err === 'phone_shape' ? 'f-find-phone-hint form-err' : 'f-find-phone-hint'}"${err === 'phone_shape' ? ' aria-invalid="true"' : ''}>
+      <div class="hint" id="f-find-phone-hint">${caseyText("src/dashboard/routes/auth.js#phone-hint", [esc(ENTITY)])}</div></div>
       </section>`
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -278,10 +280,7 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
       const v = phoneEl.value.trim()
       if (!v) { errEl.className = 'field-err'; phoneEl.removeAttribute('aria-invalid'); return }
       const d = v.replace(/[^0-9+]/g, '')
-      if (/^0[0-9]{9}$/.test(d)) { phoneEl.value = '+27' + d.slice(1); errEl.className = 'field-err'; phoneEl.removeAttribute('aria-invalid'); return }
-      if (/^27[0-9]{9}$/.test(d)) { phoneEl.value = '+' + d; errEl.className = 'field-err'; phoneEl.removeAttribute('aria-invalid'); return }
-      if (/^\\+27[0-9]{9}$/.test(d)) { errEl.className = 'field-err'; phoneEl.removeAttribute('aria-invalid'); return }
-      errEl.textContent = 'Please use a South African number: 0821234567 or +27821234567'
+${clientPhoneRuleLines()}      errEl.textContent = '${jsSingle(caseyText("src/dashboard/routes/auth.js#phone-js-error"))}'
       errEl.className = 'field-err show'
       phoneEl.setAttribute('aria-invalid', 'true')
     })
@@ -408,9 +407,9 @@ export function postReport({ store, esc }) {
         found = await store.getCaseByRef(ref)
         if (!found) return rejected('ref_unknown')
       } else {
-        const validPhone = /^0[0-9]{9}$/.test(phoneRaw) || /^\+27[0-9]{9}$/.test(phoneRaw)
+        const validPhone = phoneDigitsOk(phoneRaw)
         if (!validPhone) return rejected('phone_shape')
-        const normPhone = phoneRaw.startsWith('0') ? '+27' + phoneRaw.slice(1) : phoneRaw
+        const normPhone = TRUNK_PREFIX && COUNTRY_CODE && phoneRaw.startsWith(TRUNK_PREFIX) ? '+' + COUNTRY_CODE + phoneRaw.slice(TRUNK_PREFIX.length) : phoneRaw
         const { case: nc, created } = await store.findOrCreateCase({ channel: 'web', external_id: normPhone, contact: { phone: normPhone }, subject: `Field ${ENTITY} via web form` })
         found = nc
         openedHere = created === true

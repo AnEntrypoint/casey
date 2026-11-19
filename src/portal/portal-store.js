@@ -1,3 +1,4 @@
+import { COUNTRY_CODE, TRUNK_PREFIX, LOCAL_NUMBER_RE } from '../locale.js'
 import crypto from 'node:crypto'
 import { ROUTER_STATUS_DEFAULT_HEARTBEAT_S, ROUTER_STATUS_DEFAULT_GRACE_S, routerLiveness } from '../dashboard/public/src/router-status.js'
 
@@ -77,7 +78,7 @@ export function e164FromWhatsapp(from) {
 export function normalisePhone(v) {
   if (typeof v !== 'string') return null
   const s = v.replace(/[\s\-()]/g, '')
-  const e164 = /^0\d{9}$/.test(s) ? '+27' + s.slice(1) : s
+  const e164 = LOCAL_NUMBER_RE && LOCAL_NUMBER_RE.test(s) ? '+' + COUNTRY_CODE + s.slice(TRUNK_PREFIX.length) : s
   return isE164(e164) ? e164 : null
 }
 
