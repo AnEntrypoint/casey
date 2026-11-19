@@ -18,11 +18,11 @@ import { RouterHealth } from './portal-router-health.js';
 import { UsageSection, reloadUsage } from './portal-usage-section.js';
 import { PortalConfigEditor } from './portal-config-panel.js';
 import { RouterSetupSection } from './portal-router-setup-panel.js';
+import { routerLiveness } from '../router-status.js';
 
 const h = webjsx.createElement;
 
 const HEALTH_HISTORY_HOURS = 24;
-const DEFAULT_IDLE_HEARTBEAT_S = 3600;
 const STATUS_VIEW = {
   online: { tone: 'success', label: 'ui.routers_status_online' },
   quiet: { tone: 'sun', label: 'ui.routers_status_quiet' },
@@ -64,18 +64,8 @@ const loader = createPanelLoader({
 const when = (iso) => fmtTime(iso) || NO_TIME_TEXT;
 const typeWord = (t) => word(TYPE_KEY[t] || 'ui.routers_panel_type_other');
 
-function clientStatus(lastSeen, now, idleHeartbeatS) {
-  const seen = lastSeen ? Date.parse(lastSeen) : NaN;
-  if (!Number.isFinite(seen)) return 'never';
-  const hbMs = (Number.isFinite(idleHeartbeatS) && idleHeartbeatS > 0 ? idleHeartbeatS : DEFAULT_IDLE_HEARTBEAT_S) * 1000;
-  const age = Math.max(0, now - seen);
-  if (age <= hbMs) return 'online';
-  if (age <= 2 * hbMs) return 'quiet';
-  return 'offline';
-}
-
 export function routerStatus(r, now = Date.now()) {
-  const key = STATUS_VIEW[r.status] ? r.status : clientStatus(r.last_seen, now, r.idle_heartbeat_s);
+  const key = STATUS_VIEW[r.status] ? r.status : routerLiveness(r.last_seen ? Date.parse(r.last_seen) : NaN, now, r.idle_heartbeat_s, r.status_grace_s);
   return { key, tone: STATUS_VIEW[key].tone, label: word(STATUS_VIEW[key].label) };
 }
 

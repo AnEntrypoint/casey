@@ -164,7 +164,10 @@ export function getRouters({ store, authed }) {
     const now = Date.now()
     const since = new Date(now - DAY_MS).toISOString()
     const until = new Date(now).toISOString()
-    const overview = await portal.routerOverview(store, now, async (routerId) => (await portalSettings.effectiveSettings(store, routerId)).idle_heartbeat_interval_s)
+    const overview = await portal.routerOverview(store, now, async (routerId) => {
+      const settings = await portalSettings.effectiveSettings(store, routerId)
+      return { idle_heartbeat_interval_s: settings.idle_heartbeat_interval_s, router_status_grace_s: settings.router_status_grace_s }
+    })
     const routers = await Promise.all(overview.map(async (row) => {
       const lastRow = await latestHealthRow(store, row.router_id)
       const lastHealth = lastRow ? lastRow.health : null

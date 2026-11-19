@@ -28,6 +28,7 @@ const SCHEMA = Object.freeze({
   heartbeat_interval_s: { type: 'int', min: 60, max: 3600, label: 'Heartbeat interval (seconds)', help: 'How often routers report health.' },
   idle_usage_interval_s: { type: 'int', min: 60, max: 86400, label: 'Idle usage interval (seconds)', help: 'How often a router reports counters while no client is connected. Equal to the usage interval changes nothing.' },
   idle_heartbeat_interval_s: { type: 'int', min: 60, max: 86400, label: 'Idle heartbeat interval (seconds)', help: 'How often a router reports health while no client is connected. Equal to the heartbeat interval changes nothing.' },
+  router_status_grace_s: { type: 'int', min: 0, max: 3600, serverOnly: true, label: 'Router status grace (seconds)', help: 'Allowance added to one heartbeat before a router reads Online; a router reads Quiet until twice that total, and Offline after it.' },
   idle_sync_interval_s: { type: 'int', min: 60, max: 86400, label: 'Idle sync interval (seconds)', help: 'How often a router on the fallback protocol fetches settings while no client is connected. Equal to the usage interval changes nothing.' },
   daily_cap_mb: { type: 'int', min: 1, max: 1000, serverOnly: true, label: 'Daily data cap (MB)', help: 'Data one guest device may use per day, up and down together, in MB of 1,048,576 bytes. The day resets at midnight in Johannesburg, and the cap is enforced while the device is in use.' },
   guest_ssid: { type: 'ssid', maxBytes: 32, label: 'Guest Wi-Fi name', help: 'The network name guests see, up to 32 bytes.' },
