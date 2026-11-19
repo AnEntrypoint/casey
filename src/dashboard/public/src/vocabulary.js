@@ -1,4 +1,5 @@
 import { state } from './state.js';
+import { rawList } from './words.js';
 
 export function activeConfig() { return state.runConfig || state.config; }
 
@@ -22,7 +23,7 @@ export function countOf(n, one, many) {
   return k === 1 ? `${k} ${s}` : `${k} ${many || (s + 's')}`;
 }
 
-export const TIER_ORDER = ['reporter', 'field_worker', 'animal_health_technician', 'operator'];
+export const TIER_ORDER = rawList('tiers.order');
 
 export function tierValue(tier) {
   return TIER_ORDER.includes(tier) ? tier : TIER_ORDER[0];

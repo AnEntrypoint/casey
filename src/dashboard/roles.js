@@ -6,11 +6,13 @@ import { RESERVED_TAG } from '../hooks/heuristics.js'
 import { inSignOffQueue } from '../signoff-desk.js'
 import { MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMandatoryMinimum, fieldLabel, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, missingSignoffDiagnosis } from '../store/report-shape.js'
 
+import { FIELD_ROLES, SPECIALIST_ROLE, LEAST_PRIVILEGED_FIELD_ROLE } from '../domain-roles.js'
+
 export const STAFF_ROLES = ['admin', 'operator', 'secretary']
-export const FIELD_ROLES = ['eco_ranger', 'animal_health_technician']
+export { FIELD_ROLES }
 export const VIEWER_ROLES = ['viewer']
 export const ACCOUNT_ROLES = [...STAFF_ROLES, ...FIELD_ROLES, ...VIEWER_ROLES]
-export const LEAST_PRIVILEGED_ROLE = 'eco_ranger'
+export const LEAST_PRIVILEGED_ROLE = LEAST_PRIVILEGED_FIELD_ROLE
 
 export function resolveRole(value) {
   return ACCOUNT_ROLES.includes(value) ? value : LEAST_PRIVILEGED_ROLE
@@ -19,7 +21,7 @@ export const roleOf = (acct) => resolveRole(acct?.role)
 export const isStaffAccount = (acct) => STAFF_ROLES.includes(acct?.role)
 export const isFieldAccount = (acct) => !isStaffAccount(acct)
 export const isViewer = (acct) => VIEWER_ROLES.includes(acct?.role)
-export const isTechnician = (acct) => roleOf(acct) === 'animal_health_technician'
+export const isTechnician = (acct) => roleOf(acct) === SPECIALIST_ROLE
 
 const digits = (v) => String(v == null ? '' : v).replace(/\D/g, '')
 

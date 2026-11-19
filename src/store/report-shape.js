@@ -1,6 +1,7 @@
 
 import { loadDomainConfig } from '../config-loader.js'
 import { TIER_ORDER, tierLabel } from '../contact-tiers.js'
+import { FIELD_ROLES, SPECIALIST_ROLE } from '../domain-roles.js'
 
 export const DIAGNOSIS_STATUS_KEY = 'diagnosis_status'
 
@@ -108,7 +109,7 @@ export function deriveReportShape(reportFields) {
     ? { ...f, description: `${f.description || ''} Usual answers: ${FIELD_OPTIONS[f.key].join(', ')}. If they clearly mean one of these, record it with exactly that spelling; if it is anything else (an ostrich, a camel), record their own word as they said it -- never force it into this list.`.trim() }
     : f
 
-  const HIDE_GROUPS = ['all', 'staff', 'eco_ranger', 'animal_health_technician']
+  const HIDE_GROUPS = [...new Set(['all', 'staff', ...FIELD_ROLES, SPECIALIST_ROLE])]
   const NEVER_HIDDEN = new Set([...MANDATORY_MINIMUM_FIELDS, ...SIGNOFF_DIAGNOSIS_FIELDS, ...CRITICAL_FIELDS, ...(AREA_FIELD ? [AREA_FIELD] : [])])
   const hiddenCfg = (DASHBOARD_UI && DASHBOARD_UI.hidden_fields && typeof DASHBOARD_UI.hidden_fields === 'object') ? DASHBOARD_UI.hidden_fields : {}
   const groupOf = (role) => (role === 'admin' || role === 'operator' || role === 'secretary') ? 'staff' : (HIDE_GROUPS.includes(role) ? role : null)

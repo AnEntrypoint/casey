@@ -3,7 +3,7 @@ import { Btn } from '/design/src/components/shell/atoms.js';
 import { api, setViewAs, viewAsId } from '../api.js';
 import { state } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
-import { word } from '../words.js';
+import { word, rawWord, rawList } from '../words.js';
 
 const h = webjsx.createElement;
 let accounts = [];
@@ -11,12 +11,11 @@ const ROLE_KEY = {
     admin: 'ui.view_as_panel_role_admin',
     operator: 'ui.view_as_panel_role_operator',
     secretary: 'ui.view_as_panel_role_operator',
-    eco_ranger: 'ui.view_as_panel_role_eco_ranger',
-    animal_health_technician: 'ui.view_as_panel_role_technician',
     viewer: 'ui.view_as_panel_role_viewer',
 };
-const roleName = (role) => (ROLE_KEY[role] ? word(ROLE_KEY[role]) : role);
-const ORDER = ['operator', 'secretary', 'animal_health_technician', 'eco_ranger', 'viewer', 'admin'];
+const roleName = (role) => (ROLE_KEY[role] ? word(ROLE_KEY[role]) : (rawWord('roles.view.' + role) ?? role));
+const specialistRole = rawWord('roles.specialist');
+const ORDER = ['operator', 'secretary', specialistRole, ...rawList('roles.field').filter(r => r !== specialistRole), 'viewer', 'admin'];
 
 const loader = createPanelLoader({
     what: () => word('ui.view_as_panel_what'),

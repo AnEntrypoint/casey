@@ -10,6 +10,7 @@ import { assigneeKeyFor, isContactAssignee, contactIdOfAssignee, isOwnConversati
 import { staffLabel, releaseCase } from './hooks/staff-outbound.js'
 import { clearFocusForCase } from './team-focus.js'
 import { AREA_FIELD } from './store/report-shape.js'
+import { FIELD_ROLES } from './domain-roles.js'
 import { haversineKm } from './case-tools-shared.js'
 
 const KEY = 'areas'
@@ -118,7 +119,7 @@ export async function checkRanger(store, key) {
   }
   const [acct] = await store.t.list('operator_account', { username: k }, { limit: 1 }).catch(() => [])
   if (!acct || acct.status === 'deleted' || acct.disabled === 1 || acct.disabled === '1' || acct.disabled === true) return { ok: false, why: 'no login by that name' }
-  if (acct.role !== 'eco_ranger' && acct.role !== 'animal_health_technician') return { ok: false, why: 'that login is not an eco ranger or technician' }
+  if (!FIELD_ROLES.includes(acct.role)) return { ok: false, why: 'that login is not an eco ranger or technician' }
   return { ok: true, name: acct.display_name || acct.username, contact: null }
 }
 

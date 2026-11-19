@@ -35,3 +35,14 @@ export function word(key, vars) {
   if (v == null) return key.split('.').pop().replace(/_/g, ' ');
   return fill(Array.isArray(v) ? v.join(' ') : String(v), vars);
 }
+
+export function rawWord(key) {
+  const v = words()[key];
+  return typeof v === 'string' ? v : undefined;
+}
+
+export function rawList(key) {
+  const v = words()[key];
+  if (!Array.isArray(v)) throw new Error(`vocabulary has no list "${key}"`);
+  return v;
+}

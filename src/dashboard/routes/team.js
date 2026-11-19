@@ -7,11 +7,12 @@ import { TIER_LABELS, fieldLabel } from '../../store/report-shape.js'
 import { fmtPhone27 } from '../../format.js'
 import { waLink } from '../wa-link.js'
 import { missingFor, FIELD_ROLES } from '../roles.js'
+import { ROLE_TIER_KEY } from '../../domain-roles.js'
 import { parseReport } from '../../timestamp.js'
 import { loadAreas, resolveArea, statedArea } from '../../areas.js'
 import { buildTeamMetrics, DEFAULT_STUCK_HOURS } from '../../ranger-metrics.js'
 
-const ROLE_LABEL = { eco_ranger: TIER_LABELS[TIER.field], animal_health_technician: TIER_LABELS[TIER.specialist] }
+const ROLE_LABEL = Object.fromEntries(Object.entries(ROLE_TIER_KEY).map(([role, tierKey]) => [role, TIER_LABELS[TIER[tierKey]]]))
 const NUDGE_CASE_CAP = 300
 const HOUR = 3600e3
 

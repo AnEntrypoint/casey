@@ -11,3 +11,19 @@ tier_labels:
 admin_only_tiers: [operator]
 observation_form: test_form
 tool_names: {}
+roles:
+  field: [field_role, specialist_role]
+  specialist: specialist_role
+  least_privileged: field_role
+role_tiers:
+  field_role: field
+  specialist_role: specialist
+tags:
+  field_note: field-note
+  specialist_note: specialist-note
+  handover_offer: handover-offer
+team_import:
+  role_words:
+    field: [field]
+    specialist: [specialist]
+    operator: [op]

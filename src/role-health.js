@@ -2,6 +2,7 @@
 
 import fs from 'node:fs'
 import { TIER_ORDER, atLeast, resolveTierValue, TIER } from './contact-tiers.js'
+import { FIELD_ROLES, SPECIALIST_ROLE } from './domain-roles.js'
 
 const row = (id, level, text, fix) => ({ id, level, text, ...(fix ? { fix } : {}) })
 const DAY = 86400e3
@@ -49,7 +50,7 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
       if (ccols.has('tier')) contacts = (await q(db, `SELECT id, external_id, display_name, tier, status, channel FROM contact`)).filter(c => c.status !== 'deleted' && c.channel !== 'system')
     }
     const teamContacts = contacts.filter(c => atLeast(resolveTierValue(c.tier), TIER.field))
-    const fieldLogins = live.filter(a => a.role === 'eco_ranger' || a.role === 'animal_health_technician')
+    const fieldLogins = live.filter(a => FIELD_ROLES.includes(a.role))
     const byTier = {}
     for (const c of teamContacts) byTier[resolveTierValue(c.tier)] = (byTier[resolveTierValue(c.tier)] || 0) + 1
     if (!teamContacts.length && !fieldLogins.length) {
@@ -58,8 +59,8 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
     } else {
       const parts = Object.entries(byTier).map(([t, n]) => `${n} ${t}`)
       rows.push(row('team', 'ok', `registered team: ${parts.join(', ') || 'no WhatsApp contacts'}${fieldLogins.length ? `; ${fieldLogins.length} field login(s)` : ''}`))
-      if (!byTier.animal_health_technician && !live.some(a => a.role === 'animal_health_technician')) {
-        rows.push(row('team-signoff', 'warn', 'nobody holds the animal_health_technician rung, and only that rung may sign a report off over WhatsApp', 'casey roles assign <phone> animal_health_technician --name "..."'))
+      if (!byTier[TIER.specialist] && !live.some(a => a.role === SPECIALIST_ROLE)) {
+        rows.push(row('team-signoff', 'warn', `nobody holds the ${TIER.specialist} rung, and only that rung may sign a report off over WhatsApp`, `casey roles assign <phone> ${TIER.specialist} --name "..."`))
       }
     }
     if (acctCols.size && !acctCols.has('contact_phone')) {

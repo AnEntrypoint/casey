@@ -1,5 +1,6 @@
 import { api, ApiError, pollCases } from './api.js';
 import { state } from './state.js';
+import { rawWord, rawList, word } from './words.js';
 
 async function json(path, opts) {
   const r = await api(path, opts);
@@ -11,14 +12,14 @@ async function json(path, opts) {
 const send = (method, path, body) => json(path, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) });
 const seg = (id) => encodeURIComponent(id);
 
-const FIELD_ROLES = ['eco_ranger', 'animal_health_technician'];
+const FIELD_ROLES = rawList('roles.field');
 export const currentRole = () => (state.currentUser && state.currentUser.role) || null;
 export const isFieldRole = () => !!state.authed && !['admin', 'operator', 'secretary', 'viewer'].includes(currentRole());
 export const isViewerRole = () => !!state.authed && currentRole() === 'viewer';
 export const isAdminRole = () => !!state.authed && currentRole() === 'admin';
-export const isTechnician = () => currentRole() === 'animal_health_technician';
-export const ROLE_NAME = { eco_ranger: 'Eco Ranger', animal_health_technician: 'Animal Health Technician', viewer: 'Read-only viewer' };
-export const roleName = () => ROLE_NAME[currentRole()] || 'Field team';
+export const isTechnician = () => currentRole() === rawWord('roles.specialist');
+export const roleNameOf = (role) => rawWord('roles.name.' + role);
+export const roleName = () => roleNameOf(currentRole()) || word('ui.role_name_default');
 export { FIELD_ROLES };
 
 function fieldCasesQuery(view, { q = '', state: done = '', offset = 0, limit = 200 } = {}) {

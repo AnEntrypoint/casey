@@ -8,7 +8,7 @@ import { createPanelLoader } from './panel-load.js';
 import { fetchFeedback, fetchOperatorNames } from '../api-team.js';
 import { fmtTime, NO_TIME_TEXT } from '../format.js';
 import { tierLabel } from '../vocabulary.js';
-import { word } from '../words.js';
+import { word, rawWord } from '../words.js';
 
 const h = webjsx.createElement;
 
@@ -26,7 +26,7 @@ const loader = createPanelLoader({
 const ROLE_KEY = { admin: 'ui.feedback_panel_role_admin', operator: 'ui.feedback_panel_role_operator', secretary: 'ui.feedback_panel_role_operator' };
 export function roleWord(k) {
   if (ROLE_KEY[k]) return word(ROLE_KEY[k]);
-  const t = k === 'eco_ranger' ? 'field_worker' : k;
+  const t = rawWord('roles.tier.' + k) || k;
   return tierLabel(t);
 }
 

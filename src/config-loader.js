@@ -204,11 +204,27 @@ export function vocabText(key, fallback, vars = {}) {
 }
 
 export function clientVocabulary() {
+  const { vocabulary, domain } = loadDomainConfig()
   const out = {}
-  for (const [k, v] of Object.entries(loadDomainConfig().vocabulary.words)) {
+  for (const [k, v] of Object.entries(vocabulary.words)) {
     if (VOCAB_CLIENT_SECTIONS.includes(k.split('.')[0])) out[k] = v
   }
+  const roles = domain.roles || {}
+  out['roles.field'] = [...roles.field]
+  out['roles.specialist'] = roles.specialist
+  out['roles.least_privileged'] = roles.least_privileged
+  for (const [role, tierKey] of Object.entries(domain.role_tiers || {})) out['roles.tier.' + role] = domain.tiers[tierKey]
+  for (const [role, spec] of Object.entries(roles.words || {})) {
+    if (spec.name) out['roles.name.' + role] = vocabWordOrFail(vocabulary.words, spec.name)
+    if (spec.view) out['roles.view.' + role] = vocabWordOrFail(vocabulary.words, spec.view)
+  }
+  out['tiers.order'] = Object.values(domain.tiers)
   return out
+}
+
+function vocabWordOrFail(words, key) {
+  if (typeof words[key] !== 'string') throw new Error(`vocabulary.yml has no word "${key}" named by domain.yml roles.words`)
+  return words[key]
 }
 
 let thatcherEnumCache = null

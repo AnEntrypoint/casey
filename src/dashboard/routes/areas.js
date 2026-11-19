@@ -1,5 +1,6 @@
 import { mountRoutes } from './register.js'
 import { isStaffAccount, isTechnician, resolveContact } from '../roles.js'
+import { SPECIALIST_ROLE } from '../../domain-roles.js'
 import { isContactAssignee, contactIdOfAssignee } from '../../case-assignment.js'
 import { TIER } from '../../contact-tiers.js'
 import { staffLabel } from '../../hooks/staff-outbound.js'
@@ -173,7 +174,7 @@ export function getMyDay({ store, authed, findAccountByUsername }) {
         if (!a) return res.status(404).json({ error: 'no such team member' })
         contact = await resolveContact(store, a)
         keys = [a.username, ...(contact ? await keysForContact(store, contact) : [])]
-        tier = contact?.tier || (a.role === 'animal_health_technician' ? TIER.specialist : TIER.field)
+        tier = contact?.tier || (a.role === SPECIALIST_ROLE ? TIER.specialist : TIER.field)
         name = a.display_name || a.username
       }
       ranger = { key, name }

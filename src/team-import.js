@@ -3,6 +3,7 @@
 import { TIER_ORDER, ADMIN_ONLY_TIERS, DEFAULT_TIER_LABELS, resolveTierValue, tierRank, tierLabel, TIER } from './contact-tiers.js'
 import { normalizeMsisdn } from './role-invites.js'
 import { TIER_LABELS } from './store/report-shape.js'
+import { TEAM_IMPORT_ROLE_WORDS } from './domain-roles.js'
 import { loadRoster, recordRoster, rosterKey } from './team-roster.js'
 
 export const MAX_IMPORT_ROWS = 500
@@ -16,9 +17,9 @@ function roleTable() {
   const m = new Map()
   const add = (word, tier) => m.set(norm(word), tier)
   for (const t of TIER_ORDER) { add(t, t); add(tierLabel(t, TIER_LABELS), t); add(DEFAULT_TIER_LABELS[t], t) }
-  for (const w of ['ranger', 'eco ranger', 'ecoranger', 'field worker', 'fieldworker', 'field']) add(w, TIER.field)
-  for (const w of ['aht', 'a h t', 'technician', 'animal health tech', 'animal health']) add(w, TIER.specialist)
-  for (const w of ['op', 'ops']) add(w, TIER.operator)
+  for (const w of TEAM_IMPORT_ROLE_WORDS.field) add(w, TIER.field)
+  for (const w of TEAM_IMPORT_ROLE_WORDS.specialist) add(w, TIER.specialist)
+  for (const w of TEAM_IMPORT_ROLE_WORDS.operator) add(w, TIER.operator)
   return m
 }
 

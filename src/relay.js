@@ -3,10 +3,11 @@ import { tsMs, tagList } from './timestamp.js'
 import { isOpenCase } from './format.js'
 import { dropTag } from './hooks/heuristics.js'
 import { AGENT_USER } from './case-store.js'
+import { NOTE_TAGS } from './domain-roles.js'
 
-export const RANGER_NOTE = 'ranger-note'
-export const TECHNICIAN_NOTE = 'technician-note'
-export const HANDOVER_TAG = 'handover-offer'
+export const RANGER_NOTE = NOTE_TAGS.field_note
+export const TECHNICIAN_NOTE = NOTE_TAGS.specialist_note
+export const HANDOVER_TAG = NOTE_TAGS.handover_offer
 export const HANDOVER_TTL_MS = 48 * 3600e3
 export const NOTE_MAX = 600
 
