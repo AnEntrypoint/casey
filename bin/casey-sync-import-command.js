@@ -1,22 +1,15 @@
 import path from 'node:path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { KINDS } from '../src/sync/adapters/base.js'
+import { syncConfig } from '../src/sync/sync-config.js'
 import { bold, dim, green, red, cyan, bad, say } from './casey-cli-ui.js'
 
-const FIELD_ALIASES = {
-  association: ['association', 'community_association', 'community', 'association_name'],
-  farmer_name: ['farmer_name', 'farmer', 'name', 'full_name'],
-  farmer_phone: ['farmer_phone', 'phone', 'phone_number', 'contact_number'],
-  visit_date: ['visit_date', 'date', 'trip_date', 'log_date'],
-  purpose: ['purpose_of_visit', 'purpose'],
-  activities: ['activities_conducted', 'activities'],
-  outcome_notes: ['outcome_notes', 'notes'],
-  follow_up_required: ['follow_up_required', 'followup', 'follow_up'],
-  province: ['province', 'region'],
+function fieldAliases() {
+  return syncConfig().SYNC_IMPORT_ALIASES
 }
 
 function pickField(row, canonical) {
-  for (const alias of FIELD_ALIASES[canonical] || [canonical]) {
+  for (const alias of fieldAliases()[canonical] || [canonical]) {
     if (row[alias] !== undefined && row[alias] !== '') return row[alias]
   }
   return null
@@ -24,7 +17,7 @@ function pickField(row, canonical) {
 
 function normalizeRow(raw, kind) {
   const out = { kind, raw }
-  for (const canonical of Object.keys(FIELD_ALIASES)) out[canonical] = pickField(raw, canonical)
+  for (const canonical of Object.keys(fieldAliases())) out[canonical] = pickField(raw, canonical)
   return out
 }
 

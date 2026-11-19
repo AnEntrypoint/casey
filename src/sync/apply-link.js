@@ -1,18 +1,10 @@
 import { REPORT_KEYS } from '../store/report-shape.js';
 import { fillIfEmptyReport } from '../store/report-merge.js';
-
-const FIELD_MAP = {
-  location: 'location',
-  name: 'owner_name',
-  phone: 'contact_fallback',
-  photo_url: 'photos',
-  species: 'species',
-  notes: 'notes',
-};
+import { syncConfig } from './sync-config.js';
 
 export function externalRecordToReportPatch(externalRecord) {
   const patch = {};
-  for (const [srcKey, reportKey] of Object.entries(FIELD_MAP)) {
+  for (const [srcKey, reportKey] of Object.entries(syncConfig().SYNC_LINK_FIELD_MAP)) {
     if (!REPORT_KEYS.has(reportKey)) continue;
     const v = externalRecord[srcKey];
     if (v != null && String(v).trim() !== '') patch[reportKey] = v;

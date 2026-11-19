@@ -37,3 +37,8 @@ export const NOTE_TAGS = Object.freeze({ field_note: tags.field_note, specialist
 const importWords = domain.team_import?.role_words || {}
 for (const k of ['field', 'specialist', 'operator']) need(Array.isArray(importWords[k]) && importWords[k].every(nonEmptyString), `team_import.role_words.${k} must list words`)
 export const TEAM_IMPORT_ROLE_WORDS = Object.freeze({ field: [...importWords.field], specialist: [...importWords.specialist], operator: [...importWords.operator] })
+
+const importHeaders = domain.team_import?.headers || {}
+const IMPORT_HEADER_KEYS = ['name', 'phone', 'role', 'area', 'smartphone']
+for (const k of IMPORT_HEADER_KEYS) need(Array.isArray(importHeaders[k]) && importHeaders[k].every(nonEmptyString), `team_import.headers.${k} must list column names`)
+export const TEAM_IMPORT_HEADERS = Object.freeze(Object.fromEntries(IMPORT_HEADER_KEYS.map(k => [k, Object.freeze([...importHeaders[k]])])))

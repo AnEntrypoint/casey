@@ -3,7 +3,7 @@
 import { TIER_ORDER, ADMIN_ONLY_TIERS, DEFAULT_TIER_LABELS, resolveTierValue, tierRank, tierLabel, TIER } from './contact-tiers.js'
 import { normalizeMsisdn } from './role-invites.js'
 import { TIER_LABELS } from './store/report-shape.js'
-import { TEAM_IMPORT_ROLE_WORDS } from './domain-roles.js'
+import { TEAM_IMPORT_ROLE_WORDS, TEAM_IMPORT_HEADERS } from './domain-roles.js'
 import { loadRoster, recordRoster, rosterKey } from './team-roster.js'
 
 export const MAX_IMPORT_ROWS = 500
@@ -42,16 +42,9 @@ export function parseSmartphone(v) {
   return undefined
 }
 
-const HEADERS = {
-  name: ['name', 'full name', 'person', 'ranger', 'names'],
-  phone: ['phone', 'cell', 'cellphone', 'cell phone', 'mobile', 'number', 'whatsapp', 'phone number', 'cell number', 'contact number', 'msisdn'],
-  role: ['role', 'position', 'type', 'tier'],
-  area: ['association', 'area', 'community', 'group', 'farm', 'region', 'ward'],
-  smartphone: ['smartphone', 'smart phone', 'has smartphone', 'has a smartphone', 'smart'],
-}
 function headerKey(h) {
   const n = norm(h)
-  for (const [k, list] of Object.entries(HEADERS)) if (list.includes(n)) return k
+  for (const [k, list] of Object.entries(TEAM_IMPORT_HEADERS)) if (list.includes(n)) return k
   return null
 }
 

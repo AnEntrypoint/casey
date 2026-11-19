@@ -1,4 +1,6 @@
 
+import { syncConfig } from './sync-config.js';
+
 const NAME_MATCH_WEIGHT = 0.4;
 const PHONE_MATCH_WEIGHT = 0.4;
 const LOCATION_MATCH_WEIGHT = 0.15;
@@ -75,15 +77,16 @@ export function scoreCandidate(localKind, localRow, externalRecord) {
 }
 
 function normalizeManualImportRecord(row, index) {
+  const cols = syncConfig().SYNC_CORRELATION_COLUMNS;
   return {
-    system: 'meat_naturally',
+    system: syncConfig().SYNC_SYSTEM,
     kind: row.kind,
     external_id: `manual-import-${row.kind}-${index}`,
-    external_ref: row.farmer_name || row.association || `${row.kind} #${index}`,
-    name: row.farmer_name || null,
-    phone: row.farmer_phone || null,
-    location: row.association || null,
-    date: row.visit_date || null,
+    external_ref: row[cols.name] || row[cols.location] || `${row.kind} #${index}`,
+    name: row[cols.name] || null,
+    phone: row[cols.phone] || null,
+    location: row[cols.location] || null,
+    date: row[cols.date] || null,
   };
 }
 

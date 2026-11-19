@@ -1,4 +1,6 @@
-export const KINDS = Object.freeze(['field_visit', 'farmer', 'association', 'follow_up'])
+import { hasSyncConfig, syncConfig } from '../sync-config.js'
+
+export const KINDS = Object.freeze(hasSyncConfig() ? [...syncConfig().SYNC_KINDS] : [])
 
 export function assertIsAdapter(mod, label) {
   if (!mod || typeof mod.fetchRemoteRecords !== 'function' || typeof mod.pushLocalUpdate !== 'function') {

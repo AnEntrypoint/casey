@@ -5,6 +5,7 @@ import { assigneeNamer } from '../assignee-names.js'
 import { publicExternalLink } from './external-links.js'
 import { verifyApiKey, findByPrefix, touchLastUsed, parseScopes, keyPrefix } from '../../sync/api-key-auth.js'
 import { KINDS } from '../../sync/adapters/base.js'
+import { syncConfig } from '../../sync/sync-config.js'
 
 const SYNC_RATE_WINDOW_MS = Number(process.env.CASEY_SYNC_API_RATE_WINDOW_MS) || 60_000
 const SYNC_RATE_LIMIT = Number(process.env.CASEY_SYNC_API_RATE_LIMIT) || 120
@@ -86,7 +87,7 @@ export function postSyncExternalLink({ store }) {
     if (!b.local_id) return res.status(400).json({ error: 'local_id is required' })
     if (!b.external_entity) return res.status(400).json({ error: 'external_entity is required' })
     const row = await store.t.create('external_link', {
-      system: 'meat_naturally',
+      system: syncConfig().SYNC_SYSTEM,
       local_entity: b.local_entity, local_id: String(b.local_id),
       external_entity: String(b.external_entity), external_id: String(b.external_id || ''),
       external_ref: String(b.external_ref || '').slice(0, 200),

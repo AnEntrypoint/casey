@@ -27,3 +27,9 @@ team_import:
     field: [field]
     specialist: [specialist]
     operator: [op]
+  headers:
+    name: [name]
+    phone: [phone]
+    role: [role]
+    area: [area]
+    smartphone: [smartphone]
