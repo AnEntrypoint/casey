@@ -15,7 +15,6 @@
     "lint": "node scripts/lint.mjs",
     "test": "node --test test/*.test.mjs",
     "scan-deps": "node scripts/scan-deps.mjs",
-    "gui-check": "node scripts/gui-check.mjs",
     "check-submodules": "node scripts/check-submodules.mjs",
     "install-hooks": "node scripts/install-hooks.mjs",
     "link-deps": "node scripts/link-deps.mjs",

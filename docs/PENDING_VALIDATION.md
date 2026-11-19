@@ -21,7 +21,7 @@ Status key: OPEN = applies, not started. N/A = the skill row is for marketing pa
 - Contrast: text 4.5:1 against the ground (AGENTS.md: `--fg-2`, `--fg-3`, `--danger-ink`). OPEN. Measure per view.
 - Motion limits: pulses bounded to about 6 s with a reduced-motion rule; no motion on scroll. OPEN. Check the urgency pulse.
 - Touch targets 44 px on phone (AGENTS.md). OPEN. Check the appbar, the phone bottom bar and the map key summary.
-- Checker and gate per view: run through playwriter, timed. OPEN. gui-check.mjs needs a Chromium binary and skips without one, so it is not the checker for this pass; the playwriter run replaces it and must be recorded per view.
+- Checker and gate per view: run through playwriter, timed. OPEN. the browser harness (now in uhh, scripts/casey-gui/gui-check.mjs) needs a Chromium binary and skips without one, so it is not the checker for this pass; the playwriter run replaces it and must be recorded per view.
 
 ### Does not apply to a console (N/A)
 
