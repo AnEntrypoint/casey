@@ -17,7 +17,7 @@ export const currentRole = () => (state.currentUser && state.currentUser.role) |
 export const isFieldRole = () => !!state.authed && !['admin', 'operator', 'secretary', 'viewer'].includes(currentRole());
 export const isViewerRole = () => !!state.authed && currentRole() === 'viewer';
 export const isAdminRole = () => !!state.authed && currentRole() === 'admin';
-export const isTechnician = () => currentRole() === rawWord('roles.specialist');
+export const isSpecialist = () => currentRole() === rawWord('roles.specialist');
 export const roleNameOf = (role) => rawWord('roles.name.' + role);
 export const roleName = () => roleNameOf(currentRole()) || word('ui.role_name_default');
 export { FIELD_ROLES };
@@ -61,3 +61,4 @@ export function assigneeName(value) {
   if (hit) return hit.name;
   return v.startsWith('contact:') ? 'a team member' : v;
 }
+export const isTechnician = isSpecialist;

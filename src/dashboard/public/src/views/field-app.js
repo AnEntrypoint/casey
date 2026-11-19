@@ -12,7 +12,7 @@ import { MapPanel } from '../panels/map-panel.js';
 import { PillButton } from '../components/filter-chip.js';
 import { toast, failMsg } from '../toasts.js';
 import { createCase } from '../api.js';
-import { fetchFieldCases, pollFieldCases, isTechnician, roleName } from '../api-roles.js';
+import { fetchFieldCases, pollFieldCases, isSpecialist, roleName } from '../api-roles.js';
 import { pushHash } from '../route.js';
 import { setActiveId } from '../state.js';
 import { stageLabel, headline, rel } from '../format.js';
@@ -36,7 +36,7 @@ const fs = { view: 'home', mine: [], signoff: [], mineTotal: 0, openTotal: 0, cl
 let searchTimer = null;
 
 
-const wantsClosed = () => isTechnician() || fs.pills.has('closed');
+const wantsClosed = () => isSpecialist() || fs.pills.has('closed');
 
 
 export async function refreshFieldLists() {
@@ -47,7 +47,7 @@ export async function refreshFieldLists() {
   try {
     const [mine, signoff, closed] = await Promise.all([
       pollFieldCases('mine', { q, state: 'open' }),
-      isTechnician() ? pollFieldCases('signoff', { q }) : Promise.resolve({ body: { cases: [] }, unchanged: true }),
+      isSpecialist() ? pollFieldCases('signoff', { q }) : Promise.resolve({ body: { cases: [] }, unchanged: true }),
       wantsClosed() ? pollFieldCases('mine', { q, state: 'closed', limit: CLOSED_PAGE }) : Promise.resolve(null),
     ]);
     if (gen !== fs.gen) return;
@@ -86,7 +86,7 @@ function togglePill(key) {
   else { next.add(key); if (EXCLUSIVE[key]) next.delete(EXCLUSIVE[key]); }
   fs.pills = next;
   schedule();
-  if (key === 'closed' && next.has(key) && !isTechnician()) refreshFieldLists();
+  if (key === 'closed' && next.has(key) && !isSpecialist()) refreshFieldLists();
 }
 
 function clearFilters() {
@@ -167,7 +167,7 @@ function holdState(c) {
 
 function handedNote(c) {
   if (!tagsOf(c).includes('handed-off')) return '';
-  if (isTechnician()) { const from = holderName(c.assignee); return from ? word('ui.field_app_sent_by', { name: from }) : word('ui.field_app_sent_by_ranger'); }
+  if (isSpecialist()) { const from = holderName(c.assignee); return from ? word('ui.field_app_sent_by', { name: from }) : word('ui.field_app_sent_by_ranger'); }
   return word('ui.field_app_with_technician');
 }
 
@@ -217,7 +217,7 @@ function passesHold(c) {
 }
 
 function derive() {
-  const tech = isTechnician();
+  const tech = isSpecialist();
   const closedOn = fs.pills.has('closed');
   const open = worstFirst(fs.mine.filter((c) => isOpen(c) && passesHold(c) && passesAttributes(c)));
   const closedSource = closedOn ? fs.closed : (tech ? fs.closed.slice(0, 10) : []);
@@ -238,7 +238,7 @@ const filtersActive = () => fs.q.trim() !== '' || fs.pills.size > 0;
 
 export function fieldMapShown() {
   if (fs.view === 'map') return true;
-  return fs.view === 'home' && fs.loaded && !isTechnician() && derive().open.length > 0;
+  return fs.view === 'home' && fs.loaded && !isSpecialist() && derive().open.length > 0;
 }
 
 function Filters(d) {
@@ -287,7 +287,7 @@ function MapView() {
 }
 
 function nav() {
-  const tech = isTechnician();
+  const tech = isSpecialist();
   const go = (v) => (e) => { if (e && e.preventDefault) e.preventDefault(); if (state.activeId) closeReport(); requestViewFocus('#ds-view-title'); fs.view = v; schedule(); };
   const home = tech ? word('ui.field_app_ready_sign_off') : word('ui.field_app_my_entity', { entity_plural: entityLabelPlural() });
   return Side({
@@ -302,7 +302,7 @@ function nav() {
 }
 
 function FieldHelp() {
-  const tech = isTechnician();
+  const tech = isSpecialist();
   return Dialog({
     open: state.activeModal === 'help', title: word('ui.field_app_help_title'), onClose: closeModal,
     children: [
@@ -316,7 +316,7 @@ function FieldHelp() {
 
 export function FieldApp() {
   const brand = brandName();
-  const tech = isTechnician();
+  const tech = isSpecialist();
   const open = state.activeId != null;
   const derived = open || fs.view !== 'home' ? null : derive();
   const title = open ? word('ui.field_app_one_entity', { entity: entityLabel() }) : (fs.view === 'map' ? word('ui.field_app_map') : (tech ? word('ui.field_app_ready_sign_off') : word('ui.field_app_my_entity', { entity_plural: entityLabelPlural() })));

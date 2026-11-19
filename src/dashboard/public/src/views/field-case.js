@@ -9,7 +9,7 @@ import { stageLabel, headline } from '../format.js';
 import { entityLabel, EntityLabel } from '../vocabulary.js';
 import { word } from '../words.js';
 import { PhotosStrip } from './field-photos.js';
-import { isTechnician, fetchFieldCase, postFieldNote, postFieldIntake, postFieldTransition, postFieldLocation, postSendBack, assigneeName } from '../api-roles.js';
+import { isSpecialist, fetchFieldCase, postFieldNote, postFieldIntake, postFieldTransition, postFieldLocation, postSendBack, assigneeName } from '../api-roles.js';
 import { postHandoff, postWithdrawHandoff } from '../api-team.js';
 import { holderName } from './field-names.js';
 import { CaseProgress } from './case-detail/progress.js';
@@ -153,7 +153,7 @@ async function sendBack(c, r) {
 const tagsOf = (c) => String(c.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
 const isHandedOver = (c) => tagsOf(c).includes('handed-off');
 
-async function sendToTechnician(c) {
+async function sendToSpecialist(c) {
   const ok = await confirmDialog({
     title: word('ui.field_case_tech_title', { ref: c.ref }),
     message: word('ui.field_case_tech_message', { identity: identity(c), entity: entityLabel() }),
@@ -176,7 +176,7 @@ async function withdrawHandoff(c) {
 
 
 function SignOffCard(c, data, r, write) {
-  const tech = isTechnician();
+  const tech = isSpecialist();
   const missing = mandatory().filter((f) => !has(r, f.key));
   const canSign = tech && !missing.length && canReachDone(data.transitions);
   if (doneStages().has(c.status)) {
@@ -194,7 +194,7 @@ function SignOffCard(c, data, r, write) {
           !tech && write && isHandedOver(c) ? h('div', { class: 'casey-timeline-actions' },
             Btn({ variant: 'ghost', class: 'field-withdraw', children: word('ui.field_withdraw'), 'aria-label': word('ui.field_withdraw') + ': ' + c.ref, onClick: () => withdrawHandoff(c) })) : null,
       !tech && write && !isHandedOver(c) && mandatory().length && !missing.length ? h('div', { class: 'casey-timeline-actions' },
-        Btn({ variant: 'primary', class: 'field-handoff', children: word('ui.field_case_send_tech_button'), 'aria-label': word('ui.field_case_send_tech_label', { ref: c.ref }), onClick: () => sendToTechnician(c) })) : null,
+        Btn({ variant: 'primary', class: 'field-handoff', children: word('ui.field_case_send_tech_button'), 'aria-label': word('ui.field_case_send_tech_label', { ref: c.ref }), onClick: () => sendToSpecialist(c) })) : null,
       tech ? h('div', { class: 'casey-timeline-actions' },
         Btn({ variant: 'primary', disabled: !canSign, children: word('ui.field_case_sign_button', { ref: c.ref }), onClick: () => signOff(c, data), title: canSign ? word('ui.field_case_finish_title', { entity: entityLabel() }) : word('ui.field_case_not_ready', { reason: missing.length ? word('ui.field_case_reason_missing') : word('ui.field_case_reason_stage') }) }),
         Btn({ variant: 'ghost', children: word('ui.field_case_send_back_ranger'), onClick: () => sendBack(c, r) })) : null,
@@ -344,8 +344,8 @@ export function FieldCaseView({ id, onBack }) {
     back,
     Header(c, data, write),
     CaseProgress({ status: c.status }),
-    editable ? null : Alert({ kind: 'info', title: word('ui.field_case_readonly_title'), children: isTechnician() ? word('ui.field_case_readonly_tech') : word('ui.field_case_readonly_other') }),
-    (isTechnician() || editable) ? SignOffCard(c, data, r, editable) : null,
+    editable ? null : Alert({ kind: 'info', title: word('ui.field_case_readonly_title'), children: isSpecialist() ? word('ui.field_case_readonly_tech') : word('ui.field_case_readonly_other') }),
+    (isSpecialist() || editable) ? SignOffCard(c, data, r, editable) : null,
     editable ? ContactCard(c, data) : null,
     editable ? RecordForm(c, r) : null,
     editable ? QuickActions(c) : null,
