@@ -4,7 +4,7 @@ import { statedArea, loadAreas, resolveArea } from '../../areas.js'
 import { isDone } from '../../signoff-desk.js'
 import { SIGNOFF_DIAGNOSIS_FIELDS, DIAGNOSIS_STATUS_KEY, normalizeDiagnosisStatus } from '../../store/report-shape.js'
 import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY } from '../../privacy.js'
-import { fmtTimeSAST } from '../../format.js'
+import { fmtTimeLocal } from '../../format.js'
 import { mountRoutes } from './register.js'
 import { loadDomainConfig } from '../../config-loader.js'
 import { REPORT_CONCEPT as K } from '../../report-concepts.js'
@@ -36,7 +36,7 @@ export function conclusionKinds(text) {
   const hit = RESOLUTION_KINDS.filter(([, re]) => re.test(t)).map(([k]) => k)
   return hit.length ? hit : [OTHER_CONCLUSION]
 }
-const SAST_OFFSET_MS = UTC_OFFSET_HOURS * 3600e3
+const LOCAL_OFFSET_MS = UTC_OFFSET_HOURS * 3600e3
 const HEAT_CELL_DEG = 0.1
 const POINT_ROUND = 100
 
@@ -61,7 +61,7 @@ export function parseBound(v, endOfDay = false) {
   return NaN
 }
 
-const isoDate = (sec) => new Date(sec * 1000 + SAST_OFFSET_MS).toISOString().slice(0, 10)
+const isoDate = (sec) => new Date(sec * 1000 + LOCAL_OFFSET_MS).toISOString().slice(0, 10)
 export const monthOf = (sec) => isoDate(sec).slice(0, 7)
 export function periodLabel(w) {
   if (w.from == null && w.to == null) return 'all time'
@@ -75,7 +75,7 @@ export function periodOf(sec, grain = 'month') {
   return m
 }
 export function weekStartOf(sec) {
-  const d = new Date(sec * 1000 + SAST_OFFSET_MS)
+  const d = new Date(sec * 1000 + LOCAL_OFFSET_MS)
   const back = (d.getUTCDay() + 6) % 7
   return new Date(d.getTime() - back * 86400e3).toISOString().slice(0, 10)
 }
@@ -267,13 +267,13 @@ export function buildTrend(rows, grain = 'month', k = MIN_AGGREGATE_CELL, anchor
 }
 
 export function monthEndOf(sec) {
-  const d = new Date(sec * 1000 + SAST_OFFSET_MS)
-  return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) - SAST_OFFSET_MS) / 1000) - 1
+  const d = new Date(sec * 1000 + LOCAL_OFFSET_MS)
+  return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) - LOCAL_OFFSET_MS) / 1000) - 1
 }
 
 export function monthStartOf(sec) {
-  const d = new Date(sec * 1000 + SAST_OFFSET_MS)
-  return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) - SAST_OFFSET_MS) / 1000)
+  const d = new Date(sec * 1000 + LOCAL_OFFSET_MS)
+  return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) - LOCAL_OFFSET_MS) / 1000)
 }
 
 function windowOf(req, res) {
@@ -367,14 +367,14 @@ export function diseaseReportBody(rep, { period, region, generated }, { esc, row
 }
 
 export function getDiseasesPrint(deps) {
-  const { store, authed, esc, fmtTimeSAST, printableReportRow, printableReportTable, printableReport } = deps
+  const { store, authed, esc, fmtTimeSAST: fmtTimeLocal, printableReportRow, printableReportTable, printableReport } = deps
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const w = windowOf(req, res); if (!w) return
     const region = asked(req.query.region)
     const rep = await diseaseReportFor(store, w, { region, grain: grainOf(req) })
     const period = periodLabel(w)
-    const generated = fmtTimeSAST(Math.floor(Date.now() / 1000))
+    const generated = fmtTimeLocal(Math.floor(Date.now() / 1000))
     const body = diseaseReportBody(rep, { period, region, generated }, { esc, row: printableReportRow, tbl: printableReportTable })
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.send(printableReport('Disease report', body, '', `Generated ${generated}`))
@@ -490,7 +490,7 @@ export function reportCsvLines(rep, period, csvCell) {
   for (const c of rep.by_conclusion) emit('conclusion', { conclusion: c.conclusion, count: c.count })
   for (const c of rep.by_disease_conclusion) emit('disease_conclusion', { disease: c.disease, conclusion: c.conclusion, count: c.count })
   const note = (text) => emit('note', { note: text })
-  note(`Period: ${period}, by the date each case was resolved. Generated ${fmtTimeSAST(Date.now())}.`)
+  note(`Period: ${period}, by the date each case was resolved. Generated ${fmtTimeLocal(Date.now())}.`)
   note(`Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under "${printName(SPARSE_BUCKET_KEY)}". No case-level or personal data is included.`)
   if (rep.truncated) note('There are more reports than this export can load, so the figures leave some out.')
   return lines

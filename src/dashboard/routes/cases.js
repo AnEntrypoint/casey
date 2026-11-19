@@ -3,9 +3,9 @@ import { caseyText } from '../../deployment-text.js'
 import { normalizeMsisdn } from '../../role-invites.js'
 import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag, STOP_PENDING_PREFIX } from '../../hooks/heuristics.js'
-import { fmtPhone27, markInvisibles, fmtTimeSAST } from '../../format.js'
+import { fmtPhone27, markInvisibles, fmtTimeLocal } from '../../format.js'
 import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, hiddenFieldsFor, DIAGNOSIS_STATUS_KEY, DIAGNOSIS_STATUS_OPTIONS, normalizeDiagnosisStatus } from '../../store/report-shape.js'
-import { sendBackToRanger, isDone } from '../../signoff-desk.js'
+import { sendBackToResponder, isDone } from '../../signoff-desk.js'
 import { APPEND_FIELD_MAX_LEN } from '../../store/report-merge.js'
 import { cleanRelayed } from '../../case-tools-team-shared.js'
 import { areaInfoFor } from '../../areas.js'
@@ -210,7 +210,7 @@ export function getCasesCsv({ store, authed, csvCell, REPORT_KEY_LIST }) {
       trailer.push('# TRUNCATED: more than 10000 cases match; narrow the status or channel filter for a complete export')
       res.setHeader('X-Cases-Truncated', 'true')
     }
-    trailer.push('# Generated ' + fmtTimeSAST(Date.now()))
+    trailer.push('# Generated ' + fmtTimeLocal(Date.now()))
     const csv = [headers.join(','), ...rows, ...trailer].join('\n')
     res.setHeader('Content-Type', 'text/csv')
     res.setHeader('Content-Disposition', 'attachment; filename="casey-cases.csv"')
@@ -945,7 +945,7 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
       const body = `<h1>Field briefing: ${esc(c.ref||c.id)}</h1>
 <p><strong>Subject:</strong> ${esc(c.subject||'')}</p>${whoLine}
 <p><strong>Status:</strong> ${esc(c.status||'')} &nbsp; <strong>Channel:</strong> ${esc(c.channel||'')}</p>${warnLine}
-<p class="meta">Generated ${esc(fmtTimeSAST(Date.now()))}.</p>
+<p class="meta">Generated ${esc(fmtTimeLocal(Date.now()))}.</p>
 <div class="act">
   <a href="javascript:window.print()">Print this page</a>
   ${mapsUrl ? `<a href="${esc(mapsUrl)}" target="_blank" rel="noopener">Open in Maps</a>` : ''}
@@ -1009,7 +1009,7 @@ export function postSendBack({ store, authed, str, actingOperator }) {
     const missing = Array.isArray(req.body?.missing) ? req.body.missing.filter(k => typeof k === 'string').slice(0, 20) : []
     if (!text.trim() && !missing.length) return res.status(400).json({ error: 'Say what is missing so it can be fixed.' })
     const op = actingOperator(req)
-    await sendBackToRanger(store, c.id, { by: op.name || op.id, user: op, text, missing, data: { by: op.id } })
+    await sendBackToResponder(store, c.id, { by: op.name || op.id, user: op, text, missing, data: { by: op.id } })
     res.json({ ok: true })
   }
 }

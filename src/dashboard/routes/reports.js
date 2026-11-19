@@ -1,6 +1,6 @@
 import { TZ_LABEL } from '../../locale.js'
 import { tagList } from '../../timestamp.js'
-import { fmtTimeSAST } from '../../format.js'
+import { fmtTimeLocal } from '../../format.js'
 import { BRAND } from '../brand.js'
 
 const brandSlug = () => (BRAND.name || 'casey').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'casey'
@@ -155,7 +155,7 @@ export function getReportCsv(deps) {
       lines.push(['by_operator', k('first_reply_hours'), csvCell(msToHrs(o.first_reply_ms_median))].join(','))
       lines.push(['by_operator', k('oldest_waiting_hours'), csvCell(msToHrs(o.oldest_waiting_ms))].join(','))
     }
-    lines.push('# Generated ' + fmtTimeSAST(Date.now()))
+    lines.push('# Generated ' + fmtTimeLocal(Date.now()))
     res.setHeader('Content-Type', 'text/csv')
     res.setHeader('Content-Disposition', `attachment; filename="${brandSlug()}-management-report.csv"`)
     res.send(lines.join('\n'))
@@ -182,7 +182,7 @@ export function getReportJson(deps) {
   }
 }
 
-export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
+export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST: fmtTimeLocal }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const days = reportDays(req)
@@ -212,7 +212,7 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
       const reason = d.reason || ''
       lines.push([
         csvCell(refById.get(e.case_id) || e.case_id),
-        csvCell(fmtTimeSAST(Number(e.created_at))),
+        csvCell(fmtTimeLocal(Number(e.created_at))),
         csvCell(e.actor || ''),
         csvCell(e.kind || ''),
         csvCell(field),
@@ -225,7 +225,7 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
       lines.push(`# TRUNCATED: more than 100000 events in this window; export a shorter --days range for a complete trail`)
       res.setHeader('X-Audit-Truncated', 'true')
     }
-    lines.push('# Generated ' + fmtTimeSAST(Date.now()))
+    lines.push('# Generated ' + fmtTimeLocal(Date.now()))
     res.setHeader('Content-Type', 'text/csv')
     res.setHeader('Content-Disposition', `attachment; filename="${brandSlug()}-audit-trail.csv"`)
     res.send(lines.join('\n'))
@@ -233,7 +233,7 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
 }
 
 export function getReportHtml(deps) {
-  const { authed, esc, fmtTimeSAST, printableReportRow, printableReport } = deps
+  const { authed, esc, fmtTimeSAST: fmtTimeLocal, printableReportRow, printableReport } = deps
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { report: r } = await gatherReport(deps, reportDays(req))
@@ -248,7 +248,7 @@ export function getReportHtml(deps) {
       || printableReportRow(['none', '0', '0', '0', '', ''])
     const title = `${BRAND.name} management report`
     const body = `<h1>${esc(title)}</h1>`
-      + `<p class="meta">Generated ${esc(fmtTimeSAST(Math.floor(r.generated_at / 1000)))}. Covers the last ${esc(r.period_days)} days.</p>`
+      + `<p class="meta">Generated ${esc(fmtTimeLocal(Math.floor(r.generated_at / 1000)))}. Covers the last ${esc(r.period_days)} days.</p>`
       + `<h2>Totals</h2><table>${row('all cases', r.totals.all)}${row('open', r.totals.open)}${row('closed', r.totals.closed)}${row('opened this period', r.opened_this_period)}${row('closed this period', r.closed_this_period)}</table>`
       + `<h2>Response time</h2><table>${row('median first reply (hours)', msToHrs(r.median_first_response_ms))}${row('p90 first reply (hours)', msToHrs(r.p90_first_response_ms))}</table>`
       + `<h2>By stage</h2><table>${stageRows}</table>`
@@ -261,7 +261,7 @@ export function getReportHtml(deps) {
 }
 
 export function getHandover(deps) {
-  const { authed, esc, fmtTimeSAST, printableReportRow, printableReportTable, printableReport } = deps
+  const { authed, esc, fmtTimeSAST: fmtTimeLocal, printableReportRow, printableReportTable, printableReport } = deps
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const h = await gatherHandover(deps)
@@ -269,10 +269,10 @@ export function getHandover(deps) {
     const secs = (ms) => Math.floor(ms / 1000)
     const row = printableReportRow
     const tbl = printableReportTable
-    const sinceTxt = h.since ? fmtTimeSAST(secs(h.since)) + (h.since_by ? ` (by ${esc(h.since_by)})` : '') : 'start of records'
+    const sinceTxt = h.since ? fmtTimeLocal(secs(h.since)) + (h.since_by ? ` (by ${esc(h.since_by)})` : '') : 'start of records'
     const title = `${BRAND.name} shift handover`
     const body = `<h1>${esc(title)}</h1>`
-      + `<p class="meta">Generated ${esc(fmtTimeSAST(secs(h.generated_at)))}. Covers everything since ${esc(sinceTxt)}.</p>`
+      + `<p class="meta">Generated ${esc(fmtTimeLocal(secs(h.generated_at)))}. Covers everything since ${esc(sinceTxt)}.</p>`
       + `<h2>Needs attention (${h.attention.length})</h2>`
       + tbl(['ref', 'subject', 'channel', 'owner', 'why'], h.attention.map(a => row([a.ref, a.subject, a.channel, a.assignee || '-', a.reason])))
       + `<h2>Open handoffs not yet taken (${h.handoffs.length})</h2>`
@@ -280,7 +280,7 @@ export function getHandover(deps) {
       + `<h2>Unsent drafts (${h.drafts.length})</h2>`
       + tbl(['ref', 'subject', 'channel'], h.drafts.map(a => row([a.ref, a.subject, a.channel])))
       + `<h2>Touched this shift (${h.touched.length})</h2>`
-      + tbl(['when', 'ref', 'subject', 'last action'], h.touched.map(a => row([fmtTimeSAST(secs(a.at)), a.ref, a.subject, `${a.last_kind}${a.last_actor ? ' by ' + a.last_actor : ''}`])))
+      + tbl(['when', 'ref', 'subject', 'last action'], h.touched.map(a => row([fmtTimeLocal(secs(a.at)), a.ref, a.subject, `${a.last_kind}${a.last_actor ? ' by ' + a.last_actor : ''}`])))
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.send(printableReport(title, body))
   }

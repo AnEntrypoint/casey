@@ -10,7 +10,7 @@ import { SYSTEM_SET_FIELDS } from '../store/report-shape.js'
 import { BRAND, TYPE_SCALE_CSS } from './brand.js'
 import { brandConfig, applyBrandTokens, tokenisedAssets } from './brand-tokens.js'
 import { rankAttention } from '../attn.js'
-import { fmtTimeSAST, isOpenCase, SAST_TZ, fmtPhone27 } from '../format.js'
+import { fmtTimeLocal, isOpenCase, LOCAL_TZ, fmtPhone27 } from '../format.js'
 import { getWebhookDeliveryStatus } from '../gateway-hooks.js'
 import { escapeHtml } from 'anentrypoint-design/html-escape.js'
 import { parseJsonArraySafe, parseEventData } from '../safe.js'
@@ -391,7 +391,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
     computeFillRate, csvCell, parseJsonArraySafe, parseEventData, isOpenCase,
     UNCLAIMED_ASSIGNEE,
-    rankAttention, sendReply, fmtTimeSAST, fmtPhone27, SAST_TZ,
+    rankAttention, sendReply, fmtTimeSAST: fmtTimeLocal, fmtPhone27, SAST_TZ: LOCAL_TZ,
     printableReportRow, printableReportTable, printableReport,
     getWebhookDeliveryStatus, llmStatus, callLLM, runSweep, receiveStatus,
     runtimeStatus, queueStatus, alertWebhookUrl, resolveWhatsappAdapter,

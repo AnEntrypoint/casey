@@ -1,10 +1,10 @@
 import { mountRoutes } from './register.js'
-import { isStaffAccount, isTechnician, resolveContact } from '../roles.js'
+import { isStaffAccount, isSpecialist, resolveContact } from '../roles.js'
 import { SPECIALIST_ROLE } from '../../domain-roles.js'
 import { isContactAssignee, contactIdOfAssignee } from '../../case-assignment.js'
 import { TIER } from '../../contact-tiers.js'
 import { staffLabel } from '../../hooks/staff-outbound.js'
-import { handoffToTechnician, withdrawHandoff } from '../../signoff-desk.js'
+import { handoffToSpecialist, withdrawHandoff } from '../../signoff-desk.js'
 import { myDay, keysForContact } from '../../my-day.js'
 import { AREA_FIELD } from '../../store/report-shape.js'
 import { isOpenCase } from '../../format.js'
@@ -67,10 +67,10 @@ export function getWrongArea({ store, authed, clampLimit, offsetOf }) {
     const name = await namerFor(store, page.flatMap(r => [r.holder_key, r.suggested_ranger_key]))
     res.json({
       total: all.length, limit, offset,
-      items: page.map(({ holder_key, suggested_ranger_key, ...r }) => ({
+      items: page.map(({ holder_key, suggested_ranger_key: suggested_responder_key, ...r }) => ({
         ...r,
         holder: holder_key ? { name: name(holder_key) } : null,
-        suggested_ranger: suggested_ranger_key ? { name: name(suggested_ranger_key) } : null,
+        suggested_ranger: suggested_responder_key ? { name: name(suggested_responder_key) } : null,
       })),
     })
   }
@@ -130,7 +130,7 @@ export function postHandoff({ store, authed, actingOperator }) {
     if (!c || c.channel === 'system') return res.status(404).json({ error: 'not found' })
     const op = actingOperator(req)
     const note = typeof req.body?.note === 'string' ? req.body.note : ''
-    const out = await handoffToTechnician(store, c.id, { by: op.name || op.id, user: op, data: { by: op.id }, note })
+    const out = await handoffToSpecialist(store, c.id, { by: op.name || op.id, user: op, data: { by: op.id }, note })
     if (!out.ok) return res.status(400).json({ error: out.error, code: out.code, ...(out.missing ? { missing: out.missing } : {}) })
     res.json({ ok: true, ref: out.ref, ...(out.already ? { already: true } : {}) })
   }
@@ -154,13 +154,13 @@ export function getMyDay({ store, authed, findAccountByUsername }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const acct = req.caseyAccount
     const since = req.query.since != null && Number.isFinite(Number(req.query.since)) ? Number(req.query.since) : null
-    let keys = []; let contact = null; let tier = ''; let name = ''; let ranger
+    let keys = []; let contact = null; let tier = ''; let name = ''; let responder
     if (!isStaffAccount(acct)) {
       const asked = String(req.query.ranger || '').trim()
       if (asked && asked !== acct.username && !(acct._contact && asked === `contact:${acct._contact.id}`)) return res.status(403).json({ error: 'You can see your own day only.', code: 'role_forbidden' })
       contact = acct._contact || await resolveContact(store, acct)
       keys = [acct.username, ...(contact ? await keysForContact(store, contact) : [])]
-      tier = contact?.tier || (isTechnician(acct) ? TIER.specialist : TIER.field)
+      tier = contact?.tier || (isSpecialist(acct) ? TIER.specialist : TIER.field)
       name = acct.display_name || acct.username
     } else {
       const key = String(req.query.ranger || '').trim()
@@ -177,9 +177,9 @@ export function getMyDay({ store, authed, findAccountByUsername }) {
         tier = contact?.tier || (a.role === SPECIALIST_ROLE ? TIER.specialist : TIER.field)
         name = a.display_name || a.username
       }
-      ranger = { key, name }
+      responder = { key, name }
     }
-    res.json({ ...(ranger ? { ranger } : {}), ...(await myDay(store, { keys, contact, tier, name, since })) })
+    res.json({ ...(responder ? { ranger: responder } : {}), ...(await myDay(store, { keys, contact, tier, name, since })) })
   }
 }
 

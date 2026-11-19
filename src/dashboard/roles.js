@@ -21,7 +21,7 @@ export const roleOf = (acct) => resolveRole(acct?.role)
 export const isStaffAccount = (acct) => STAFF_ROLES.includes(acct?.role)
 export const isFieldAccount = (acct) => !isStaffAccount(acct)
 export const isViewer = (acct) => VIEWER_ROLES.includes(acct?.role)
-export const isTechnician = (acct) => roleOf(acct) === SPECIALIST_ROLE
+export const isSpecialist = (acct) => roleOf(acct) === SPECIALIST_ROLE
 
 const digits = (v) => String(v == null ? '' : v).replace(/\D/g, '')
 
@@ -65,7 +65,7 @@ export function caseAccess(c, acct, { unclaimedKey = 'agent' } = {}) {
   if (c.channel === 'system') return 'none'
   if (isAssignedTo(c, acct)) return 'write'
   if (isOwnReport(c, acct)) return 'read'
-  if (isTechnician(acct) && inSignOffQueue(c, unclaimedKey)) return 'read'
+  if (isSpecialist(acct) && inSignOffQueue(c, unclaimedKey)) return 'read'
   return 'none'
 }
 
@@ -173,20 +173,20 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
       const { rule, id } = hit
       if (rule === 'open') return next()
       if (rule === 'scoped-list') { req.caseyScoped = true; return next() }
-      if (rule.tech && !isTechnician(acct)) return deny(res, 403, 'Only an animal health technician can do this.', 'role_forbidden')
+      if (rule.tech && !isSpecialist(acct)) return deny(res, 403, 'Only an animal health technician can do this.', 'role_forbidden')
       const c = await store.getCase(id)
       const access = caseAccess(c, acct, { unclaimedKey: UNCLAIMED_ASSIGNEE })
       if (access === 'none') return deny(res, 404, 'not found')
       req.caseyAccess = access
       const b = req.body || {}
       if (rule.access === 'write' && access !== 'write') {
-        const signOffMove = rule.transition && isTechnician(acct) && inSignOffQueue(c, UNCLAIMED_ASSIGNEE)
+        const signOffMove = rule.transition && isSpecialist(acct) && inSignOffQueue(c, UNCLAIMED_ASSIGNEE)
         if (!signOffMove) return deny(res, 403, 'This case is not assigned to you, so you can look but not change it.', 'not_assigned')
       }
-      if (rule.access === 'signoff' && access === 'read' && !(isTechnician(acct) && inSignOffQueue(c, UNCLAIMED_ASSIGNEE))) {
+      if (rule.access === 'signoff' && access === 'read' && !(isSpecialist(acct) && inSignOffQueue(c, UNCLAIMED_ASSIGNEE))) {
         return deny(res, 403, 'This case is not assigned to you, so you can look but not change it.', 'not_assigned')
       }
-      if (rule.intake && !isTechnician(acct) && SIGNOFF_DIAGNOSIS_FIELDS.some(k => k in b)) {
+      if (rule.intake && !isSpecialist(acct) && SIGNOFF_DIAGNOSIS_FIELDS.some(k => k in b)) {
         return deny(res, 403, 'The animal health technician records the diagnosis, when signing the report off.', 'role_forbidden')
       }
       if (rule.patch) {
@@ -198,7 +198,7 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
         }
       }
       if (rule.transition && isDoneStatus(b.to) && b.to !== c.status) {
-        if (!isTechnician(acct)) return deny(res, 403, 'Only an animal health technician can sign a case off.', 'signoff_forbidden')
+        if (!isSpecialist(acct)) return deny(res, 403, 'Only an animal health technician can sign a case off.', 'signoff_forbidden')
         const missing = missingFor(c)
         if (missing.length) return deny(res, 400, `Cannot sign off yet: still missing ${missing.map(fieldLabel).join(', ')}.`, 'missing_minimum')
         const noDiagnosis = missingDiagnosisFor(c, b)
@@ -230,3 +230,4 @@ export function expectedRefGuard({ store }) {
 }
 
 export { MANDATORY_MINIMUM_FIELDS }
+export const isTechnician = isSpecialist;

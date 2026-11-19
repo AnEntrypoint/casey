@@ -5,7 +5,7 @@ import * as portal from '../../portal/portal-store.js'
 import * as portalSettings from '../../portal/portal-config.js'
 import { ASSET_NAMES, renderAsset } from '../../portal/portal-render.js'
 import { HEARTBEAT_BYTES_MAX, parseHealth, recordHealth, healthRows, latestHealthRow } from '../../portal/portal-health.js'
-import { DAY_MS, BUCKETS, USAGE_SAMPLES_MAX, parseUsageSamples, ingestUsage, parseWindow, parseUsageFilter, usageReport, registeredPhone, dailyCaps, capsAnswer, sastDayStart, capBytesFromMb } from '../../portal/portal-usage.js'
+import { DAY_MS, BUCKETS, USAGE_SAMPLES_MAX, parseUsageSamples, ingestUsage, parseWindow, parseUsageFilter, usageReport, registeredPhone, dailyCaps, capsAnswer, localDayStart, capBytesFromMb } from '../../portal/portal-usage.js'
 import { purgeIfDue } from '../../portal/portal-retention.js'
 import { createWaPrefixSource, waPrefixesText } from '../../portal/portal-wa-prefixes.js'
 import { decodeBody, parseCycle, applyCycle, parseStatusBatch, statusBatch } from '../../portal/portal-cycle.js'
@@ -256,7 +256,7 @@ export function getPortalUsage({ store, authed }) {
       ...cap,
       phone_e164: await registeredPhone(store, cap.router_id, cap.mac),
     })))
-    res.json({ bucket, series: report.series, devices, daily: { day_start: sastDayStart(now), devices: today } })
+    res.json({ bucket, series: report.series, devices, daily: { day_start: localDayStart(now), devices: today } })
   }
 }
 
