@@ -1070,3 +1070,11 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   border-color: color-mix(in oklab, var(--fg) 30%, transparent);
   font-weight: 500;
 }
+
+.ds-247420 .ds-dialog-panel .ds-help-intro,
+.ds-247420 .ds-help-intro {
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  max-width: none;
+  margin: 0 0 var(--space-3);
+}

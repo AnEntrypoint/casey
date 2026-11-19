@@ -1,5 +1,5 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
-import { Btn, Lede } from '/design/src/components/shell/atoms.js';
+import { Btn } from '/design/src/components/shell/atoms.js';
 import { Dialog } from './dialog-shell.js';
 import { glossary } from '../glossary.js';
 import { brandName } from '../vocabulary.js';
@@ -36,7 +36,7 @@ export function HelpOverlay({ open, onClose, onShowOnboarding } = {}) {
             Btn({ variant: 'primary', onClick: onClose, children: word('ui.help_overlay_got_it') })
         ),
         children: [
-            Lede({ children: word('ui.help_overlay_intro', { brand }) }),
+            h('p', { key: 'intro', class: 'lede ds-help-intro' }, word('ui.help_overlay_intro', { brand })),
 
             h('h3', { key: 'h-queue' }, word('ui.help_overlay_queue_heading', { queue: queueName() })),
             h('p', { key: 'p-queue' }, word('ui.help_overlay_queue_body')),
