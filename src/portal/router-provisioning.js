@@ -9,8 +9,9 @@ export const UPLINKS = Object.freeze(['wifi', 'lte'])
 const WG_KEY = /^[A-Za-z0-9+/]{43}=$/
 const NAME_MAX = 120
 const CERT_DIR = 'certs'
-const MANIFEST_KEYS = Object.freeze(['scripts', 'apply_script', 'seed', 'tls_files', 'root_cert', 'config_script', 'config_globals', 'tls_mode', 'log_prefix', 'bootstrap_title', 'router_id_prefix'])
+const MANIFEST_KEYS = Object.freeze(['scripts', 'apply_script', 'seed', 'tls_files', 'root_cert', 'config_script', 'config_globals', 'tls_mode', 'log_prefix', 'bootstrap_title', 'router_id_prefix', 'ota_scripts', 'admin_interface', 'admin_listen_port'])
 const GLOBAL_KEYS = Object.freeze(['base', 'token', 'router_id', 'host', 'tls'])
+const DEVICE_NAME = /^[A-Za-z0-9_-]+$/
 
 export const rosString = (value) => `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/\n/g, '\\n')}"`
 
@@ -21,6 +22,9 @@ export function normaliseBundle(raw) {
   if (!Array.isArray(raw.tls_files) || !raw.tls_files.every(name => typeof name === 'string')) throw new Error(`${BUNDLE_FILE} tls_files must be a list of file names`)
   if (typeof raw.root_cert?.file !== 'string' || typeof raw.root_cert?.common_name !== 'string' || !/^[0-9a-f]{64}$/.test(raw.root_cert?.sha256 ?? '')) throw new Error(`${BUNDLE_FILE} root_cert needs file, common_name and a 64-hex sha256`)
   for (const key of GLOBAL_KEYS) if (typeof raw.config_globals?.[key] !== 'string') throw new Error(`${BUNDLE_FILE} config_globals.${key} is missing`)
+  if (!raw.ota_scripts || typeof raw.ota_scripts !== 'object' || Array.isArray(raw.ota_scripts) || !Object.values(raw.ota_scripts).every(name => typeof name === 'string' && DEVICE_NAME.test(name))) throw new Error(`${BUNDLE_FILE} ota_scripts must map each role to a device script name`)
+  if (typeof raw.admin_interface !== 'string' || !DEVICE_NAME.test(raw.admin_interface)) throw new Error(`${BUNDLE_FILE} admin_interface must be a device interface name`)
+  if (!Number.isInteger(raw.admin_listen_port) || raw.admin_listen_port < 1 || raw.admin_listen_port > 65535) throw new Error(`${BUNDLE_FILE} admin_listen_port must be a port number`)
   return Object.freeze({
     scripts: Object.freeze([...raw.scripts]),
     apply_script: raw.apply_script,
@@ -33,6 +37,9 @@ export function normaliseBundle(raw) {
     log_prefix: raw.log_prefix,
     bootstrap_title: raw.bootstrap_title,
     router_id_prefix: raw.router_id_prefix,
+    ota_scripts: Object.freeze({ ...raw.ota_scripts }),
+    admin_interface: raw.admin_interface,
+    admin_listen_port: raw.admin_listen_port,
   })
 }
 
@@ -118,6 +125,7 @@ export function bootstrapScript({ bundle = loadBundle(), base, token, routerId, 
   const { file: certFile, common_name: certName, sha256: certSha } = bundle.root_cert
   const log = bundle.log_prefix
   const iface = uplinkInterface(uplink)
+  const adminIf = bundle.admin_interface
   const station = uplink === 'wifi'
     ? [`/interface wifi set [find default-name=wifi1] configuration.mode=station configuration.ssid=${rosString(uplinkSsid)} security.authentication-types=wpa2-psk security.passphrase=${rosString(uplinkPassphrase)} disabled=no`]
     : []
@@ -128,8 +136,8 @@ export function bootstrapScript({ bundle = loadBundle(), base, token, routerId, 
     `:if ([:len [/ip dhcp-client find interface=${iface}]] = 0) do={ /ip dhcp-client add interface=${iface} disabled=no }`,
     `:local waited 0; :while ([:len [/ip address find interface=${iface}]] = 0 && $waited < 90) do={ :delay 1s; :set waited ($waited + 1) }`,
     `:if ([:len [/ip address find interface=${iface}]] = 0) do={ :error "${log}: no address on ${iface}, check the uplink" }`,
-    `:if ([:len [/interface wireguard find name=uhh-admin]] = 0) do={ /interface wireguard add name=uhh-admin listen-port=13231 disabled=yes comment=uhh-admin }`,
-    `/interface wireguard set [find name=uhh-admin] private-key=${rosString(wgPrivateKey)}`,
+    `:if ([:len [/interface wireguard find name=${adminIf}]] = 0) do={ /interface wireguard add name=${adminIf} listen-port=${bundle.admin_listen_port} disabled=yes comment=${adminIf} }`,
+    `/interface wireguard set [find name=${adminIf}] private-key=${rosString(wgPrivateKey)}`,
     `/tool fetch url="${bundleUrl}${certFile}" dst-path=${certFile} check-certificate=no`,
     `/certificate import file-name=${certFile} passphrase=""`,
     `:if ([/certificate get [find common-name="${certName}"] fingerprint] != "${certSha}") do={ :error "${log}: ${certName} fingerprint mismatch" }`,
