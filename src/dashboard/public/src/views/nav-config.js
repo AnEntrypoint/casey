@@ -1,5 +1,5 @@
 import { Icon } from 'ds/components/shell.js';
-import { state, setInboxMode, setRailMode } from '../state.js';
+import { state, setInboxMode, setRailMode, setMobilePane } from '../state.js';
 import { openModal } from '../state.js';
 import { setHomeViewRoute, openPanelRoute, closePanelRoute } from '../route.js';
 import * as api from '../api.js';
@@ -31,6 +31,7 @@ function openOnMap(mode) {
   closePanelRoute();
   setHomeViewRoute('map');
   setRailMode(mode);
+  setMobilePane(mode === 'queue' ? 'map' : 'list');
 }
 
 export function openQueue() { openOnMap('queue'); }
