@@ -79,7 +79,7 @@ export function DiseaseReportsPanel() {
         asof: rd.asOf ? fmtTime(rd.asOf) : word('ui.disease_reports_panel_all_to_date'),
         generated: fmtTime(rd.generatedAt),
       })) : null,
-      Lede({ children: word('ui.disease_reports_panel_lede', { k: r.k }) }),
+      h('p', { class: 'lede ds-disease-lede' }, word('ui.disease_reports_panel_lede', { k: r.k })),
       h('p', { class: 'casey-hint' }, word('ui.disease_reports_panel_groups_under', { k: r.k })),
       r.truncated ? Alert({ kind: 'warn', children: word('ui.disease_reports_panel_truncated') }) : null,
       rd.loading ? h('p', { class: 'casey-hint', 'aria-live': 'polite' }, word('ui.disease_reports_panel_updating')) : null,

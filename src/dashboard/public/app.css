@@ -995,3 +995,29 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
     color: var(--fg);
   }
 }
+
+.ds-247420 .ds-trends-kpi .kpi {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (min-width: 600px) {
+  .ds-247420 .ds-trends-kpi .kpi { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (min-width: 1200px) {
+  .ds-247420 .ds-trends-kpi .kpi { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}
+.ds-247420 .ds-disease-lede {
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  max-width: 62ch;
+  color: var(--fg-2);
+}
+.ds-247420 .ds-dialog-panel:has(.panel) > * {
+  flex: 0 0 auto;
+}
+.ds-247420 .ds-dialog-panel:has(.panel) .panel-body {
+  padding-bottom: 0;
+}
+.ds-247420 .ds-dialog-panel:has(.panel) .panel {
+  min-height: 0;
+  margin-bottom: 0;
+}

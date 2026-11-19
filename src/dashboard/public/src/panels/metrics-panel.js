@@ -44,7 +44,7 @@ function summaryCards(j) {
         ...Object.keys(dwell).map((s) => [stageLabel(s), fmtDur(dwell[s]), word('ui.metrics_panel_usual_stage')]),
         ...Object.keys(backlog).map((s) => [stageLabel(s), String(backlog[s]), word('ui.metrics_panel_open_now')]),
     ];
-    return Kpi({ items: cards.map(([lab, val, sub]) => [val, sub ? lab + ' - ' + sub : lab]) });
+    return h('div', { class: 'ds-trends-kpi' }, Kpi({ items: cards.map(([lab, val, sub]) => [val, sub ? lab + ' - ' + sub : lab]) }));
 }
 
 function atRiskByType(risk) {
