@@ -6,6 +6,11 @@ html.ds-247420[data-casey-theme="herd"] { background: var(--paper); }
 html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 
 .ds-247420[data-theme="herd-ink"] { --warn-fg: var(--ink); }
+
+.ds-247420 :is(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--focus-w) solid var(--focus-color);
+  outline-offset: 2px;
+}
 .ds-app-root, .ds-app-surface { display: flex; flex-direction: column; min-height: 100vh; }
 
 .app-two-pane { display: flex; width: 100%; height: 100%; min-height: 0; }
