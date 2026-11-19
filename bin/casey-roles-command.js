@@ -5,6 +5,7 @@ import { mapRole } from '../src/team-import.js'
 import { fmtPhone27, fmtTimeSAST } from '../src/format.js'
 import { TIER_LABELS } from '../src/store/report-shape.js'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
+import { cliText } from './casey-cli-text.js'
 import { readFileSync } from 'node:fs'
 import { runImport, MAX_IMPORT_ROWS, MAX_IMPORT_CHARS } from '../src/team-import.js'
 import { rolloutTable, forgetRoster } from '../src/team-roster.js'
@@ -56,7 +57,7 @@ export async function cmdRoles({ flags, rest }) {
 
   if (sub === 'import') {
     const file = pos[0]
-    if (!file) await fail('usage: casey roles import <file.csv> [--dry-run] [--yes]', 'columns: name, phone, role, association, smartphone (yes/no). Nothing is written without --yes.')
+    if (!file) await fail('usage: casey roles import <file.csv> [--dry-run] [--yes]', cliText('roles.import.hint') ?? 'columns: name, phone, role, smartphone (yes/no). Nothing is written without --yes.')
     let csv
     try { csv = readFileSync(file, 'utf8') } catch { await fail(`cannot read "${file}".`) }
     if (csv.length > MAX_IMPORT_CHARS) await fail(`that file is too large (over ${MAX_IMPORT_CHARS} characters); split it into parts of at most ${MAX_IMPORT_ROWS} people.`)

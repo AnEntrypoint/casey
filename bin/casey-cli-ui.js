@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import net from 'node:net'
+import { cliText } from './casey-cli-text.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const ROOT = path.resolve(__dirname, '..')
@@ -9,6 +10,7 @@ export const ROOT = path.resolve(__dirname, '..')
 const COLOR = process.stdout.isTTY && !process.env.NO_COLOR
 const c = (code) => (s) => COLOR ? `\x1b[${code}m${s}\x1b[0m` : String(s)
 export const bold = c('1'), dim = c('2'), green = c('32'), red = c('31'), yellow = c('33'), cyan = c('36')
+const STYLES = { b: bold, d: dim, c: cyan, g: green }
 export const ok = (s) => `${green('[ok]')} ${s}`
 export const bad = (s) => `${red('[x]')} ${s}`
 export const warn = (s) => `${yellow('!')} ${s}`
@@ -54,7 +56,7 @@ export function portFree(port) {
   })
 }
 
-export const HELP = `${bold('casey')} ${dim('v' + pkgVersion())}  --  agentic case tracking over WhatsApp/Discord
+const HELP_NEUTRAL = `${bold('casey')} ${dim('v' + pkgVersion())}  --  agentic case tracking over WhatsApp/Discord
 
 ${bold('usage:')}
   casey init                                    scaffold a .env you can fill in
@@ -71,31 +73,31 @@ ${bold('usage:')}
                                                  exits 1 while anything is standing, so cron can page on it
   casey sweep [--json]                          run the health-guardrail sweep once now (writes tags/observations)
   casey transition <ref|id> <stage> [--reason]  move a case to a stage (legality-checked)
-  casey erase-contact <contact|ref> --yes [--reason]  right-to-erasure: irreversibly scrub one person's PII (POPIA/GDPR)
+  casey erase-contact <contact|ref> --yes [--reason]  right-to-erasure: irreversibly scrub one person's PII
   casey erase-contact --check                   list erasures that started and never finished
   casey erase-contact <contact> --persons       list the people recorded behind a shared phone (names, never the number)
   casey erase-contact <contact> --person <name|id> --yes   erase ONE person on a shared phone; the phone and the others stay
   casey retention [--days N] [--yes] [--json]   age-based retention. OFF unless configured; DRY RUN unless --yes
   casey backup [--out <dir>] [--json]           consistent copy of every store, including the ones outside data/
-  casey report-digest [--month YYYY-MM] [--out file.csv | --out-dir <dir>] [--post]  monthly aggregate disease CSV and text summary (k-floored)
+  casey report-digest [--month YYYY-MM] [--out file.csv | --out-dir <dir>] [--post]  monthly aggregate CSV and text summary (k-floored)
   casey restore <backup-dir> --yes              put a backup back (stop casey first; the live data dir is moved aside)
-  casey operators add <username> [--password ...] [--name ...] [--role admin|operator|eco_ranger|animal_health_technician|viewer]
+  casey operators add <username> [--password ...] [--name ...] [--role <role>]
                                                  create a dashboard login account (break-glass/scripted provisioning)
   casey operators list                          list dashboard login accounts (never prints password hashes)
   casey operators disable <username>            disable a login without deleting its history
   casey operators enable <username>             re-enable a disabled login
   casey roles list [--json]                     the team: WhatsApp members by rung, and dashboard logins
-  casey roles assign <phone> <tier> [--name ..] register a number in a role (reporter/field_worker/animal_health_technician/operator)
+  casey roles assign <phone> <tier> [--name ..] register a number in a role (a tier from the configured team)
   casey roles demote <phone|id>                 back to reporter; the reports they held return to the queue
   casey roles invite <tier> [--label ..] [--ttl-hours N] [--uses N]   mint a one-time WhatsApp code (printed once)
   casey roles import <file.csv> [--dry-run] [--yes]   register a whole team from a spreadsheet (preview first)
-  casey roles roster [--json]                   rollout table per association: total, smartphones, registered, first message, first case
+  casey roles roster [--json]                   rollout table per group: total, smartphones, registered, first message, first case
   casey roles invites | revoke <id> | release <holder> | link <username> <phone>
                                                  invite log, revoke a code, free a holder's reports, link a login to a number
-  casey sync-import <file> --kind field_visit|farmer|association|follow_up
+  casey sync-import <file> --kind <kind>
                                                  read a manually-exported external-system file into the cross-app
                                                  correlation engine's normalized shape (no live adapter needed)
-  casey sync-correlate [--kind field_visit|farmer|association|follow_up]
+  casey sync-correlate [--kind <kind>]
                                                  score cached sync-import file(s) against real cases/contacts and
                                                  write proposed external_link rows for operator review (all kinds
                                                  with a cached file if --kind is omitted)
@@ -123,6 +125,8 @@ ${bold('dashboard login:')} the dashboard now uses per-operator username/passwor
 
 ${dim('new here? run')} ${cyan('casey init')} ${dim('then')} ${cyan('casey doctor')} ${dim('then')} ${cyan('casey up')}`
 
+export const HELP = configured('help', HELP_NEUTRAL)
+
 export const USAGE = {
   roles: `casey roles <subcommand>
   The team model from a terminal, calling the same store methods the dashboard does.
@@ -134,11 +138,10 @@ export const USAGE = {
     revoke <invite-id>                       kill an unused code
     release <phone|contact-id|username>      unassign every open report a holder has
     link <username> <phone>                  link a dashboard login to its WhatsApp contact
-    import <file.csv> [--dry-run] [--yes]    bulk registration; columns name, phone, role, association, smartphone (max 500 rows).
+    import <file.csv> [--dry-run] [--yes]    bulk registration; columns name, phone, role, smartphone (max 500 rows).
                                              Prints a per-row preview (create/update/skip/error); writes only with --yes.
-                                             People without a smartphone go on the training roster, not WhatsApp.
-    roster [--json] [--forget <phone>]       the training roster and rollout table per association
-  tiers: field_worker, animal_health_technician, operator (and reporter to demote).
+    roster [--json] [--forget <phone>]       the roster and rollout table per group
+  tiers: the configured team tiers (and reporter to demote).
   Acts with admin authority (it needs a shell on the box) and records itself as cli-operator.
   Nothing here sends a WhatsApp message.`,
   init: `casey init
@@ -215,7 +218,7 @@ casey erase-contact --check
 casey erase-contact <contact> --persons
 casey erase-contact <contact> --person <name|id> --yes [--reason "..."]
   IRREVERSIBLE. Scrubs one contact's personal details for a right-to-erasure
-  request (POPIA/GDPR). --yes is required: there is nothing to undo it with.
+  request. --yes is required: there is nothing to undo it with.
   Accepts the contact id, the contact's channel identifier, or the ref of any
   case that contact opened.
   This is about a PERSON ASKING; casey retention is about AGE. They stay separate.
@@ -257,9 +260,9 @@ casey erase-contact <contact> --person <name|id> --yes [--reason "..."]
   never copied, on purpose, and the manifest says so.
   Defaults to backups/casey-<timestamp>.`,
   'report-digest': `casey report-digest [--month YYYY-MM] [--out file.csv | --out-dir <dir>] [--post]
-  The monthly official digest: the aggregate disease CSV plus a short text summary
-  (period, resolved total, top diseases, trend against the prior month, advice given,
-  closed without a diagnosis). Only already-aggregated figures are used, every group
+  The monthly official digest: the aggregate CSV plus a short text summary
+  (period, resolved total, top categories, trend against the prior month,
+  closed without a resolution). Only already-aggregated figures are used, every group
   below the k-anonymity floor is combined, and no case or personal data is included.
   Defaults to the last completed month (SAST) and to casey-digest-<month>.csv, with
   the summary beside it as .txt. --out-dir <dir> writes both files into that directory
@@ -272,7 +275,7 @@ casey erase-contact <contact> --person <name|id> --yes [--reason "..."]
   data.pre-restore-<timestamp> rather than overwritten, so restoring the wrong
   backup is itself recoverable, and any stale sqlite -wal/-shm sidecar is removed
   so the restored database cannot have an old write-ahead log replayed over it.`,
-  operators: `casey operators add <username> [--password ...] [--name ...] [--role admin|operator|eco_ranger|animal_health_technician|viewer]
+  operators: `casey operators add <username> [--password ...] [--name ...] [--role <role>]
 casey operators list
 casey operators disable <username>
 casey operators enable <username>
@@ -293,7 +296,7 @@ casey sync-apikey revoke <id>
   route prefix only. The raw key is printed exactly once on create and is
   never stored or shown again; only its hash and a display-safe prefix are
   kept. Revoke sets disabled without deleting the row's history.`,
-  'sync-correlate': `casey sync-correlate [--kind field_visit|farmer|association|follow_up]
+  'sync-correlate': `casey sync-correlate [--kind <kind>]
   Scores the cached sync-import file(s) under data/sync-import/ (written by
   \`casey sync-import\` or POST /api/sync/import) against every real open
   case/contact, and writes proposed external_link rows for anything at or
@@ -301,6 +304,19 @@ casey sync-apikey revoke <id>
   the dashboard cross-link panel. Omit --kind to run every kind that has a
   cached file.`,
 }
+
+function configured(key, neutral) {
+  const text = cliText(key)
+  return text === undefined ? neutral : renderCli(text)
+}
+
+function renderCli(text) {
+  return text
+    .replace(/\{\{version\}\}/g, pkgVersion())
+    .replace(/\{\{([bdcg])\}\}([\s\S]*?)\{\{\/\1\}\}/g, (_, k, body) => STYLES[k](body))
+}
+
+for (const key of Object.keys(USAGE)) USAGE[key] = configured(`usage.${key}`, USAGE[key])
 
 export async function closeAndExit(store, code) {
   try { await store?.close?.() } catch (e) { console.error('[casey] store close error:', e.message) }

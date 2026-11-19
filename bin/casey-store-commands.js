@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { writeFileSync, mkdirSync, renameSync, openSync, writeSync, fsyncSync, closeSync, unlinkSync } from 'node:fs'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
+import { cliText } from './casey-cli-text.js'
 
 async function openStore() {
   const store = createCaseStore()
@@ -534,7 +535,7 @@ export async function cmdOperators({ flags, rest }) {
   const { ACCOUNT_ROLES } = await import('../src/dashboard/roles.js')
   if (sub === 'add') {
     const username = positional[0]
-    if (!username) { say('usage: casey operators add <username> [--email <address>] [--phone <number>] [--name ...] [--role admin|operator|eco_ranger|animal_health_technician|viewer]  (or --password <8+ chars> to set it yourself)'); await closeAndExit(store, 1) }
+    if (!username) { say(cliText('operators.add.usage') ?? 'usage: casey operators add <username> [--email <address>] [--phone <number>] [--name ...] [--role <role>]  (or --password <8+ chars> to set it yourself)'); await closeAndExit(store, 1) }
     if (flags.role !== undefined) await requireOneOf(store, 'role', flags.role, ACCOUNT_ROLES)
     if (flags.password === true || flags.email === true) { say(bad('--password and --email each need a value.')); await closeAndExit(store, 1) }
     const password = typeof flags.password === 'string' ? flags.password : undefined
