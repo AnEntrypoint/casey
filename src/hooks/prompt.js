@@ -1,3 +1,4 @@
+import { REPORT_CONCEPT as K } from '../report-concepts.js'
 
 
 import { loadDomainConfig } from '../config-loader.js'
@@ -125,7 +126,7 @@ function selfCheckLoadBearingPromptContent() {
     if (/MORE THAN ONE PERSON HAS USED THIS PHONE|PRIVACY BETWEEN PEOPLE ON ONE PHONE/.test(t)) throw new Error('caseSystemPrompt regression: the several-people block is rendered for a phone with at most one known person, which must get no extra question.')
   }
   {
-    const ret = { owed: true, species: 'goats', location: 'Lambasi', person: 'Thabo' }
+    const ret = { owed: true, [K.kind]: 'kind-a', location: 'place-a', person: 'person-a' }
     const asks = caseSystemPrompt(caseRow, events, staleContact, null, 'agreed', ret)
     const quiet = caseSystemPrompt(caseRow, events, staleContact, null, 'agreed', { owed: false })
     const team = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER.field }, null, null, ret)

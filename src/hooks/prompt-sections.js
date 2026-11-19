@@ -1,3 +1,4 @@
+import { REPORT_CONCEPT as K } from '../report-concepts.js'
 
 
 import { areaAskOwed } from '../area-ask.js'
@@ -315,7 +316,7 @@ export function consentSection(persona, contact, consent) {
 export function returnSection(persona, contact, ret, consent) {
   if (!ret?.owed || canQueryCases(contact?.tier) || consent === 'none' || consent === 'declined') return []
   const entity = persona.entityLabel || 'report'
-  const what = [fenced(ret.species, 40), fenced(ret.location, 60)].filter(Boolean).join(' at ')
+  const what = [fenced(ret[K.kind], 40), fenced(ret.location, 60)].filter(Boolean).join(' at ')
   const who = ret.person
     ? caseyText("src/hooks/prompt-sections.js#132", [fenced(ret.person, 60)])
     : caseyText("src/hooks/prompt-sections.js#133")
