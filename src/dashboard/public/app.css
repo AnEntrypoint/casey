@@ -970,3 +970,8 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
     min-width: 0;
   }
 }
+
+.ds-247420 .panel-title {
+  color: var(--fg);
+  font-weight: 600;
+}
