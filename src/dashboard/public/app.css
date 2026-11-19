@@ -1073,3 +1073,8 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
     white-space: normal;
   }
 }
+
+.ds-247420 .ds-appbar .btn:not(.btn-primary):not(.btn-accent) {
+  border-color: color-mix(in oklab, var(--fg) 30%, transparent);
+  font-weight: 500;
+}
