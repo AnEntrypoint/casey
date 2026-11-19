@@ -235,7 +235,7 @@ node bin/casey.js roles <list|assign|demote|invite|invites|revoke|release|link> 
 node bin/casey.js doctor --no-network   # skip doctor's read-only Meta and public-URL checks
 node bin/casey.js --version     # print the version  (also --help / -h on any command)
 npm run lint                    # dependency-free preflight; the gate to run before pushing
-# the browser harness for the dashboard lives in the deployment's repository (uhh: npm run casey-gui)
+# the browser harness for the dashboard lives in the deployment's repository (see that deployment's docs)
 npm run scan-deps               # supply-chain scan of own source + node_modules
 npm run check-submodules        # branch/dirty/ahead-behind report on every deps/* checkout
 ```
