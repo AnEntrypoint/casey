@@ -1,7 +1,7 @@
 {
-  "total": 113,
+  "total": 93,
   "skippedBinary": [
     "data/db.sqlite"
   ],
-  "note": "recorded 2026-11-19 after the rename stretch (groups core, dashboard, client, CLI, plus the two dependency-name follow-ups): 113 hits in 30 files. What remains: 10 compatibility alias lines (one release, then removed), 10 regexes on prompt wording, 44 string texts (operator and model wording, and the stored note tags), and 49 keys and member names that are stored data keys or wire payload keys (for example technician_notes, handoff_withdrawn_by_ranger, suggested_ranger, help_ranger). Each class is listed with its reason in uhh's docs/casey-generic-inventory.md. The ratchet only goes down."
+  "note": "recorded 2026-11-19 at the end of the wording stretch (casey 93cc445): 93 hits in 27 files. Each remaining hit is classed with its reason in uhh's docs/casey-generic-inventory.md: the 10 compatibility alias lines (removed in the next release), stored and wire payload keys, configuration keys, client i18n keys, module paths, code identifiers on the public surface, stored values, string texts left in code, and documentation. The ratchet only goes down."
 }
