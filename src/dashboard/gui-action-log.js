@@ -22,6 +22,11 @@ export function operatorFields(req) {
   return { operator: viewed }
 }
 
+export function isQuietHealthProbe(req, res) {
+  if (req.method !== 'GET' || res.statusCode >= 400) return false
+  return String(req.originalUrl || req.url || '').split('?')[0] === '/api/ready'
+}
+
 export function guiActionLogger() {
   return (req, res, next) => {
     if (!LOGGED_METHODS.has(req.method)) return next()
@@ -46,6 +51,7 @@ export function guiRequestLogger() {
   return (req, res, next) => {
     const startedAt = Date.now()
     res.once('finish', () => {
+      if (isQuietHealthProbe(req, res)) return
       try {
         console.log(JSON.stringify(withSeverity({
           t: new Date().toISOString(), level: 'info', component: 'dashboard', msg: 'gui_request',
