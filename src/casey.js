@@ -21,6 +21,7 @@ import { caseDeliveryTarget, splitExternalId } from './hooks/handler.js'
 import { disposeAgent } from './agent/run-turn.js'
 import { applyDeliveryStatus, snapshotDeliveryStatus, countUndeliveredCases } from './delivery-status.js'
 import { proactiveRefusal } from './proactive-sends.js'
+import { caseyText } from './deployment-text.js';
 
 const CASE_HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
@@ -108,7 +109,7 @@ export class Casey {
     if (!wa || typeof wa.on !== 'function') return
     wa.on('status', (st) => {
       const p = applyDeliveryStatus(this.store, st, { log: this.log, recentSends: wa.recentSends })
-        .catch(e => this.log?.warn?.('[casey] delivery status could not be applied', { error: e?.message || String(e) }))
+        .catch(e => this.log?.warn?.(caseyText("src/casey.js#w0"), { error: e?.message || String(e) }))
       this._inflight.add(p)
       p.finally(() => this._inflight.delete(p))
     })
@@ -172,14 +173,14 @@ export class Casey {
       try {
         this._alertLog = new AlertLog({ dataDir: this.store.dataDir })
         this._notifyBreach = fileAlertNotifier(this._alertLog, this.log)
-        this.log?.info?.('[casey] no alert webhook configured; alerts go to the local alert log', { file: this._alertLog.file })
+        this.log?.info?.(caseyText("src/casey.js#w1"), { file: this._alertLog.file })
       } catch (e) {
-        this.log?.warn?.('[casey] alert log unavailable; nothing will page anyone', { error: e.message })
+        this.log?.warn?.(caseyText("src/casey.js#w2"), { error: e.message })
       }
     }
 
     try { this._alertGate = new AlertGate({ dataDir: this.store.dataDir }) }
-    catch (e) { this._alertGate = null; this.log?.warn?.('[casey] alert gate unavailable; system-condition alerts are off', { error: e.message }) }
+    catch (e) { this._alertGate = null; this.log?.warn?.(caseyText("src/casey.js#w3"), { error: e.message }) }
 
     this._notifyEscalation = this.opts.notifyEscalation
       || breachNotifier(process.env.CASEY_ESCALATE_WEBHOOK, this.log)
@@ -223,7 +224,7 @@ export class Casey {
       const p = orig(platform, msg).finally(() => this._inflight.delete(p))
       this._inflight.add(p)
 
-      p.catch(e => { this.log?.error?.('[casey] handleInbound rejected (unexpected -- should have been caught internally)', { error: e?.message || String(e) }) })
+      p.catch(e => { this.log?.error?.(caseyText("src/casey.js#w4"), { error: e?.message || String(e) }) })
       return p
     }
   }
@@ -262,7 +263,7 @@ export class Casey {
       new Promise(resolve => { timer = setTimeout(() => { timedOut = true; resolve() }, timeoutMs) }),
     ])
     clearTimeout(timer)
-    if (timedOut) this.log?.warn?.('[casey] drain() timed out waiting on in-flight turns', { pending: pending.length, timeoutMs })
+    if (timedOut) this.log?.warn?.(caseyText("src/casey.js#w5"), { pending: pending.length, timeoutMs })
   }
 
   async runSweepOnce(now = Date.now()) {
@@ -288,10 +289,10 @@ export class Casey {
       this._lastSweepAt = Date.now()
 
       try { this._lastSweepSummary = await this.store.recordSweepSummary(summary, now) }
-      catch (e) { this.log?.warn?.('[casey] fleet-health persist failed', { error: e.message }) }
+      catch (e) { this.log?.warn?.(caseyText("src/casey.js#w6"), { error: e.message }) }
 
       try { await this._checkCoverageGap(now) }
-      catch (e) { this.log?.warn?.('[casey] coverage-gap check failed', { error: e.message }) }
+      catch (e) { this.log?.warn?.(caseyText("src/casey.js#w7"), { error: e.message }) }
       return summary
     } finally { this._sweeping = false }
   }
@@ -303,7 +304,7 @@ export class Casey {
     if (!roster.length) return
     const allCases = await this.store.listCases({}, { limit: 10000 })
 
-    if (allCases.length >= 10000) this.log?.warn?.('[sweep] hit case-fetch cap in coverage-gap check; some cases may be unclassified', { fetched: allCases.length })
+    if (allCases.length >= 10000) this.log?.warn?.(caseyText("src/casey.js#w8"), { fetched: allCases.length })
     const open = allCases.filter(isOpenCase)
     const breaching = open.filter(c => tagList(c).some(t => CASE_HEALTH_SET.has(t)))
     if (!breaching.length) {
@@ -323,17 +324,17 @@ export class Casey {
     let edge = null
     if (this._alertGate) {
       try { edge = this._alertGate.evaluate('coverage_gap', !!gap, now) }
-      catch (e) { this.log?.warn?.('[casey] alert gate failed', { condition: 'coverage_gap', error: e.message }) }
+      catch (e) { this.log?.warn?.(caseyText("src/casey.js#w9"), { condition: 'coverage_gap', error: e.message }) }
     } else if (gap && !this._coverageGapActive) { this._coverageGapActive = true; edge = { edge: 'raised', since: now, forMs: 0 } }
     else if (!gap) this._coverageGapActive = false
     if (!edge) return
 
     const detail = edge.edge === 'cleared'
-      ? `coverage_gap has resolved; it stood for ${Math.round(edge.forMs / 60000)} minute(s)`
+      ? caseyText("src/casey.js#w10", [Math.round(edge.forMs / 60000)])
       : (verdict?.reason || 'coverage_gap')
     try { await this._notifyBreach({ ref: 'TEAM-COVERAGE' }, 'coverage_gap', detail, { event: edge.edge, since: edge.since, forMs: edge.forMs, at: now }) }
-    catch (e) { this.log?.warn?.('[casey] coverage-gap page failed', { error: e.message }) }
-    if (edge.edge === 'raised') this.log?.warn?.('[casey] coverage gap', { open_breaches: verdict?.open_breaches, roster_size: verdict?.roster_size })
+    catch (e) { this.log?.warn?.(caseyText("src/casey.js#w11"), { error: e.message }) }
+    if (edge.edge === 'raised') this.log?.warn?.(caseyText("src/casey.js#w12"), { open_breaches: verdict?.open_breaches, roster_size: verdict?.roster_size })
   }
 
   startSweep(intervalMs = this.opts.sweepIntervalMs ?? 15 * 60e3) {
@@ -341,7 +342,7 @@ export class Casey {
     if (!(intervalMs > 0)) return
     this._sweepTimer = setInterval(() => {
 
-      const p = this.runSweepOnce().catch(e => this.log?.warn?.('[casey] sweep failed', { error: e.message }))
+      const p = this.runSweepOnce().catch(e => this.log?.warn?.(caseyText("src/casey.js#w13"), { error: e.message }))
       this._inflight.add(p)
       p.finally(() => this._inflight.delete(p))
     }, intervalMs)
@@ -373,7 +374,7 @@ export class Casey {
     verdicts.push({
       condition: SYSTEM_CONDITIONS.CHANNEL_DEAF,
       active: rs.state === 'never-connected',
-      detail: `casey is not hearing the field: channel ${deafChannels.join(', ') || 'unknown'} is configured but has never connected since start, so reports are arriving nowhere`,
+      detail: caseyText("src/casey.js#w14", [deafChannels.join(', ') || 'unknown']),
     })
 
     const st = await this._llmStatus()
@@ -384,7 +385,7 @@ export class Casey {
     verdicts.push({
       condition: SYSTEM_CONDITIONS.PROVIDER_DOWN_BACKLOG,
       active: providerDown && backlog > 0,
-      detail: `the AI provider is not answering and ${q.pending || 0} message(s) are queued behind it (${q.deadLettered || 0} dead-lettered); contacts are waiting with no reply`,
+      detail: caseyText("src/casey.js#w15", [q.pending || 0, q.deadLettered || 0]),
     })
 
     const interval = this.opts.sweepIntervalMs ?? 15 * 60e3
@@ -396,7 +397,7 @@ export class Casey {
     verdicts.push({
       condition: SYSTEM_CONDITIONS.SWEEP_STALLED,
       active: sweepScheduled && stalledFor > stallMs,
-      detail: `the guardrail sweep has not completed a pass in ${Math.round(stalledFor / 60000)} minutes (it runs every ${Math.round(interval / 60000)}); stale, stuck and abandoned cases are going undetected`,
+      detail: caseyText("src/casey.js#w16", [Math.round(stalledFor / 60000), Math.round(interval / 60000)]),
     })
 
     const waHours = this.adapters?.whatsapp ? this._inboundSilenceHours() : 0
@@ -411,7 +412,7 @@ export class Casey {
       verdicts.push({
         condition: SYSTEM_CONDITIONS.INBOUND_SILENT,
         active: silent && alive,
-        detail: `WhatsApp is configured but no inbound message has arrived for ${Math.round((now - baseline) / 3600e3)} hours while the dashboard or other channels are in use. If people are messaging, Meta is not delivering: in the Meta developer console open WhatsApp -> Configuration -> Webhook fields and make sure "messages" is subscribed and the callback URL matches; run casey doctor to check.`,
+        detail: caseyText("src/casey.js#w17", [Math.round((now - baseline) / 3600e3)]),
       })
     }
 
@@ -421,18 +422,18 @@ export class Casey {
     for (const v of verdicts) {
       let edge = null
       try { edge = this._alertGate.evaluate(v.condition, v.active, now) }
-      catch (e) { this.log?.warn?.('[casey] alert gate failed', { condition: v.condition, error: e.message }) }
+      catch (e) { this.log?.warn?.(caseyText("src/casey.js#w18"), { condition: v.condition, error: e.message }) }
       if (!edge) continue
 
       const detail = edge.edge === 'cleared'
-        ? `${v.condition} has resolved; it stood for ${Math.round(edge.forMs / 60000)} minute(s)`
+        ? caseyText("src/casey.js#w19", [v.condition, Math.round(edge.forMs / 60000)])
         : v.detail
       try {
 
         await this._notifyBreach({ ref: 'SYSTEM' }, v.condition, detail, { event: edge.edge, since: edge.since, forMs: edge.forMs, at: now })
         fired.push({ condition: v.condition, event: edge.edge })
-      } catch (e) { this.log?.warn?.('[casey] system alert delivery failed', { condition: v.condition, error: e.message }) }
-      if (edge.edge === 'raised') this.log?.error?.('[casey] system alert', { condition: v.condition, detail })
+      } catch (e) { this.log?.warn?.(caseyText("src/casey.js#w20"), { condition: v.condition, error: e.message }) }
+      if (edge.edge === 'raised') this.log?.error?.(caseyText("src/casey.js#w21"), { condition: v.condition, detail })
     }
     return { verdicts: verdicts.map(v => ({ condition: v.condition, active: v.active })), fired }
   }
@@ -442,7 +443,7 @@ export class Casey {
     if (!(intervalMs > 0)) return
     this._alertWatchTimer = setInterval(() => {
 
-      const p = this._checkSystemAlerts().catch(e => this.log?.warn?.('[casey] alert watch failed', { error: e.message }))
+      const p = this._checkSystemAlerts().catch(e => this.log?.warn?.(caseyText("src/casey.js#w22"), { error: e.message }))
       this._inflight.add(p)
       p.finally(() => this._inflight.delete(p))
     }, intervalMs)
@@ -458,7 +459,7 @@ export class Casey {
     if (!(intervalMs > 0)) return
     this._drainPollTimer = setInterval(() => {
 
-      const p = this.drainQueuedTurns().catch(e => this.log?.warn?.('[casey] drain poll failed', { error: e.message }))
+      const p = this.drainQueuedTurns().catch(e => this.log?.warn?.(caseyText("src/casey.js#w23"), { error: e.message }))
       this._inflight.add(p)
       p.finally(() => this._inflight.delete(p))
     }, intervalMs)
@@ -480,9 +481,9 @@ export class Casey {
 
     if (this.opts.alertWatchIntervalMs !== 0) this.startAlertWatch()
 
-    this._backfillIntakeMode().catch(e => this.log?.warn?.('[casey] intake_mode backfill failed', { error: e.message }))
+    this._backfillIntakeMode().catch(e => this.log?.warn?.(caseyText("src/casey.js#w24"), { error: e.message }))
 
-    this._resumeSweepPromise = this.resumePendingTurns().catch(e => this.log?.warn?.('[casey] resume sweep failed', { error: e.message }))
+    this._resumeSweepPromise = this.resumePendingTurns().catch(e => this.log?.warn?.(caseyText("src/casey.js#w25"), { error: e.message }))
   }
 
   async resumePendingTurns({ maxCases = 200, maxRedrives = Number(process.env.CASEY_RESUME_MAX_REDRIVES) || 10, spacingMs = Number(process.env.CASEY_RESUME_SPACING_MS) || 2000 } = {}) {
@@ -515,7 +516,7 @@ export class Casey {
         const st = statusFn ? await statusFn() : null
         if (st && st.ok === false) {
 
-          this.log?.info?.('[casey] queue drain skipped (backend degraded)', { source: st.source, degraded: st.degraded })
+          this.log?.info?.(caseyText("src/casey.js#w26"), { source: st.source, degraded: st.degraded })
           return { scanned: 0, drained: 0, degraded: true }
         }
       } catch {  }
@@ -572,7 +573,7 @@ export class Casey {
           else if (!completedAfter.has(id)) pending++
         }
       }
-    } catch (e) { this.log?.warn?.('[casey] queueStatus scan failed', { error: e.message }) }
+    } catch (e) { this.log?.warn?.(caseyText("src/casey.js#w27"), { error: e.message }) }
     return { pending, deadLettered, truncated }
   }
 
@@ -592,7 +593,7 @@ export class Casey {
       if (rows.length < PAGE) break
       offset += PAGE
     }
-    if (tagged) this.log?.info?.('[casey] intake_mode backfill complete', { tagged })
+    if (tagged) this.log?.info?.(caseyText("src/casey.js#w28"), { tagged })
   }
 
   async stop() {

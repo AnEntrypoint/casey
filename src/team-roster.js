@@ -5,10 +5,11 @@ import { taggedObservations } from './store/settings-log.js'
 import { atLeast, resolveTierValue, TIER } from './contact-tiers.js'
 import { normalizeMsisdn } from './role-invites.js'
 import { parseReport } from './timestamp.js'
+import { caseyText } from './deployment-text.js';
 
 const KEY = 'team-roster'
 const TAG = 'team-roster'
-export const NO_AREA = '(no area given)'
+export const NO_AREA = caseyText("src/team-roster.js#w0")
 
 export function rosterKey({ phone = '', name = '', area = '' } = {}) {
   const p = normalizeMsisdn(phone)

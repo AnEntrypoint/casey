@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { load as yamlLoadRaw, YAML11_SCHEMA } from 'js-yaml'
 import { validPassphrase, validSsid, validRouterId as routerIdOk, SITE_MAX } from './portal-store.js'
+import { caseyText } from '../deployment-text.js';
 
 export const BUNDLE_FILE = 'router-bundle.yml'
 export const UPLINK_PASSPHRASE_ENV = 'CASEY_UPLINK_PASSPHRASE'
@@ -77,17 +78,17 @@ export function uplinkInterface(uplink) {
 
 export function checkRouterInput(body, validRouterId = routerIdOk) {
   const name = typeof body.name === 'string' ? body.name.trim() : ''
-  if (!name) return { error: 'name is required', field: 'name' }
-  if (name.length > NAME_MAX) return { error: `name must be at most ${NAME_MAX} characters`, field: 'name' }
+  if (!name) return { error: caseyText("src/portal/router-provisioning.js#w0"), field: 'name' }
+  if (name.length > NAME_MAX) return { error: caseyText("src/portal/router-provisioning.js#w1", [NAME_MAX]), field: 'name' }
   const site = typeof body.site === 'string' ? body.site.trim() : ''
-  if (!site) return { error: 'site is required', field: 'site' }
-  if (site.length > SITE_MAX) return { error: `site must be at most ${SITE_MAX} characters`, field: 'site' }
+  if (!site) return { error: caseyText("src/portal/router-provisioning.js#w2"), field: 'site' }
+  if (site.length > SITE_MAX) return { error: caseyText("src/portal/router-provisioning.js#w3", [SITE_MAX]), field: 'site' }
   const routerId = body.router_id === undefined || body.router_id === '' ? undefined : body.router_id
-  if (routerId !== undefined && !validRouterId(routerId)) return { error: 'router_id may hold only letters, digits, - and _ (max 64)', field: 'router_id' }
+  if (routerId !== undefined && !validRouterId(routerId)) return { error: caseyText("src/portal/router-provisioning.js#w4"), field: 'router_id' }
   const uplink = body.uplink === undefined || body.uplink === '' ? 'wifi' : body.uplink
-  if (!UPLINKS.includes(uplink)) return { error: 'uplink must be wifi or lte', field: 'uplink' }
+  if (!UPLINKS.includes(uplink)) return { error: caseyText("src/portal/router-provisioning.js#w5"), field: 'uplink' }
   const uplinkSsid = typeof body.uplink_ssid === 'string' ? body.uplink_ssid : ''
-  if (uplink === 'wifi' && !validSsid(uplinkSsid)) return { error: 'uplink_ssid must be 1 to 32 printable ASCII characters', field: 'uplink_ssid' }
+  if (uplink === 'wifi' && !validSsid(uplinkSsid)) return { error: caseyText("src/portal/router-provisioning.js#w6"), field: 'uplink_ssid' }
   return { value: { name, site, routerId, uplink, uplinkSsid: uplink === 'wifi' ? uplinkSsid : '' } }
 }
 
@@ -111,7 +112,7 @@ export function configSource({ bundle, base, token, routerId, host }) {
 export function seedScript({ bundle = loadBundle(), base, token, routerId }) {
   const url = new URL(base)
   const source = rosString(configSource({ bundle, base: url.origin, token, routerId, host: url.hostname }))
-  return `:if ([:len [/system script find name=${bundle.config_script}]] = 0) do={ /system script add name=${bundle.config_script} owner=admin policy=ftp,read,write,policy,test,sensitive source=${source} }\n`
+  return caseyText("src/portal/router-provisioning.js#w7", [bundle.config_script, bundle.config_script, source])
 }
 
 export function bootstrapScript({ bundle = loadBundle(), base, token, routerId, uplink = 'wifi', uplinkSsid = '', uplinkPassphrase = '', wgPrivateKey }) {
@@ -127,28 +128,28 @@ export function bootstrapScript({ bundle = loadBundle(), base, token, routerId, 
   const iface = uplinkInterface(uplink)
   const adminIf = bundle.admin_interface
   const station = uplink === 'wifi'
-    ? [`/interface wifi set [find default-name=wifi1] configuration.mode=station configuration.ssid=${rosString(uplinkSsid)} security.authentication-types=wpa2-psk security.passphrase=${rosString(uplinkPassphrase)} disabled=no`]
+    ? [caseyText("src/portal/router-provisioning.js#w9", [rosString(uplinkSsid), rosString(uplinkPassphrase)])]
     : []
   return [
-    `# ${bundle.bootstrap_title} ${routerId}. Paste into the router terminal. Safe to run again.`,
+    caseyText("src/portal/router-provisioning.js#w10", [bundle.bootstrap_title, routerId]),
     ...station,
-    `:if ([:len [/interface bridge port find interface=${iface}]] > 0) do={ /interface bridge port remove [find interface=${iface}] }`,
-    `:if ([:len [/ip dhcp-client find interface=${iface}]] = 0) do={ /ip dhcp-client add interface=${iface} disabled=no }`,
-    `:local waited 0; :while ([:len [/ip address find interface=${iface}]] = 0 && $waited < 90) do={ :delay 1s; :set waited ($waited + 1) }`,
-    `:if ([:len [/ip address find interface=${iface}]] = 0) do={ :error "${log}: no address on ${iface}, check the uplink" }`,
-    `:if ([:len [/interface wireguard find name=${adminIf}]] = 0) do={ /interface wireguard add name=${adminIf} listen-port=${bundle.admin_listen_port} disabled=yes comment=${adminIf} }`,
-    `/interface wireguard set [find name=${adminIf}] private-key=${rosString(wgPrivateKey)}`,
+    caseyText("src/portal/router-provisioning.js#w11", [iface, iface]),
+    caseyText("src/portal/router-provisioning.js#w12", [iface, iface]),
+    caseyText("src/portal/router-provisioning.js#w13", [iface]),
+    caseyText("src/portal/router-provisioning.js#w14", [iface, log, iface]),
+    caseyText("src/portal/router-provisioning.js#w15", [adminIf, adminIf, bundle.admin_listen_port, adminIf]),
+    caseyText("src/portal/router-provisioning.js#w16", [adminIf, rosString(wgPrivateKey)]),
     `/tool fetch url="${bundleUrl}${certFile}" dst-path=${certFile} check-certificate=no`,
     `/certificate import file-name=${certFile} passphrase=""`,
     `:if ([/certificate get [find common-name="${certName}"] fingerprint] != "${certSha}") do={ :error "${log}: ${certName} fingerprint mismatch" }`,
     `/certificate set [find common-name="${certName}"] trusted=yes`,
-    `/file remove [find name=${certFile}]`,
+    caseyText("src/portal/router-provisioning.js#w21", [certFile]),
     ...[...bundle.scripts, bundle.seed].map(fetchBundle),
-    `/import file-name=${bundle.seed}`,
-    `/file remove [find name=${bundle.seed}]`,
-    `/import file-name=${bundle.apply_script}`,
-    ...bundle.scripts.map((file) => `/file remove [find name=${file}]`),
-    `:log info "${log}: done"`,
+    caseyText("src/portal/router-provisioning.js#w22", [bundle.seed]),
+    caseyText("src/portal/router-provisioning.js#w23", [bundle.seed]),
+    caseyText("src/portal/router-provisioning.js#w24", [bundle.apply_script]),
+    ...bundle.scripts.map((file) => caseyText("src/portal/router-provisioning.js#w25", [file])),
+    caseyText("src/portal/router-provisioning.js#w26", [log]),
     '',
   ].join('\n')
 }

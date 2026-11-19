@@ -5,6 +5,7 @@ import { peekSingletonCaseId } from './team-roster.js'
 import { taggedObservations } from './store/settings-log.js'
 import { byCreatedAscList } from './store/query.js'
 import { REPORT_KEYS } from './store/report-shape.js'
+import { caseyText } from './deployment-text.js';
 
 const KEY = 'phone-persons'
 const TAG = 'phone-person'
@@ -331,7 +332,7 @@ export async function stampReporter(store, contactId, caseId, { now = Date.now()
   let last = null
   for (const e of byCreatedAscList(events)) { try { last = JSON.parse(e.data).speaker_person } catch {  } }
   if (last !== person.id) {
-    await store.appendEvent(caseId, { kind: 'observation', actor: 'system', text: 'SPEAKER: a person was recorded as the writer of this report', data: { speaker_person: person.id, speaker_shared_phone: st.count > 1 }, touch: false }).catch(() => {})
+    await store.appendEvent(caseId, { kind: 'observation', actor: 'system', text: caseyText("src/phone-persons.js#w0"), data: { speaker_person: person.id, speaker_shared_phone: st.count > 1 }, touch: false }).catch(() => {})
   }
   return { stamped: true, person }
 }

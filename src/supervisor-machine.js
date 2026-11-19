@@ -1,6 +1,7 @@
 
 
 import { createMachine } from 'xstate'
+import { caseyText } from './deployment-text.js';
 
 const RUNTIME_STATES = {
   booting: {
@@ -49,11 +50,11 @@ export function buildSupervisorMachine() {
 
 export function canFire(machine, from, event) {
   const node = machine.config.states?.[from]
-  if (!node) return { ok: false, error: `invalid runtime state "${from}"` }
+  if (!node) return { ok: false, error: caseyText("src/supervisor-machine.js#w0", [from]) }
   const def = node.on && node.on[event]
   if (!def) {
     const allowed = node.on ? Object.keys(node.on).join(', ') : ''
-    return { ok: false, error: `event "${event}" illegal in "${from}"; allowed: ${allowed || 'none'}` }
+    return { ok: false, error: caseyText("src/supervisor-machine.js#w1", [event, from, allowed || 'none']) }
   }
   return { ok: true, target: def.target }
 }

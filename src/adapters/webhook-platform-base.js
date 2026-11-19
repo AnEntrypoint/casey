@@ -1,5 +1,6 @@
 
 import crypto from 'node:crypto'
+import { caseyText } from '../deployment-text.js';
 
 export async function fetchWithTimeout(url, opts, timeoutMs) {
   const ac = new AbortController()
@@ -40,6 +41,6 @@ export function emitWithDetachedMedia(emitFn, baseEvent, hasPending, resolveMedi
   const resolved = onError ? resolveMediaFn().catch(onError) : resolveMediaFn()
   resolved.then((media) => {
     try { emitFn({ ...baseEvent, media }) }
-    catch (err) { console.error('emitWithDetachedMedia: a message listener threw; the message was delivered once and is not retried', err) }
+    catch (err) { console.error(caseyText("src/adapters/webhook-platform-base.js#w0"), err) }
   })
 }

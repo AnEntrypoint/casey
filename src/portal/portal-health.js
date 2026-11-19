@@ -1,6 +1,7 @@
 import { TABLE, ACTOR, isoOrNull } from './portal-store.js'
 import { effectiveSettings } from './portal-config.js'
 import { recordOutages } from './portal-outages.js'
+import { caseyText } from '../deployment-text.js';
 
 export const HEARTBEAT_BYTES_MAX = 8192
 export const HEALTH_ROWS_MAX = 500
@@ -29,7 +30,7 @@ export function shapeHealth(raw) {
 
 export function parseHealth(raw) {
   if (raw === undefined || raw === null) return { health: {} }
-  if (!isPlainObject(raw)) return { error: 'health must be a JSON object', field: 'health' }
+  if (!isPlainObject(raw)) return { error: caseyText("src/portal/portal-health.js#w0"), field: 'health' }
   return { health: shapeHealth(raw) }
 }
 

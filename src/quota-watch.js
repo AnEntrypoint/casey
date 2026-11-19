@@ -2,6 +2,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { caseyText } from './deployment-text.js';
 
 const STEP = () => Math.max(1, Number(process.env.CASEY_QUOTA_STEP) || 10)
 const stateFile = () => path.resolve(process.cwd(), 'data', 'quota-watch.json')
@@ -24,11 +25,11 @@ export function readQuotas(j) {
 
 const fmt = (n) => `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10}%`
 
-const LABEL = { weekly: 'weekly credits', five: 'five-hour requests' }
+const LABEL = { weekly: caseyText("src/quota-watch.js#w0"), five: caseyText("src/quota-watch.js#w1") }
 export function describe(q, k) {
   const w = q.raw?.weeklyTokenLimit, f = q.raw?.rollingFiveHourLimit
-  if (k === 'weekly' && q.weekly != null) return `${fmt(q.weekly)} left${w?.remainingCredits ? ` (${w.remainingCredits} of ${w.maxCredits})` : ''}${w?.nextRegenAt ? `, next ${w.nextRegenCredits || 'top-up'} at ${String(w.nextRegenAt).slice(11, 16)} UTC` : ''}`
-  if (k === 'five' && q.five != null) return `${fmt(q.five)} left (${Math.round(Number(f.remaining))} of ${f.max})${f.limited ? ', LIMITED now' : ''}`
+  if (k === 'weekly' && q.weekly != null) return `${fmt(q.weekly)} left${w?.remainingCredits ? ` (${w.remainingCredits} of ${w.maxCredits})` : ''}${w?.nextRegenAt ? caseyText("src/quota-watch.js#w2", [w.nextRegenCredits || 'top-up', String(w.nextRegenAt).slice(11, 16)]) : ''}`
+  if (k === 'five' && q.five != null) return `${fmt(q.five)} left (${Math.round(Number(f.remaining))} of ${f.max})${f.limited ? caseyText("src/quota-watch.js#w3") : ''}`
   return ''
 }
 
@@ -61,10 +62,10 @@ export async function checkQuota({ log } = {}) {
       const step = bucket(q[k])
       try {
         if (prev[k] === undefined) {
-          await post(cfg, `Synthetic ${LABEL[k]}: now watching every ${every} minutes, telling you at each ${STEP()}% step. ${describe(q, k)}.`)
+          await post(cfg, caseyText("src/quota-watch.js#w4", [LABEL[k], every, STEP(), describe(q, k)]))
           state[k] = step; did = 'baseline'
         } else if (step < prev[k]) {
-          await post(cfg, `Synthetic ${LABEL[k]} fell below ${prev[k]}%. ${describe(q, k)}.`)
+          await post(cfg, caseyText("src/quota-watch.js#w5", [LABEL[k], prev[k], describe(q, k)]))
           state[k] = step; did = 'told'
         } else if (step !== prev[k]) state[k] = step
       } catch (e) { log?.warn?.('[casey] quota post failed', { which: k, error: e.message }); did = 'failed' }

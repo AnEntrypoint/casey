@@ -27,6 +27,7 @@ import { tagList } from './timestamp.js'
 
 import { reopenedWithoutDiagnosis } from './signoff-desk.js'
 import { evData, rowInt } from './safe.js'
+import { caseyText } from './deployment-text.js';
 
 export const AGENT_USER = { id: 'casey-agent', role: 'agent' }
 export const SYSTEM_USER = { id: 'casey-system', role: 'admin' }
@@ -98,12 +99,12 @@ export class CaseStore {
       const detail = [...byStage.entries()]
         .map(([s, refs]) => `${s}: ${refs.length} case(s) (${refs.slice(0, 10).join(', ')}${refs.length > 10 ? ', ...' : ''})`)
         .join('; ')
-      const msg = `[casey] ${stranded.length} stored case(s) sit in a workflow stage this config no longer declares -- they are invisible to find-or-create, cannot be transitioned, and the next message from those reporters will open a DUPLICATE case. Re-stage them or restore the stage name. ${detail}`
+      const msg = caseyText("src/case-store.js#w0", [stranded.length, detail])
       if (this.log?.error) this.log.error(msg, { stages: [...byStage.keys()], count: stranded.length })
       else console.error(msg)
       return stranded.map(r => r.id)
     } catch (e) {
-      this.log?.warn?.('[casey] stranded-stage check failed', { error: e.message })
+      this.log?.warn?.(caseyText("src/case-store.js#w1"), { error: e.message })
       return []
     }
   }
@@ -125,14 +126,14 @@ export class CaseStore {
       for (const [a, refs] of byAssignee) orphans.push(`assignee "${a}": ${refs.length} case(s) (${refs.slice(0, 10).join(', ')}${refs.length > 10 ? ', ...' : ''})`)
       const idents = await this.t.list('operator_identity', {}, { limit })
       const orphanIdents = idents.filter(r => r.operator_id && !known.has(r.operator_id)).map(r => r.operator_id)
-      if (orphanIdents.length) orphans.push(`operator_identity for ${orphanIdents.length} unknown operator(s) (${orphanIdents.slice(0, 10).join(', ')})`)
+      if (orphanIdents.length) orphans.push(caseyText("src/case-store.js#w2", [orphanIdents.length, orphanIdents.slice(0, 10).join(', ')]))
       if (!orphans.length) return []
-      const msg = `[casey] stored rows name operator(s) with no active account -- those cases can never show as "mine" to anyone, they double-count in team workload, and an orphaned identity suggests a handle nobody can log in as. Re-assign them or restore the account. ${orphans.join('; ')}`
+      const msg = caseyText("src/case-store.js#w3", [orphans.join('; ')])
       if (this.log?.error) this.log.error(msg, { count: orphans.length })
       else console.error(msg)
       return orphans
     } catch (e) {
-      this.log?.warn?.('[casey] orphaned-operator check failed', { error: e.message })
+      this.log?.warn?.(caseyText("src/case-store.js#w4"), { error: e.message })
       return []
     }
   }
@@ -252,18 +253,18 @@ export class CaseStore {
       if (!own.length) return { reset: true, cases: 0 }
       const erased = eraseCaseSessions(own.map(c => c.id), { log: this.log })
       for (const c of own.filter(x => x.status !== 'resolved' && x.status !== 'closed')) {
-        await this.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `assistant conversation restarted: this contact's role changed (${from} -> ${to})`, data: { session_reset: true, from, to }, touch: false })
+        await this.appendEvent(c.id, { kind: 'observation', actor: 'system', text: caseyText("src/case-store.js#w5", [from, to]), data: { session_reset: true, from, to }, touch: false })
       }
       return { reset: true, cases: own.length, removed: erased.removed.length, failed: erased.failed.length }
     } catch (e) {
-      this.log?.warn?.('[casey] session reset after tier change failed', { contactId, error: e.message })
+      this.log?.warn?.(caseyText("src/case-store.js#w6"), { contactId, error: e.message })
       return { reset: false, error: e.message }
     }
   }
 
   async _releaseHeldCases(contactId, tier, user) {
     if (atLeast(tier, TIER.field)) return
-    return this.releaseCasesHeldBy(`contact:${contactId}`, 'the team member holding it lost their role', user)
+    return this.releaseCasesHeldBy(`contact:${contactId}`, caseyText("src/case-store.js#w7"), user)
   }
 
   async releaseCasesHeldBy(key, why, user = SYSTEM_USER) {
@@ -273,8 +274,8 @@ export class CaseStore {
       const resumed = c.autonomy === 'observe'
       if (resumed) patch.autonomy = 'auto'
       await this.updateCase(c.id, patch, user)
-      await this.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'edited assignee', data: { assignee: UNCLAIMED_ASSIGNEE, released_because: why, was: key } })
-      if (resumed) await this.appendEvent(c.id, { kind: 'autonomy_change', actor: 'operator', text: 'autonomy observe -> auto', data: { from: 'observe', to: 'auto', reason: why } })
+      await this.appendEvent(c.id, { kind: 'action', actor: 'operator', text: caseyText("src/case-store.js#w8"), data: { assignee: UNCLAIMED_ASSIGNEE, released_because: why, was: key } })
+      if (resumed) await this.appendEvent(c.id, { kind: 'autonomy_change', actor: 'operator', text: caseyText("src/case-store.js#w9"), data: { from: 'observe', to: 'auto', reason: why } })
     }
     return held.length
   }
@@ -470,19 +471,19 @@ export class CaseStore {
       try {
         const { autoAssignByArea } = await import('./areas.js')
         await autoAssignByArea(this, caseId, { nearest: false })
-      } catch (e) { this.log?.warn?.('[casey] area auto-assign failed', { caseId, error: e.message }) }
+      } catch (e) { this.log?.warn?.(caseyText("src/case-store.js#w10"), { caseId, error: e.message }) }
     }
     return res
   }
 
   async _mergeReportLocked(caseId, incoming, user = AGENT_USER, { bypassObserve = false } = {}) {
     const invalid = Object.keys(incoming).filter(k => !REPORT_KEYS.has(k))
-    if (invalid.length) return { error: `invalid report fields: ${invalid.join(', ')}` }
+    if (invalid.length) return { error: caseyText("src/case-store.js#w11", [invalid.join(', ')]) }
     const c0 = await this.getCase(caseId)
-    if (!c0) return { error: `no case ${caseId}` }
+    if (!c0) return { error: caseyText("src/case-store.js#w12", [caseId]) }
     return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
       const c = await this.getCase(caseId)
-      if (!c) return { error: `no case ${caseId}` }
+      if (!c) return { error: caseyText("src/case-store.js#w13", [caseId]) }
       if (c.autonomy === 'observe' && !bypassObserve) return { error: 'observe' }
       const { value: currentReport, corrupted: initCorrupted } = this._parseReport(c.report, caseId)
       const { merged, cappedFields: initCapped } = mergeReportFields(currentReport, incoming)
@@ -505,10 +506,10 @@ export class CaseStore {
         } catch (e) {
           if (e.code !== 'conflict') throw e
           if (attempt === MERGE_RETRY_LIMIT) {
-            return { error: `report merge conflict on case ${caseId} after ${MERGE_RETRY_LIMIT} retries -- concurrent writers still contending, not applied` }
+            return { error: caseyText("src/case-store.js#w14", [caseId, MERGE_RETRY_LIMIT]) }
           }
           const fresh = await this.getCase(caseId)
-          if (!fresh) return { error: `no case ${caseId}` }
+          if (!fresh) return { error: caseyText("src/case-store.js#w15", [caseId]) }
 
           if (fresh.autonomy === 'observe' && !bypassObserve) return { error: 'observe' }
           attemptCase = fresh
@@ -524,14 +525,14 @@ export class CaseStore {
   }
 
   async appendReportField(caseId, field, note, user = AGENT_USER) {
-    if (note == null || String(note).trim() === '') return { error: 'empty note' }
+    if (note == null || String(note).trim() === '') return { error: caseyText("src/case-store.js#w16") }
     const c0 = await this.getCase(caseId)
-    if (!c0) return { error: `no case ${caseId}` }
+    if (!c0) return { error: caseyText("src/case-store.js#w17", [caseId]) }
     return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
 
       const APPEND_RETRY_LIMIT = 3
       let attemptCase = await this.getCase(caseId)
-      if (!attemptCase) return { error: `no case ${caseId}` }
+      if (!attemptCase) return { error: caseyText("src/case-store.js#w18", [caseId]) }
       if (attemptCase.autonomy === 'observe') return { error: 'observe' }
       for (let attempt = 0; attempt <= APPEND_RETRY_LIMIT; attempt++) {
         const { value: current, corrupted } = this._parseReport(attemptCase.report, caseId)
@@ -539,7 +540,7 @@ export class CaseStore {
         const appended = have ? `${current[field]}; ${note}` : String(note)
 
         if (appended.length > APPEND_FIELD_MAX_LEN) {
-          return { error: `report field '${field}' has reached its maximum length (${APPEND_FIELD_MAX_LEN} chars) -- this note was not attached` }
+          return { error: caseyText("src/case-store.js#w19", [field, APPEND_FIELD_MAX_LEN]) }
         }
         const next = { ...current, [field]: appended }
         try {
@@ -549,10 +550,10 @@ export class CaseStore {
         } catch (e) {
           if (e.code !== 'conflict') throw e
           if (attempt === APPEND_RETRY_LIMIT) {
-            return { error: `report append conflict on case ${caseId} after ${APPEND_RETRY_LIMIT} retries -- concurrent writers still contending, not applied` }
+            return { error: caseyText("src/case-store.js#w20", [caseId, APPEND_RETRY_LIMIT]) }
           }
           const fresh = await this.getCase(caseId)
-          if (!fresh) return { error: `no case ${caseId}` }
+          if (!fresh) return { error: caseyText("src/case-store.js#w21", [caseId]) }
           if (fresh.autonomy === 'observe' && !bypassObserve) return { error: 'observe' }
           attemptCase = fresh
         }
@@ -654,12 +655,12 @@ export class CaseStore {
 
   async updateCaseChecked(id, patch, user = AGENT_USER) {
     const c0 = await this.getCase(id)
-    if (!c0) return { error: `no case ${id}` }
+    if (!c0) return { error: caseyText("src/case-store.js#w22", [id]) }
     return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
 
       const RETRY_LIMIT = 3
       let c = await this.getCase(id)
-      if (!c) return { error: `no case ${id}` }
+      if (!c) return { error: caseyText("src/case-store.js#w23", [id]) }
       for (let attempt = 0; attempt <= RETRY_LIMIT; attempt++) {
         if (c.autonomy === 'observe') return { error: 'observe' }
         try {
@@ -668,10 +669,10 @@ export class CaseStore {
         } catch (e) {
           if (e.code !== 'conflict') throw e
           if (attempt === RETRY_LIMIT) {
-            return { error: `update conflict on case ${id} after ${RETRY_LIMIT} retries -- concurrent writers still contending, not applied` }
+            return { error: caseyText("src/case-store.js#w24", [id, RETRY_LIMIT]) }
           }
           c = await this.getCase(id)
-          if (!c) return { error: `no case ${id}` }
+          if (!c) return { error: caseyText("src/case-store.js#w25", [id]) }
         }
       }
     })
@@ -733,8 +734,8 @@ export class CaseStore {
             await this.appendEvent(c.id, {
               kind: 'action', actor: 'system', touch: false,
               text: personOnly
-                ? `PII erasure: the identifying report fields of one person on a shared phone were scrubbed${reason ? ` (${reason})` : ''}`
-                : `PII erasure: contact data, report identifying fields and the case routing key scrubbed${reason ? ` (${reason})` : ''}`,
+                ? caseyText("src/case-store.js#w26", [reason ? ` (${reason})` : ''])
+                : caseyText("src/case-store.js#w27", [reason ? ` (${reason})` : '']),
               data: { erasure: true, by: operator?.id || 'system', fields: personOnly ? [...PII_REPORT_FIELDS] : [...PII_REPORT_FIELDS, 'external_id', 'author_key'] },
             })
 
@@ -811,7 +812,7 @@ export class CaseStore {
       return true
     } catch (e) {
 
-      this.log?.error?.('[casey] erasure journal write failed -- a crash during this erasure will not be recoverable', { tag, error: e.message })
+      this.log?.error?.(caseyText("src/case-store.js#w28"), { tag, error: e.message })
       return false
     }
   }
@@ -848,7 +849,7 @@ export class CaseStore {
     for (const ref of cases) {
       const c0 = await this.getCase(ref.id).catch(() => null)
       if (!c0) continue
-      const outcome = await this._erasePiiOnCase(c0, { reason: reason || 'one person on a shared phone', operator, personOnly: true })
+      const outcome = await this._erasePiiOnCase(c0, { reason: reason || caseyText("src/case-store.js#w29"), operator, personOnly: true })
       if (outcome === 'scrubbed') touched.push(c0.id)
       else if (outcome === 'conflict') failed.push(c0.id)
     }
@@ -940,7 +941,7 @@ export class CaseStore {
     }
 
     try {
-      for (const id of [contactId, ...siblingIds]) await this.releaseCasesHeldBy(`contact:${id}`, 'the team member was erased', SYSTEM_USER)
+      for (const id of [contactId, ...siblingIds]) await this.releaseCasesHeldBy(`contact:${id}`, caseyText("src/case-store.js#w30"), SYSTEM_USER)
       const digits = String(contact.external_id || '').replace(/\D/g, '')
       if (digits && !alreadyErased) {
         for (const a of await this.t.list('operator_account', {}, { limit: 500 })) {
@@ -1009,11 +1010,11 @@ export class CaseStore {
   }
 
   async mergeCases(sourceId, targetId, user = AGENT_USER, { reason = '' } = {}) {
-    if (sourceId === targetId) return { error: 'cannot merge a case into itself' }
+    if (sourceId === targetId) return { error: caseyText("src/case-store.js#w31") }
     const src0 = await this.getCase(sourceId)
     const tgt0 = await this.getCase(targetId)
-    if (!src0) return { error: `no case ${sourceId}` }
-    if (!tgt0) return { error: `no case ${targetId}` }
+    if (!src0) return { error: caseyText("src/case-store.js#w32", [sourceId]) }
+    if (!tgt0) return { error: caseyText("src/case-store.js#w33", [targetId]) }
     if (tgt0.autonomy === 'observe') return { error: 'observe' }
     if (src0.autonomy === 'observe') return { error: 'observe' }
 
@@ -1022,7 +1023,7 @@ export class CaseStore {
     const mergeFn = async () => {
       const src = await this.getCase(sourceId)
       const tgt = await this.getCase(targetId)
-      if (!src || !tgt) return { error: 'case vanished during merge' }
+      if (!src || !tgt) return { error: caseyText("src/case-store.js#w34") }
       if (tgt.autonomy === 'observe') return { error: 'observe' }
       if (src.autonomy === 'observe') return { error: 'observe' }
       const srcTags = new Set(tagList(src))
@@ -1053,21 +1054,21 @@ export class CaseStore {
       }, user)
       await this.appendEvent(targetId, {
         kind: 'note', actor: user.role === 'agent' ? 'agent' : 'operator',
-        text: `Merged in ${src.ref} (${srcEvents.length} event(s))${reason ? ` -- ${reason}` : ''}.`,
+        text: caseyText("src/case-store.js#w35", [src.ref, srcEvents.length, reason ? ` -- ${reason}` : '']),
         data: { merged_from: sourceId, merged_from_ref: src.ref, moved_events: srcEvents.length, reason },
       })
 
-      const closed = await this._forceClose(sourceId, `merged into ${tgt.ref}`, SYSTEM_USER)
+      const closed = await this._forceClose(sourceId, caseyText("src/case-store.js#w36", [tgt.ref]), SYSTEM_USER)
       if (!closed || closed.status !== 'closed') {
-        return { error: 'merge partial: source could not be closed', status: closed?.status }
+        return { error: caseyText("src/case-store.js#w37"), status: closed?.status }
       }
       await this.updateCase(sourceId, {
         tags: [...srcTags, 'merged'].filter((v, i, a) => a.indexOf(v) === i).join(','),
-        summary: `Merged into ${tgt.ref}. See that case for the full report.`,
+        summary: caseyText("src/case-store.js#w38", [tgt.ref]),
       }, user)
       await this.appendEvent(sourceId, {
         kind: 'note', actor: user.role === 'agent' ? 'agent' : 'operator',
-        text: `This report was merged into ${tgt.ref}${reason ? ` -- ${reason}` : ''}.`,
+        text: caseyText("src/case-store.js#w39", [tgt.ref, reason ? ` -- ${reason}` : '']),
         data: { merged_into: targetId, merged_into_ref: tgt.ref, reason },
       })
       return {
@@ -1084,22 +1085,22 @@ export class CaseStore {
 
   async splitCase(sourceId, eventIds, { subject = '', reason = '' } = {}, user = AGENT_USER) {
     const ids = [...new Set((eventIds || []).filter(Boolean))]
-    if (!ids.length) return { error: 'no events selected to split out' }
+    if (!ids.length) return { error: caseyText("src/case-store.js#w40") }
     const src0 = await this.getCase(sourceId)
-    if (!src0) return { error: `no case ${sourceId}` }
+    if (!src0) return { error: caseyText("src/case-store.js#w41", [sourceId]) }
     if (src0.autonomy === 'observe') return { error: 'observe' }
     return this._withLock(`${src0.channel}|${src0.external_id}`, async () => {
       const src = await this.getCase(sourceId)
-      if (!src) return { error: 'case vanished during split' }
+      if (!src) return { error: caseyText("src/case-store.js#w42") }
       if (src.autonomy === 'observe') return { error: 'observe' }
       const all = await this.listEvents(sourceId)
       const byId = new Map(all.map(e => [e.id, e]))
-      for (const id of ids) if (!byId.has(id)) return { error: `event ${id} is not on case ${src.ref}` }
-      if (ids.length >= all.length) return { error: 'cannot split out every event -- that would empty the source case' }
+      for (const id of ids) if (!byId.has(id)) return { error: caseyText("src/case-store.js#w43", [id, src.ref]) }
+      if (ids.length >= all.length) return { error: caseyText("src/case-store.js#w44") }
       const ref = await this._nextRef()
       const created = await this.t.create('case', {
         ref, channel: src.channel, external_id: src.external_id,
-        contact_id: src.contact_id || '', subject: (subject && String(subject).trim()) || `Split from ${src.ref}`,
+        contact_id: src.contact_id || '', subject: (subject && String(subject).trim()) || caseyText("src/case-store.js#w45", [src.ref]),
         summary: '', report: '', priority: src.priority || 'normal',
         tags: 'split', assignee: src.assignee || 'agent', autonomy: src.autonomy || 'auto',
         status: 'new', last_event_at: nowIso(),
@@ -1109,12 +1110,12 @@ export class CaseStore {
       for (const id of ids) await this.updateEvent(id, { case_id: created.id })
       await this.appendEvent(created.id, {
         kind: 'note', actor: user.role === 'agent' ? 'agent' : 'operator',
-        text: `Split out of ${src.ref} (${ids.length} event(s))${reason ? ` -- ${reason}` : ''}.`,
+        text: caseyText("src/case-store.js#w46", [src.ref, ids.length, reason ? ` -- ${reason}` : '']),
         data: { split_from: sourceId, split_from_ref: src.ref, moved_events: ids.length, reason },
       })
       await this.appendEvent(sourceId, {
         kind: 'note', actor: user.role === 'agent' ? 'agent' : 'operator',
-        text: `${ids.length} event(s) split out into ${ref}${reason ? ` -- ${reason}` : ''}.`,
+        text: caseyText("src/case-store.js#w47", [ids.length, ref, reason ? ` -- ${reason}` : '']),
         data: { split_into: created.id, split_into_ref: ref, moved_events: ids.length, reason },
       })
       return { split: true, newCase: await this.getCase(created.id), source: await this.getCase(sourceId), movedEvents: ids.length }
@@ -1136,7 +1137,7 @@ export class CaseStore {
         await this.t.update('case', caseId, { last_event_at: nowIso() }, AGENT_USER)
       } catch (e) {
 
-        this.log?.error?.('case touch after appendEvent failed -- last_event_at is now stale for this case', { caseId, error: e.message })
+        this.log?.error?.(caseyText("src/case-store.js#w48"), { caseId, error: e.message })
       }
     }
     return ev
@@ -1236,9 +1237,9 @@ export class CaseStore {
     if (this.onTransition) {
       try { await this.onTransition({ caseRow: result, from: attemptBefore.status, to: toState, user, reason }) }
       catch (e) {
-        this.log?.warn?.('[casey] onTransition hook failed', { caseId, to: toState, error: e.message })
-        try { await this.appendEvent(caseId, { kind: 'observation', actor: 'system', text: `Stage notification failed: ${e.message}` }) }
-        catch (e2) { this.log?.error?.('[casey] failed to record onTransition hook failure', { caseId, error: e2.message }) }
+        this.log?.warn?.(caseyText("src/case-store.js#w49"), { caseId, to: toState, error: e.message })
+        try { await this.appendEvent(caseId, { kind: 'observation', actor: 'system', text: caseyText("src/case-store.js#w50", [e.message]) }) }
+        catch (e2) { this.log?.error?.(caseyText("src/case-store.js#w51"), { caseId, error: e2.message }) }
       }
     }
     return result

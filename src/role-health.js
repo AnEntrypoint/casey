@@ -17,17 +17,17 @@ async function openReadOnly(dbFile) {
 }
 
 const q = async (db, sql, args = []) => (await db.execute({ sql, args })).rows
-const tableCols = async (db, t) => new Set((await q(db, `PRAGMA table_info("${t}")`)).map(r => String(r.name)))
+const tableCols = async (db, t) => new Set((await q(db, caseyText("src/role-health.js#w0", [t]))).map(r => String(r.name)))
 const ms = (v) => { const n = Number(v); if (Number.isFinite(n) && n > 0) return n < 1e11 ? n * 1000 : n; const d = Date.parse(String(v || '')); return Number.isFinite(d) ? d : 0 }
 
 export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now() } = {}) {
   const rows = []
-  if (!fs.existsSync(dbFile)) return { rows: [row('roles-db', 'info', 'no case data yet: role checks will run once there is a database')] }
+  if (!fs.existsSync(dbFile)) return { rows: [row('roles-db', 'info', caseyText("src/role-health.js#w1"))] }
   let db
   try { db = await openReadOnly(dbFile) }
-  catch (e) { return { rows: [row('roles-db', 'warn', `role checks could not open the database read-only (${e.message})`)] } }
+  catch (e) { return { rows: [row('roles-db', 'warn', caseyText("src/role-health.js#w2", [e.message]))] } }
   try {
-    const tables = new Set((await q(db, `SELECT name FROM sqlite_master WHERE type='table'`)).map(r => String(r.name)))
+    const tables = new Set((await q(db, caseyText("src/role-health.js#w3"))).map(r => String(r.name)))
 
     let accounts = []
     let acctCols = new Set()
@@ -35,20 +35,20 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
       acctCols = await tableCols(db, 'operator_account')
       const sel = ['id', 'username', 'display_name', 'role', 'disabled', 'status', 'setup_email_status'].filter(c => acctCols.has(c))
       if (acctCols.has('contact_phone')) sel.push('contact_phone')
-      accounts = (await q(db, `SELECT ${sel.join(', ')} FROM operator_account`)).filter(a => a.status !== 'deleted')
+      accounts = (await q(db, caseyText("src/role-health.js#w4", [sel.join(', ')]))).filter(a => a.status !== 'deleted')
     }
     const live = accounts.filter(a => String(a.disabled) !== '1')
     const admins = live.filter(a => a.role === 'admin')
-    if (!accounts.length) rows.push(row('admin', 'info', 'no dashboard logins yet: a bootstrap admin is created on first boot'))
-    else if (!admins.length) rows.push(row('admin', 'fail', 'there is NO enabled admin login: nobody can create logins, grant the operator rung or unlock accounts', 'Create one from the terminal: casey operators add <name> --role admin (prints a generated password).'))
-    else rows.push(row('admin', 'ok', `${admins.length} enabled admin login(s), ${live.length} enabled login(s) in all`))
+    if (!accounts.length) rows.push(row('admin', 'info', caseyText("src/role-health.js#w5")))
+    else if (!admins.length) rows.push(row('admin', 'fail', caseyText("src/role-health.js#w6"), 'Create one from the terminal: casey operators add <name> --role admin (prints a generated password).'))
+    else rows.push(row('admin', 'ok', caseyText("src/role-health.js#w8", [admins.length, live.length])))
     const unsent = accounts.filter(a => a.setup_email_status === 'not_sent')
-    if (unsent.length) rows.push(row('account-setup', 'warn', `${unsent.length} new login(s) have no password yet because their setup email was not sent`, 'Set CASEY_SMTP_HOST and CASEY_SMTP_FROM for the service (also CASEY_SMTP_PORT, CASEY_SMTP_USER and CASEY_SMTP_PASSWORD when the relay needs them), restart the service, then POST /api/accounts/<id>/resend-setup for each such login.'))
+    if (unsent.length) rows.push(row('account-setup', 'warn', caseyText("src/role-health.js#w9", [unsent.length]), 'Set CASEY_SMTP_HOST and CASEY_SMTP_FROM for the service (also CASEY_SMTP_PORT, CASEY_SMTP_USER and CASEY_SMTP_PASSWORD when the relay needs them), restart the service, then POST /api/accounts/<id>/resend-setup for each such login.'))
 
     let contacts = []
     if (tables.has('contact')) {
       const ccols = await tableCols(db, 'contact')
-      if (ccols.has('tier')) contacts = (await q(db, `SELECT id, external_id, display_name, tier, status, channel FROM contact`)).filter(c => c.status !== 'deleted' && c.channel !== 'system')
+      if (ccols.has('tier')) contacts = (await q(db, caseyText("src/role-health.js#w11"))).filter(c => c.status !== 'deleted' && c.channel !== 'system')
     }
     const teamContacts = contacts.filter(c => atLeast(resolveTierValue(c.tier), TIER.field))
     const fieldLogins = live.filter(a => FIELD_ROLES.includes(a.role))
@@ -59,24 +59,24 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
         'Register the first person: casey roles assign <phone> <tier> --name "..." , or casey roles invite <tier> for a one-time WhatsApp code. Tiers: ' + TIER_ORDER.filter(t => t !== 'reporter').join(', ') + '.'))
     } else {
       const parts = Object.entries(byTier).map(([t, n]) => `${n} ${t}`)
-      rows.push(row('team', 'ok', `registered team: ${parts.join(', ') || 'no WhatsApp contacts'}${fieldLogins.length ? `; ${fieldLogins.length} field login(s)` : ''}`))
+      rows.push(row('team', 'ok', caseyText("src/role-health.js#w13", [parts.join(', ') || caseyText("src/role-health.js#w14"), fieldLogins.length ? caseyText("src/role-health.js#w15", [fieldLogins.length]) : ''])))
       if (!byTier[TIER.specialist] && !live.some(a => a.role === SPECIALIST_ROLE)) {
-        rows.push(row('team-signoff', 'warn', `nobody holds the ${TIER.specialist} rung, and only that rung may sign a report off over WhatsApp`, `casey roles assign <phone> ${TIER.specialist} --name "..."`))
+        rows.push(row('team-signoff', 'warn', caseyText("src/role-health.js#w16", [TIER.specialist]), `casey roles assign <phone> ${TIER.specialist} --name "..."`))
       }
     }
     if (acctCols.size && !acctCols.has('contact_phone')) {
-      rows.push(row('contact-phone', 'info', 'operator_account has no contact_phone column yet: it is added automatically the first time a login is linked to a number (older rows read as unlinked)'))
+      rows.push(row('contact-phone', 'info', caseyText("src/role-health.js#w18")))
     } else if (acctCols.has('contact_phone')) {
       const unlinked = fieldLogins.filter(a => !String(a.contact_phone || '').trim())
-      if (unlinked.length) rows.push(row('contact-phone', 'warn', `${unlinked.length} field login(s) have no contact_phone (${unlinked.slice(0, 5).map(a => a.username).join(', ')}): "my cases" is empty for them because nothing links the login to a WhatsApp contact`, 'Admin: set the number on the login (dashboard -> team -> the login, or POST /api/accounts/:id/contact-phone).'))
-      else rows.push(row('contact-phone', 'ok', 'contact_phone column present; every field login is linked to a number'))
+      if (unlinked.length) rows.push(row('contact-phone', 'warn', caseyText("src/role-health.js#w19", [unlinked.length, unlinked.slice(0, 5).map(a => a.username).join(', ')]), caseyText("src/role-health.js#w20")))
+      else rows.push(row('contact-phone', 'ok', caseyText("src/role-health.js#w21")))
     }
 
     if (tables.has('case') && tables.has('event')) {
-      const inv = (await q(db, `SELECT id FROM "case" WHERE channel='system' AND external_id='settings:role-invites' AND (status IS NULL OR status != 'deleted') LIMIT 1`))[0]
-      if (!inv) rows.push(row('invites', 'info', 'no role-invite log yet (created on the first invite)'))
+      const inv = (await q(db, caseyText("src/role-health.js#w22")))[0]
+      if (!inv) rows.push(row('invites', 'info', caseyText("src/role-health.js#w23")))
       else {
-        const evs = await q(db, `SELECT text FROM event WHERE case_id=? AND kind='observation' AND text LIKE 'role-invite:%'`, [inv.id])
+        const evs = await q(db, caseyText("src/role-health.js#w24"), [inv.id])
         let bad = 0
         const created = new Map(); const claimed = new Map(); const revoked = new Set()
         for (const e of evs) {
@@ -90,15 +90,15 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
         }
         let active = 0
         for (const [id, r] of created) if (!revoked.has(id) && (claimed.get(id) || 0) < (r.max || 1) && Number(r.exp) > now) active++
-        if (bad) rows.push(row('invites', 'fail', `the role-invite log holds ${bad} unreadable record(s): invites replayed from it may be wrong`, 'Inspect the events on the system case settings:role-invites; do not edit them, revoke and re-issue instead.'))
-        else rows.push(row('invites', 'ok', `role-invite log readable: ${created.size} issued, ${[...claimed.values()].reduce((a, b) => a + b, 0)} claimed, ${active} unused and unexpired`))
+        if (bad) rows.push(row('invites', 'fail', caseyText("src/role-health.js#w25", [bad]), caseyText("src/role-health.js#w26")))
+        else rows.push(row('invites', 'ok', caseyText("src/role-health.js#w27", [created.size, [...claimed.values()].reduce((a, b) => a + b, 0), active])))
       }
     }
 
     if (tables.has('case')) {
       const statuses = openStatuses.length ? openStatuses : null
-      const where = statuses ? `status IN (${statuses.map(() => '?').join(',')})` : `status NOT IN ('closed','deleted')`
-      const open = await q(db, `SELECT ref, assignee, last_event_at, status FROM "case" WHERE ${where} AND channel != 'system' AND assignee IS NOT NULL AND assignee != '' AND assignee != ?`, [...(statuses || []), UNCLAIMED])
+      const where = statuses ? caseyText("src/role-health.js#w28", [statuses.map(() => '?').join(',')]) : caseyText("src/role-health.js#w29")
+      const open = await q(db, caseyText("src/role-health.js#w30", [where]), [...(statuses || []), UNCLAIMED])
       const contactById = new Map(contacts.map(c => [String(c.id), c]))
       const loginByName = new Map(accounts.map(a => [String(a.username), a]))
       const orphans = []
@@ -108,39 +108,39 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
         let holder = null; let problem = ''
         if (a.startsWith('contact:')) {
           holder = contactById.get(a.slice(8))
-          if (!holder) problem = 'a contact that no longer exists'
-          else if (!atLeast(resolveTierValue(holder.tier), TIER.field)) problem = `${holder.display_name || 'a contact'}, who no longer holds a team rung`
+          if (!holder) problem = caseyText("src/role-health.js#w31")
+          else if (!atLeast(resolveTierValue(holder.tier), TIER.field)) problem = caseyText("src/role-health.js#w32", [holder.display_name || 'a contact'])
         } else {
           holder = loginByName.get(a)
-          if (!holder) problem = `"${a}", who is not a login or a team contact`
-          else if (String(holder.disabled) === '1') problem = `${holder.display_name || holder.username}, whose login is disabled`
+          if (!holder) problem = caseyText("src/role-health.js#w33", [a])
+          else if (String(holder.disabled) === '1') problem = caseyText("src/role-health.js#w34", [holder.display_name || holder.username])
         }
         if (problem) { orphans.push({ ref: c.ref, problem }); continue }
         const last = ms(c.last_event_at)
         if (last && now - last > STALE_DAYS * DAY) {
-          const name = a.startsWith('contact:') ? (holder.display_name || 'a team member') : (holder.display_name || holder.username)
+          const name = a.startsWith('contact:') ? (holder.display_name || caseyText("src/role-health.js#w35")) : (holder.display_name || holder.username)
           stale.set(name, (stale.get(name) || 0) + 1)
         }
       }
       if (orphans.length) {
         const byProblem = new Map()
         for (const o of orphans) byProblem.set(o.problem, [...(byProblem.get(o.problem) || []), o.ref])
-        const sample = [...byProblem.entries()].slice(0, 3).map(([p, refs]) => `${refs.length} held by ${p} (${refs.slice(0, 2).join(', ')}${refs.length > 2 ? ', ...' : ''})`).join('; ')
-        rows.push(row('orphans', 'warn', `${orphans.length} open report(s) are assigned to somebody who cannot act on them: ${sample}`,
+        const sample = [...byProblem.entries()].slice(0, 3).map(([p, refs]) => caseyText("src/role-health.js#w36", [refs.length, p, refs.slice(0, 2).join(', '), refs.length > 2 ? ', ...' : ''])).join('; ')
+        rows.push(row('orphans', 'warn', caseyText("src/role-health.js#w37", [orphans.length, sample]),
           'Reassign or release them: dashboard case editor -> Assignee, or casey roles release <holder>. Demoting a contact releases their reports automatically; a deleted or renamed login does not.'))
-      } else rows.push(row('orphans', 'ok', 'no open report is assigned to a demoted, deleted or unknown holder'))
+      } else rows.push(row('orphans', 'ok', caseyText("src/role-health.js#w39")))
       if (stale.size) {
         const list = [...stale.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([n, k]) => `${n} (${k})`).join(', ')
-        rows.push(row('stale-assigned', 'warn', `${[...stale.values()].reduce((a, b) => a + b, 0)} assigned report(s) have had no activity for over ${STALE_DAYS} days: ${list}`, 'Nudge them (dashboard -> Who needs a nudge) or reassign.'))
-      } else rows.push(row('stale-assigned', 'ok', `no assigned report has been silent for more than ${STALE_DAYS} days`))
+        rows.push(row('stale-assigned', 'warn', caseyText("src/role-health.js#w40", [[...stale.values()].reduce((a, b) => a + b, 0), STALE_DAYS, list]), caseyText("src/role-health.js#w41")))
+      } else rows.push(row('stale-assigned', 'ok', caseyText("src/role-health.js#w42", [STALE_DAYS])))
     }
 
     if (tables.has('case')) {
-      const n = Number((await q(db, `SELECT COUNT(*) n FROM "case" WHERE tags LIKE '%delivery-failed%' AND status NOT IN ('closed','deleted')`))[0]?.n) || 0
-      if (n) rows.push(row('undelivered', 'warn', `${n} open report(s) carry the delivery-failed tag: a reply was refused by WhatsApp (usually the 24-hour window)`, 'Open them in the inbox (tag delivery-failed); phone the reporter, or wait for them to message first.'))
+      const n = Number((await q(db, caseyText("src/role-health.js#w43")))[0]?.n) || 0
+      if (n) rows.push(row('undelivered', 'warn', caseyText("src/role-health.js#w44", [n]), caseyText("src/role-health.js#w45")))
     }
   } catch (e) {
-    rows.push(row('roles-db', 'warn', `role checks could not finish (${String(e.message).slice(0, 120)})`))
+    rows.push(row('roles-db', 'warn', caseyText("src/role-health.js#w46", [String(e.message).slice(0, 120)])))
   } finally { try { db.close?.() } catch {  } }
   return { rows }
 }

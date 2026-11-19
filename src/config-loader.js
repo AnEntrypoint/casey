@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { load as yamlLoadRaw, YAML11_SCHEMA } from 'js-yaml'
+import { caseyText } from './deployment-text.js';
 
 const yamlLoad = (text) => yamlLoadRaw(text, { schema: YAML11_SCHEMA })
 
@@ -57,13 +58,13 @@ const TIER_KEYS = ['reporter', 'field', 'specialist', 'operator']
 function validateDomain(domain, file) {
   const fail = (why) => { throw new Error(`domain.yml ${why} (${file})`) }
   const tiers = domain?.tiers
-  if (!tiers || typeof tiers !== 'object' || Object.keys(tiers).join() !== TIER_KEYS.join()) fail(`tiers must list ${TIER_KEYS.join(', ')} in ladder order`)
-  if (new Set(Object.values(tiers)).size !== TIER_KEYS.length || Object.values(tiers).some(v => typeof v !== 'string' || !v.trim())) fail('tiers must map each key to a distinct tier id')
+  if (!tiers || typeof tiers !== 'object' || Object.keys(tiers).join() !== TIER_KEYS.join()) fail(caseyText("src/config-loader.js#w0", [TIER_KEYS.join(', ')]))
+  if (new Set(Object.values(tiers)).size !== TIER_KEYS.length || Object.values(tiers).some(v => typeof v !== 'string' || !v.trim())) fail(caseyText("src/config-loader.js#w1"))
   const labels = domain.tier_labels
-  if (!labels || TIER_KEYS.some(k => typeof labels[k] !== 'string' || !labels[k].trim())) fail('tier_labels must label each tier key')
-  if (!Array.isArray(domain.admin_only_tiers) || domain.admin_only_tiers.some(k => !TIER_KEYS.includes(k))) fail('admin_only_tiers must list tier keys')
-  if (typeof domain.observation_form !== 'string' || !domain.observation_form) fail('observation_form must name the pack form')
-  if (!domain.tool_names || typeof domain.tool_names !== 'object') fail('tool_names must map generic tool names to visible names')
+  if (!labels || TIER_KEYS.some(k => typeof labels[k] !== 'string' || !labels[k].trim())) fail(caseyText("src/config-loader.js#w2"))
+  if (!Array.isArray(domain.admin_only_tiers) || domain.admin_only_tiers.some(k => !TIER_KEYS.includes(k))) fail(caseyText("src/config-loader.js#w3"))
+  if (typeof domain.observation_form !== 'string' || !domain.observation_form) fail(caseyText("src/config-loader.js#w4"))
+  if (!domain.tool_names || typeof domain.tool_names !== 'object') fail(caseyText("src/config-loader.js#w5"))
   return domain
 }
 

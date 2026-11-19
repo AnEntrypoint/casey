@@ -1,3 +1,4 @@
+import { caseyText } from './deployment-text.js';
 
 
 export const RECEIVE_SILENCE_MS = Number(process.env.CASEY_RECEIVE_SILENCE_MS || 0)
@@ -15,14 +16,14 @@ export function detectZombieReceive(receive, silenceMs) {
 
 export function classifyWorkerHealth(payload, silenceMs) {
   if (payload.store === false) {
-    return { kind: 'store', reason: 'store not ready', message: '[supervisor] worker reports store not ready -- degrading', detail: null }
+    return { kind: 'store', reason: caseyText("src/supervisor-health.js#w0"), message: caseyText("src/supervisor-health.js#w1"), detail: null }
   }
   const zombie = silenceMs > 0 ? detectZombieReceive(payload.receive, silenceMs) : null
   if (zombie) {
     return {
       kind: 'zombie',
-      reason: `receive silent on ${zombie.channel} for ${zombie.silentMs}ms`,
-      message: '[supervisor] zombie receive detected -- degrading',
+      reason: caseyText("src/supervisor-health.js#w2", [zombie.channel, zombie.silentMs]),
+      message: caseyText("src/supervisor-health.js#w3"),
       detail: { channel: zombie.channel, silentMs: zombie.silentMs },
     }
   }

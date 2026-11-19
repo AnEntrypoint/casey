@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { vocabWord } from './config-loader.js'
+import { caseyText } from './deployment-text.js';
 
 export const KIND_BUTTONS = 'buttons'
 export const KIND_LIST = 'list'
@@ -82,9 +83,9 @@ export function tappedChoice(msg) {
   return reply && typeof reply.id === 'string' ? { id: reply.id, title: oneLine(reply.title, 60) } : null
 }
 
-const TAP_EXPIRED = 'they tapped a choice button that has expired or is not one you offered. Nothing was done. Tell them truthfully that the button is no longer valid and ask what they want to do.'
-const TAP_USED = (t) => `they tapped "${t}" on a choice that was already answered, so nothing new was done. Do not repeat the earlier action. Tell them briefly that it is already handled and ask if they want something else.`
-const TAP_FRESH = (t, meaning) => `they tapped the choice "${t}" that you offered. It means: ${meaning} Treat it as their answer to your last question. Nothing is recorded or changed by the tap itself: every usual check still applies to whatever you do next.`
+const TAP_EXPIRED = caseyText("src/choices.js#w0")
+const TAP_USED = (t) => caseyText("src/choices.js#w1", [t])
+const TAP_FRESH = (t, meaning) => caseyText("src/choices.js#w2", [t, meaning])
 
 export async function tapNote(store, contactId, msg, now = Date.now()) {
   const tap = tappedChoice(msg)
@@ -101,15 +102,15 @@ export async function tapNote(store, contactId, msg, now = Date.now()) {
     : { state: 'expired' }
   const body = verdict.state === 'fresh' ? TAP_FRESH(tap.title, verdict.meaning)
     : verdict.state === 'used' ? TAP_USED(tap.title) : TAP_EXPIRED
-  return `\n\n[System note: ${body}]`
+  return caseyText("src/choices.js#w3", [body])
 }
 
 export function confirmRecordChoices(ref) {
   return {
     kind: KIND_BUTTONS,
     choices: [
-      { id: `yes:${ref}`, title: choiceLabel('answer_yes'), meaning: `Yes, ${ref} is the record they mean. Call case_focus with ${ref} and confirm true, then do what they asked on it.` },
-      { id: `no:${ref}`, title: choiceLabel('answer_no'), meaning: `No, ${ref} is not the record they mean. Record nothing; ask which record they mean.` },
+      { id: `yes:${ref}`, title: choiceLabel('answer_yes'), meaning: caseyText("src/choices.js#w4", [ref, ref]) },
+      { id: `no:${ref}`, title: choiceLabel('answer_no'), meaning: caseyText("src/choices.js#w5", [ref]) },
     ],
   }
 }
@@ -119,7 +120,7 @@ export function candidateChoices(rows) {
     kind: KIND_LIST,
     choices: rows.slice(0, LIST_MAX).map(r => ({
       id: `pick:${r.ref}`, title: r.ref, description: r.what || '',
-      meaning: `They picked ${r.ref}. Call case_focus with ${r.ref}.`,
+      meaning: caseyText("src/choices.js#w6", [r.ref, r.ref]),
     })),
   }
 }
@@ -129,7 +130,7 @@ export function diagnosisStatusChoices(options) {
     kind: KIND_BUTTONS,
     choices: options.map(o => ({
       id: `status:${o}`, title: choiceLabel(o),
-      meaning: `The diagnosis certainty is ${o}. Pass diagnosis_status ${o} with the sign-off.`,
+      meaning: caseyText("src/choices.js#w7", [o, o]),
     })),
   }
 }
@@ -138,8 +139,8 @@ export function sameSituationChoices(a, b) {
   return {
     kind: KIND_BUTTONS,
     choices: [
-      { id: `same:${a}:${b}`, title: choiceLabel('same'), meaning: `They say ${a} and ${b} are the same situation. Nothing is merged from here: an operator decides merges. Say so and ask if they want a note left on the record.` },
-      { id: `notsame:${a}:${b}`, title: choiceLabel('not_same'), meaning: `They say ${a} and ${b} are different situations. Nothing changes; carry on.` },
+      { id: `same:${a}:${b}`, title: choiceLabel('same'), meaning: caseyText("src/choices.js#w8", [a, b]) },
+      { id: `notsame:${a}:${b}`, title: choiceLabel('not_same'), meaning: caseyText("src/choices.js#w9", [a, b]) },
     ],
   }
 }
@@ -149,13 +150,13 @@ export function nearbyChoices(rows) {
     kind: KIND_LIST,
     choices: rows.slice(0, LIST_MAX).map(r => ({
       id: `near:${r.ref}`, title: r.ref, description: r.description,
-      meaning: `They picked ${r.ref} from the records near their pin. Call case_focus with ${r.ref}.`,
+      meaning: caseyText("src/choices.js#w10", [r.ref, r.ref]),
     })),
   }
 }
 
 const moreChoice = (parsed) => (typeof parsed?.next === 'string' && parsed.next
-  ? { kind: KIND_BUTTONS, choices: [{ id: 'more', title: choiceLabel('more'), meaning: `They want the next page: call case_search again with the same filters and after set to "${parsed.next}".` }] }
+  ? { kind: KIND_BUTTONS, choices: [{ id: 'more', title: choiceLabel('more'), meaning: caseyText("src/choices.js#w11", [parsed.next]) }] }
   : null)
 
 function offersFromPending(parsed) {
@@ -167,7 +168,7 @@ function offersFromPending(parsed) {
       id: `${accept ? 'accept' : 'decline'}:${o.ref}`,
       title: single ? word : `${word} ${o.ref}`,
       description: `from ${o.from}`,
-      meaning: `They ${accept ? 'accept' : 'decline'} the hand-over of ${o.ref}. Call case_handover_answer with case ${o.ref} and accept ${accept}.`,
+      meaning: caseyText("src/choices.js#w12", [accept ? 'accept' : 'decline', o.ref, o.ref, accept]),
     }
   }
   if (offers.length === 1) return { kind: KIND_BUTTONS, choices: [answer(offers[0], true, true), answer(offers[0], false, true)] }

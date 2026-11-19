@@ -1,3 +1,4 @@
+import { caseyText } from './deployment-text.js';
 
 
 export const ASSIGNEE_PREFIX = 'contact:'
@@ -30,5 +31,5 @@ export function isOwnConversation(caseRow, contact) {
 
 export function publicAssignee(value, viewer = null) {
   if (!isContactAssignee(value)) return value
-  return assigneeKeyFor(viewer) === value ? 'you' : 'a team member'
+  return assigneeKeyFor(viewer) === value ? 'you' : caseyText("src/case-assignment.js#w0")
 }

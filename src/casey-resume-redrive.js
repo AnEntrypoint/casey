@@ -2,12 +2,13 @@
 
 import { mergeTag } from './hooks/heuristics.js'
 import { replayMessage } from './hooks/replay-message.js'
+import { caseyText } from './deployment-text.js';
 
 export async function deadLetterExhaustedCase(store, log, c) {
   try {
     await store.updateCase(c.id, { tags: mergeTag(mergeTag(c.tags, 'resume-exhausted'), 'needs-human') })
 
-    await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: 'resume-exhausted: every pending message hit the resume-degraded retry cap; this case will no longer be auto-resumed and needs a human.', data: { dead_lettered: true, reason: 'resume-exhausted' } })
+    await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: caseyText("src/casey-resume-redrive.js#w0"), data: { dead_lettered: true, reason: 'resume-exhausted' } })
   } catch (e) { log?.warn?.('[casey] resume-exhausted tag failed', { caseId: c.id, error: e.message }) }
 }
 

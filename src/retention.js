@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { tsMs, tagList } from './timestamp.js'
 import { eraseCaseSessions, findCaseSessionDirs } from './store/agent-sessions.js'
+import { caseyText } from './deployment-text.js';
 
 export const RETENTION_ACTIONS = ['archive', 'erase']
 export const DEFAULT_RETENTION_ACTION = 'archive'
@@ -14,13 +15,13 @@ export const RETENTION_PII_REPORT_FIELDS = [
 ]
 
 export const KEEP_REASONS = {
-  system: 'a system settings/runtime row, not a person report -- never eligible',
-  open: 'still open in the workflow',
-  health_breach: 'carries an unresolved health guardrail breach',
-  needs_human: 'someone asked for a person and the case still carries the tag',
-  draft_pending: 'a drafted reply is still waiting to be released',
-  recent_event: 'something happened on it inside the retention window',
-  no_readable_timestamp: 'its timestamps cannot be read, so its age is unknown',
+  system: caseyText("src/retention.js#w0"),
+  open: caseyText("src/retention.js#w1"),
+  health_breach: caseyText("src/retention.js#w2"),
+  needs_human: caseyText("src/retention.js#w3"),
+  draft_pending: caseyText("src/retention.js#w4"),
+  recent_event: caseyText("src/retention.js#w5"),
+  no_readable_timestamp: caseyText("src/retention.js#w6"),
 }
 
 export function resolveRetentionPolicy(env = process.env, overrides = {}) {
@@ -54,13 +55,13 @@ export function newestActivityMs(caseRow, events = []) {
 
 export function classifyCaseForRetention(caseRow, events, now, policy, openStatuses = []) {
   const keep = (reason, detail) => ({ eligible: false, reason, detail: detail || KEEP_REASONS[reason], idleMs: null })
-  if (!caseRow || !policy) return keep('no_readable_timestamp', 'no case row or no policy')
+  if (!caseRow || !policy) return keep('no_readable_timestamp', caseyText("src/retention.js#w7"))
 
   if (caseRow.channel === 'system') return keep('system')
 
   const open = new Set(openStatuses)
-  if (open.has(caseRow.status)) return keep('open', `still in stage '${caseRow.status}'`)
-  if (caseRow.status !== 'closed') return keep('open', `in stage '${caseRow.status}', which this workflow does not call closed`)
+  if (open.has(caseRow.status)) return keep('open', caseyText("src/retention.js#w8", [caseRow.status]))
+  if (caseRow.status !== 'closed') return keep('open', caseyText("src/retention.js#w9", [caseRow.status]))
 
   const tags = tagList(caseRow)
   const healthTags = tags.filter(t => t.startsWith('health:'))
@@ -72,9 +73,9 @@ export function classifyCaseForRetention(caseRow, events, now, policy, openStatu
   if (!Number.isFinite(newest)) return keep('no_readable_timestamp')
   const idleMs = now - newest
   if (idleMs < policy.ageMs) {
-    return { eligible: false, reason: 'recent_event', detail: `last activity ${Math.floor(idleMs / 86400e3)}d ago, inside the ${policy.days}d window`, idleMs }
+    return { eligible: false, reason: 'recent_event', detail: caseyText("src/retention.js#w10", [Math.floor(idleMs / 86400e3), policy.days]), idleMs }
   }
-  return { eligible: true, reason: 'expired', detail: `no activity for ${Math.floor(idleMs / 86400e3)}d, past the ${policy.days}d window`, idleMs }
+  return { eligible: true, reason: 'expired', detail: caseyText("src/retention.js#w11", [Math.floor(idleMs / 86400e3), policy.days]), idleMs }
 }
 
 export async function planRetention(store, now, policy) {
@@ -112,7 +113,7 @@ async function writeArchiveRecord(store, dir, caseRow, events, now, policy, sess
   const sessionDirs = findCaseSessionDirs([caseRow.id], ...(sessionsRoot ? [sessionsRoot] : []))
   const record = {
     archived_at: now,
-    archived_by: 'casey retention',
+    archived_by: caseyText("src/retention.js#w12"),
     policy: { days: policy.days, action: policy.action },
 
     case: caseRow,
@@ -143,11 +144,11 @@ export async function executeRetention(store, plan, { operator = 'cli-operator',
     try {
 
       const fresh = await store.getCase(item.id)
-      if (!fresh) { failed.push({ ...item, error: 'case vanished between plan and execution' }); continue }
+      if (!fresh) { failed.push({ ...item, error: caseyText("src/retention.js#w13") }); continue }
       const events = await store.listEvents(item.id).catch(() => [])
       const recheck = classifyCaseForRetention(fresh, events, Date.now(), policy, store.getOpenStatuses())
       if (!recheck.eligible) {
-        failed.push({ ...item, skipped: true, error: `no longer eligible at execution time: ${recheck.detail}` })
+        failed.push({ ...item, skipped: true, error: caseyText("src/retention.js#w14", [recheck.detail]) })
         continue
       }
 
@@ -155,7 +156,7 @@ export async function executeRetention(store, plan, { operator = 'cli-operator',
 
       if (policy.action === 'erase') {
 
-        await store.retentionEraseCase(fresh.id, { reason: `retention: no activity for ${policy.days}d`, operator })
+        await store.retentionEraseCase(fresh.id, { reason: caseyText("src/retention.js#w15", [policy.days]), operator })
         const s = eraseCaseSessions([fresh.id], { log: log || console, ...(sessionsRoot ? { root: sessionsRoot } : {}) })
         sessionsRemoved += s.removed.length
         for (const f of s.failed) sessionsFailed.push(f)
@@ -184,7 +185,7 @@ export async function executeRetention(store, plan, { operator = 'cli-operator',
     sessions_erased: sessionsRemoved,
     sessions_failed: sessionsFailed,
 
-    note: 'busybase soft-deletes rows carrying a status column, so the archived cases are hidden from every read path but their bytes remain in data/db.sqlite until it is vacuumed. This directory holds the only complete copy of each archived case.',
+    note: caseyText("src/retention.js#w16"),
   }
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2))
   return { policy, archiveDir: dir, archived, failed, manifest, sessionsRemoved, sessionsFailed }

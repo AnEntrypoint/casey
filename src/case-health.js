@@ -4,6 +4,7 @@ import { tsMs, tagList, parseReport } from './timestamp.js'
 import { fieldLabel } from './store/report-shape.js'
 import { CRITICAL_FIELDS } from './store/report-shape.js'
 import { canQueryCases } from './contact-tiers.js'
+import { caseyText } from './deployment-text.js';
 
 export const DEFAULT_THRESHOLDS = {
   staleMs: 48 * 3600e3,
@@ -51,7 +52,7 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   const touched = lastTouch(caseRow)
   if (!Number.isFinite(touched)) {
 
-    out.push({ breach: 'timestamp_corrupt', since_ms: 0, detail: 'case timestamps missing or corrupted; unable to assess staleness' })
+    out.push({ breach: 'timestamp_corrupt', since_ms: 0, detail: caseyText("src/case-health.js#w0") })
     if (status === 'resolved') return out
 
     const rep = parseReport(caseRow)
@@ -59,9 +60,9 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
     const missingCritical = visitCritical.some(k => rep[k] == null || String(rep[k]).trim() === '')
     const activeWorkStages = thresholds?.activeWorkStatuses instanceof Set ? thresholds.activeWorkStatuses : ACTIVE_WORK_STAGES
     if (missingCritical && activeWorkStages.has(status)) {
-      out.push({ breach: 'incomplete_critical', since_ms: 0, detail: `in ${status} with visit-critical facts still missing (timestamps corrupt, age unknown)` })
+      out.push({ breach: 'incomplete_critical', since_ms: 0, detail: caseyText("src/case-health.js#w1", [status]) })
     } else if (missingCritical) {
-      out.push({ breach: 'abandoned_intake', since_ms: 0, detail: 'on-site facts still missing (timestamps corrupt, age unknown)' })
+      out.push({ breach: 'abandoned_intake', since_ms: 0, detail: caseyText("src/case-health.js#w2") })
     }
     return out
   }
@@ -75,7 +76,7 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
 
   if (status === 'resolved') {
     if (Number.isFinite(touched) && idle >= forType('neverClosedMs')) {
-      out.push({ breach: 'never_closed', since_ms: idle, detail: `resolved but not closed for ${hours(idle)}` })
+      out.push({ breach: 'never_closed', since_ms: idle, detail: caseyText("src/case-health.js#w3", [hours(idle)]) })
     }
 
     const resolvedRep = parseReport(caseRow)
@@ -83,13 +84,13 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
     const blank = resolvedCritical.filter(k => resolvedRep[k] == null || String(resolvedRep[k]).trim() === '')
     if (blank.length) {
 
-    out.push({ breach: 'premature_complete', since_ms: Number.isFinite(touched) ? idle : 0, detail: `marked resolved with ${blank.length} of ${resolvedCritical.length} visit-critical fact(s) still blank: ${blank.map(fieldLabel).join(', ')}` })
+    out.push({ breach: 'premature_complete', since_ms: Number.isFinite(touched) ? idle : 0, detail: caseyText("src/case-health.js#w4", [blank.length, resolvedCritical.length, blank.map(fieldLabel).join(', ')]) })
     }
     return out
   }
 
   if (Number.isFinite(touched) && idle >= forType('staleMs')) {
-    out.push({ breach: 'stale', since_ms: idle, detail: `no activity for ${hours(idle)}` })
+    out.push({ breach: 'stale', since_ms: idle, detail: caseyText("src/case-health.js#w5", [hours(idle)]) })
   }
 
   const cap = thresholds.stageMaxDwellMs?.[status]
@@ -98,29 +99,29 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   }
 
   if (tagList(caseRow).includes('needs-human') && Number.isFinite(touched) && idle >= forType('handoffMs')) {
-    out.push({ breach: 'unanswered_handoff', since_ms: idle, detail: `a person was asked for ${hours(idle)} ago` })
+    out.push({ breach: 'unanswered_handoff', since_ms: idle, detail: caseyText("src/case-health.js#w6", [hours(idle)]) })
 
     const escMs = forType('escalateHandoffMs') ?? (12 * 3600e3)
     if (idle >= escMs) {
-      out.push({ breach: 'unanswered_handoff_escalated', since_ms: idle, detail: `still no operator reply after ${hours(idle)} -- escalating` })
+      out.push({ breach: 'unanswered_handoff_escalated', since_ms: idle, detail: caseyText("src/case-health.js#w7", [hours(idle)]) })
     }
   }
 
   if (tagList(caseRow).includes('draft-pending') && Number.isFinite(touched) && idle >= (forType('unsentDraftMs') ?? (1 * 3600e3))) {
-    out.push({ breach: 'unsent_draft', since_ms: idle, detail: `a drafted reply has waited ${hours(idle)} for approval` })
+    out.push({ breach: 'unsent_draft', since_ms: idle, detail: caseyText("src/case-health.js#w8", [hours(idle)]) })
   }
 
   const rep = parseReport(caseRow)
   const visitCritical = Array.isArray(thresholds?.visitCritical) ? thresholds.visitCritical : VISIT_CRITICAL
   const missingCritical = visitCritical.some(k => rep[k] == null || String(rep[k]).trim() === '')
   if (missingCritical && Number.isFinite(touched) && idle >= forType('abandonMs')) {
-    out.push({ breach: 'abandoned_intake', since_ms: idle, detail: `on-site facts still missing after ${hours(idle)}` })
+    out.push({ breach: 'abandoned_intake', since_ms: idle, detail: caseyText("src/case-health.js#w9", [hours(idle)]) })
   }
 
   const activeWorkStages = thresholds?.activeWorkStatuses instanceof Set ? thresholds.activeWorkStatuses : ACTIVE_WORK_STAGES
   const icThreshold = forType('incompleteCriticalMs') ?? (8 * 3600e3)
   if (missingCritical && activeWorkStages.has(status) && Number.isFinite(touched) && idle >= icThreshold) {
-    out.push({ breach: 'incomplete_critical', since_ms: idle, detail: `in ${status} for ${hours(idle)} but visit-critical facts still missing` })
+    out.push({ breach: 'incomplete_critical', since_ms: idle, detail: caseyText("src/case-health.js#w10", [status, hours(idle)]) })
   }
 
   return out
@@ -136,16 +137,16 @@ function hours(msVal) {
 export function healthTag(breach) { return 'health:' + breach }
 
 export const BREACH_LABEL = {
-  stale: 'has gone quiet',
-  stuck: 'has been sitting in this stage too long',
-  unanswered_handoff: 'asked for a person and nobody has answered',
-  unanswered_handoff_escalated: 'still has nobody on it, well past the first deadline',
-  unsent_draft: 'has a written reply nobody has sent',
-  abandoned_intake: 'was left part-way through with on-site facts missing',
-  incomplete_critical: 'is being worked on with visit-critical facts still missing',
-  never_closed: 'was resolved but never closed',
-  timestamp_corrupt: 'has timestamps of its own that look wrong',
-  premature_complete: 'was marked done with facts a field visit needs still blank',
+  stale: caseyText("src/case-health.js#w11"),
+  stuck: caseyText("src/case-health.js#w12"),
+  unanswered_handoff: caseyText("src/case-health.js#w13"),
+  unanswered_handoff_escalated: caseyText("src/case-health.js#w14"),
+  unsent_draft: caseyText("src/case-health.js#w15"),
+  abandoned_intake: caseyText("src/case-health.js#w16"),
+  incomplete_critical: caseyText("src/case-health.js#w17"),
+  never_closed: caseyText("src/case-health.js#w18"),
+  timestamp_corrupt: caseyText("src/case-health.js#w19"),
+  premature_complete: caseyText("src/case-health.js#w20"),
 }
 
 export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'unanswered_handoff_escalated', 'unsent_draft', 'abandoned_intake', 'incomplete_critical', 'never_closed', 'timestamp_corrupt', 'premature_complete'].map(healthTag)

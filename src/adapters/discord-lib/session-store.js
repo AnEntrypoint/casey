@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { caseyText } from '../../deployment-text.js';
 
 const MAX_SESSION_AGE_MS = Number(process.env.CASEY_DISCORD_SESSION_MAX_AGE_MS) || 60 * 60 * 1000
 const FLUSH_DEBOUNCE_MS = 1000
@@ -19,7 +20,7 @@ export class DiscordSessionStore {
     try { raw = fs.readFileSync(this.file, 'utf8') } catch { return null }
     let s
     try { s = JSON.parse(raw) } catch {
-      this.log?.warn?.('[discord] gateway session file unreadable; starting a fresh session', { file: this.file })
+      this.log?.warn?.(caseyText("src/adapters/discord-lib/session-store.js#w0"), { file: this.file })
       return null
     }
     if (!s || !s.session_id || !s.resume_gateway_url) return null
@@ -72,7 +73,7 @@ export class DiscordSessionStore {
       fs.renameSync(tmp, this.file)
     } catch (e) {
       try { fs.rmSync(tmp, { force: true }) } catch {  }
-      this.log?.warn?.('[discord] could not persist gateway session; a restart will not resume', { error: e.message })
+      this.log?.warn?.(caseyText("src/adapters/discord-lib/session-store.js#w1"), { error: e.message })
     }
   }
 }

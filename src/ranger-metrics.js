@@ -3,6 +3,7 @@
 import { tsMs } from './timestamp.js'
 import { evData } from './safe.js'
 import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY, UNSUPPRESSED_BUCKET_KEYS } from './privacy.js'
+import { caseyText } from './deployment-text.js';
 
 export const DEFAULT_STUCK_HOURS = 48
 const HOUR = 3600e3
@@ -49,7 +50,7 @@ function namesPerson(p, e, d, ambiguous) {
     const reason = lc(d.reason)
     for (const i of ids) if (reason.startsWith(i + ':')) return true
   }
-  for (const i of ids) if (i.length > 2 && !i.startsWith('contact:') && text.includes('relayed by ' + i)) return true
+  for (const i of ids) if (i.length > 2 && !i.startsWith('contact:') && text.includes(caseyText("src/ranger-metrics.js#w0") + i)) return true
   return false
 }
 

@@ -1,4 +1,5 @@
 import { vocabText } from './config-loader.js'
+import { caseyText } from './deployment-text.js';
 
 
 export const PROACTIVE_MODES = ['off', 'window']
@@ -8,13 +9,13 @@ export function proactiveMode(env = process.env) {
   const raw = String(env.CASEY_PROACTIVE_SENDS == null ? 'off' : env.CASEY_PROACTIVE_SENDS).trim().toLowerCase()
   if (raw === '') return 'off'
   if (PROACTIVE_MODES.includes(raw)) return raw
-  if (!warned) { warned = true; console.warn(`[casey] CASEY_PROACTIVE_SENDS="${raw}" is not one of ${PROACTIVE_MODES.join('/')}; using 'off'`) }
+  if (!warned) { warned = true; console.warn(caseyText("src/proactive-sends.js#w0", [raw, PROACTIVE_MODES.join('/')])) }
   return 'off'
 }
 
 export function proactiveRefusal({ kind = 'message', env = process.env } = {}) {
   if (proactiveMode(env) === 'window') return null
-  const base = vocabText('ui.proactive_refused_base', 'nothing was sent: this deployment does not start conversations (CASEY_PROACTIVE_SENDS=off) -- people write to the assistant and it answers, it never writes first.')
-  if (kind === 'staff_nudge') return `${base} ${vocabText('ui.proactive_refused_nudge', 'To nudge a team member, use the WhatsApp click-to-chat link in the nudges panel ("Who needs a nudge") and send it from your own phone.')}`
-  return `${base} ${vocabText('ui.proactive_refused_person', 'To reach this person, use the click-to-chat link on the record and send it from your own phone, or wait for them to write.')}`
+  const base = vocabText('ui.proactive_refused_base', caseyText("src/proactive-sends.js#w1"))
+  if (kind === 'staff_nudge') return `${base} ${vocabText('ui.proactive_refused_nudge', caseyText("src/proactive-sends.js#w2"))}`
+  return `${base} ${vocabText('ui.proactive_refused_person', caseyText("src/proactive-sends.js#w3"))}`
 }

@@ -6,6 +6,7 @@ import { LOCATION_STALE_MS } from '../hooks/prompt-context.js'
 import { resolveTierValue } from '../contact-tiers.js'
 import { eraseCaseSessions, agentKeyFor } from '../store/agent-sessions.js'
 import { withSeverity } from '../core/log-severity.js'
+import { caseyText } from '../deployment-text.js';
 
 let _ctx = null
 export function setAgentContext(ctx) {
@@ -160,11 +161,11 @@ function summarizeSince(agent, firstSeq) {
     }
     if (event.type === 'turn/end') {
       sawTurnEnd = true
-      if (event.data?.reason?.kind === 'error') errorReason = event.data.reason.error?.message || 'agent turn error'
-      if (event.data?.reason?.kind === 'aborted') errorReason = 'agent turn aborted'
+      if (event.data?.reason?.kind === 'error') errorReason = event.data.reason.error?.message || caseyText("src/agent/run-turn.js#w0")
+      if (event.data?.reason?.kind === 'aborted') errorReason = caseyText("src/agent/run-turn.js#w1")
     }
   }
-  return { result, messages, error: sawTurnEnd ? errorReason : 'turn did not complete', iterations: messages.filter(m => m.role === 'assistant').length }
+  return { result, messages, error: sawTurnEnd ? errorReason : caseyText("src/agent/run-turn.js#w2"), iterations: messages.filter(m => m.role === 'assistant').length }
 }
 
 function logChatTurn(req, startedAt, outcome, thrown = null) {
@@ -180,7 +181,7 @@ function logChatTurn(req, startedAt, outcome, thrown = null) {
     started_at: new Date(startedAt).toISOString(),
     duration_ms: Date.now() - startedAt,
     inbound_chars: inboundText.length,
-    inbound_text: '[redacted: the exact message is kept in the local case store]',
+    inbound_text: caseyText("src/agent/run-turn.js#w3"),
     outcome: thrown ? 'thrown' : (error === 'timeout' ? 'timeout' : (error ? 'error' : 'reply')),
     error,
     iterations: outcome?.iterations ?? 0,

@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { load as yamlLoadRaw, YAML11_SCHEMA } from 'js-yaml'
 import { TABLE, ACTOR, isE164 } from './portal-store.js'
+import { caseyText } from '../deployment-text.js';
 
 export const GLOBAL_ROUTER_ID = '_global'
 
@@ -21,31 +22,31 @@ const ASN = /^AS\d{1,10}$/
 const DOMAIN_MAX_CHARS = 253
 
 const SCHEMA = Object.freeze({
-  bot_number: { type: 'e164', label: 'Bot number', help: 'WhatsApp number guests message to keep access, in E.164 form.' },
-  registration_enabled: { type: 'bool', label: 'Registration open', help: 'When off, guests cannot register and the register endpoint answers 503.' },
-  contact_window_s: { type: 'int', min: 60, max: 3600, label: 'Contact window (seconds)', help: 'How long a guest has to message the bot after registering.' },
-  block_s: { type: 'int', min: 60, max: 604800, label: 'Block time (seconds)', help: 'How long a device stays blocked after a cut-off.' },
-  idle_timeout_s: { type: 'int', min: 60, max: 86400, label: 'Idle timeout (seconds)', help: 'Inactivity before the router ends a session.' },
-  usage_interval_s: { type: 'int', min: 60, max: 3600, label: 'Usage interval (seconds)', help: 'How often routers report per-device counters.' },
-  heartbeat_interval_s: { type: 'int', min: 60, max: 3600, label: 'Heartbeat interval (seconds)', help: 'How often routers report health.' },
-  idle_usage_interval_s: { type: 'int', min: 60, max: 86400, label: 'Idle usage interval (seconds)', help: 'How often a router reports counters while no client is connected. Equal to the usage interval changes nothing.' },
-  idle_heartbeat_interval_s: { type: 'int', min: 60, max: 86400, label: 'Idle heartbeat interval (seconds)', help: 'How often a router reports health while no client is connected. Equal to the heartbeat interval changes nothing.' },
-  router_status_grace_s: { type: 'int', min: 0, max: 3600, serverOnly: true, label: 'Router status grace (seconds)', help: 'Allowance added to one heartbeat before a router reads Online; a router reads Quiet until twice that total, and Offline after it.' },
-  idle_sync_interval_s: { type: 'int', min: 60, max: 86400, label: 'Idle sync interval (seconds)', help: 'How often a router on the fallback protocol fetches settings while no client is connected. Equal to the usage interval changes nothing.' },
-  daily_cap_mb: { type: 'int', min: 1, max: 1000, serverOnly: true, label: 'Daily data cap (MB)', help: 'Data one guest device may use per day, up and down together, in MB of 1,048,576 bytes. The day resets at midnight in ' + LOCATION_NAME + ', and the cap is enforced while the device is in use.' },
-  guest_ssid: { type: 'ssid', maxBytes: 32, label: 'Guest Wi-Fi name', help: 'The network name guests see, up to 32 bytes.' },
-  walled_garden: { type: 'domains', maxItems: 100, label: 'Walled garden', help: 'Domains reachable before registration, one per line. Wildcards such as *.example.com are allowed.' },
-  wa_asn: { type: 'asn', label: 'WhatsApp ASN', help: 'Autonomous system number that carries WhatsApp traffic, for example AS32934.' },
-  login_title: { type: 'text', maxLength: 200, label: 'Login title', help: 'Heading of the registration page.' },
-  login_intro: { type: 'text', maxLength: 2000, label: 'Login intro', help: 'Paragraph under the login title.' },
-  login_checkbox: { type: 'text', maxLength: 1000, label: 'Terms checkbox', help: 'Text next to the terms checkbox.' },
-  done_title: { type: 'text', maxLength: 200, label: 'Done title', help: 'Heading shown after registering.' },
-  done_text: { type: 'text', maxLength: 2000, label: 'Done text', help: 'Paragraph after registering. May use {{bot_number}}, {{contact_minutes}} and {{block_hours}}.' },
-  blocked_title: { type: 'text', maxLength: 200, label: 'Blocked title', help: 'Heading of the blocked page.' },
-  blocked_text: { type: 'text', maxLength: 2000, label: 'Blocked text', help: 'Paragraph of the blocked page. May use {{bot_number}}, {{contact_minutes}} and {{block_hours}}.' },
-  tc_title: { type: 'text', maxLength: 200, label: 'Terms title', help: 'Heading of the terms page.' },
-  tc_version: { type: 'text', maxLength: 40, label: 'Terms version', help: 'Version label shown on the terms page.' },
-  tc_body: { type: 'text', maxLength: 30000, label: 'Terms body', help: 'Terms text. Blank lines start a new paragraph. May use {{bot_number}}, {{contact_minutes}} and {{block_hours}}.' },
+  bot_number: { type: 'e164', label: caseyText("src/portal/portal-config.js#w0"), help: caseyText("src/portal/portal-config.js#w1") },
+  registration_enabled: { type: 'bool', label: caseyText("src/portal/portal-config.js#w2"), help: caseyText("src/portal/portal-config.js#w3") },
+  contact_window_s: { type: 'int', min: 60, max: 3600, label: caseyText("src/portal/portal-config.js#w4"), help: caseyText("src/portal/portal-config.js#w5") },
+  block_s: { type: 'int', min: 60, max: 604800, label: caseyText("src/portal/portal-config.js#w6"), help: caseyText("src/portal/portal-config.js#w7") },
+  idle_timeout_s: { type: 'int', min: 60, max: 86400, label: caseyText("src/portal/portal-config.js#w8"), help: caseyText("src/portal/portal-config.js#w9") },
+  usage_interval_s: { type: 'int', min: 60, max: 3600, label: caseyText("src/portal/portal-config.js#w10"), help: caseyText("src/portal/portal-config.js#w11") },
+  heartbeat_interval_s: { type: 'int', min: 60, max: 3600, label: caseyText("src/portal/portal-config.js#w12"), help: caseyText("src/portal/portal-config.js#w13") },
+  idle_usage_interval_s: { type: 'int', min: 60, max: 86400, label: caseyText("src/portal/portal-config.js#w14"), help: caseyText("src/portal/portal-config.js#w15") },
+  idle_heartbeat_interval_s: { type: 'int', min: 60, max: 86400, label: caseyText("src/portal/portal-config.js#w16"), help: caseyText("src/portal/portal-config.js#w17") },
+  router_status_grace_s: { type: 'int', min: 0, max: 3600, serverOnly: true, label: caseyText("src/portal/portal-config.js#w18"), help: caseyText("src/portal/portal-config.js#w19") },
+  idle_sync_interval_s: { type: 'int', min: 60, max: 86400, label: caseyText("src/portal/portal-config.js#w20"), help: caseyText("src/portal/portal-config.js#w21") },
+  daily_cap_mb: { type: 'int', min: 1, max: 1000, serverOnly: true, label: caseyText("src/portal/portal-config.js#w22"), help: caseyText("src/portal/portal-config.js#w23") + LOCATION_NAME + caseyText("src/portal/portal-config.js#w24") },
+  guest_ssid: { type: 'ssid', maxBytes: 32, label: caseyText("src/portal/portal-config.js#w25"), help: caseyText("src/portal/portal-config.js#w26") },
+  walled_garden: { type: 'domains', maxItems: 100, label: caseyText("src/portal/portal-config.js#w27"), help: caseyText("src/portal/portal-config.js#w28") },
+  wa_asn: { type: 'asn', label: caseyText("src/portal/portal-config.js#w29"), help: caseyText("src/portal/portal-config.js#w30") },
+  login_title: { type: 'text', maxLength: 200, label: caseyText("src/portal/portal-config.js#w31"), help: caseyText("src/portal/portal-config.js#w32") },
+  login_intro: { type: 'text', maxLength: 2000, label: caseyText("src/portal/portal-config.js#w33"), help: caseyText("src/portal/portal-config.js#w34") },
+  login_checkbox: { type: 'text', maxLength: 1000, label: caseyText("src/portal/portal-config.js#w35"), help: caseyText("src/portal/portal-config.js#w36") },
+  done_title: { type: 'text', maxLength: 200, label: caseyText("src/portal/portal-config.js#w37"), help: caseyText("src/portal/portal-config.js#w38") },
+  done_text: { type: 'text', maxLength: 2000, label: caseyText("src/portal/portal-config.js#w39"), help: caseyText("src/portal/portal-config.js#w40") },
+  blocked_title: { type: 'text', maxLength: 200, label: caseyText("src/portal/portal-config.js#w41"), help: caseyText("src/portal/portal-config.js#w42") },
+  blocked_text: { type: 'text', maxLength: 2000, label: caseyText("src/portal/portal-config.js#w43"), help: caseyText("src/portal/portal-config.js#w44") },
+  tc_title: { type: 'text', maxLength: 200, label: caseyText("src/portal/portal-config.js#w45"), help: caseyText("src/portal/portal-config.js#w46") },
+  tc_version: { type: 'text', maxLength: 40, label: caseyText("src/portal/portal-config.js#w47"), help: caseyText("src/portal/portal-config.js#w48") },
+  tc_body: { type: 'text', maxLength: 30000, label: caseyText("src/portal/portal-config.js#w49"), help: caseyText("src/portal/portal-config.js#w50") },
 })
 
 const DEFAULTS_FILE = 'portal-defaults.yml'
@@ -71,13 +72,13 @@ const SETTING_KEYS = Object.freeze(Object.keys(SCHEMA))
 const ROUTER_KEYS = Object.freeze(SETTING_KEYS.filter(key => SCHEMA[key].type !== 'text' && !SCHEMA[key].serverOnly))
 
 const describe = (spec) => {
-  if (spec.type === 'int') return `a whole number from ${spec.min} to ${spec.max}`
-  if (spec.type === 'bool') return 'true or false'
-  if (spec.type === 'e164') return 'a phone number in E.164 form' + (EXAMPLE_INTERNATIONAL ? ', for example ' + EXAMPLE_INTERNATIONAL : '')
-  if (spec.type === 'ssid') return `text of 1 to ${spec.maxBytes} bytes`
-  if (spec.type === 'asn') return 'an AS number, for example AS32934'
-  if (spec.type === 'domains') return `a list of 1 to ${spec.maxItems} domains`
-  return `text of 1 to ${spec.maxLength} characters`
+  if (spec.type === 'int') return caseyText("src/portal/portal-config.js#w51", [spec.min, spec.max])
+  if (spec.type === 'bool') return caseyText("src/portal/portal-config.js#w52")
+  if (spec.type === 'e164') return caseyText("src/portal/portal-config.js#w53") + (EXAMPLE_INTERNATIONAL ? caseyText("src/portal/portal-config.js#w54") + EXAMPLE_INTERNATIONAL : '')
+  if (spec.type === 'ssid') return caseyText("src/portal/portal-config.js#w55", [spec.maxBytes])
+  if (spec.type === 'asn') return caseyText("src/portal/portal-config.js#w56")
+  if (spec.type === 'domains') return caseyText("src/portal/portal-config.js#w57", [spec.maxItems])
+  return caseyText("src/portal/portal-config.js#w58", [spec.maxLength])
 }
 
 const COERCE = {
@@ -120,18 +121,18 @@ const placeholdersIn = (text) => [...text.matchAll(PLACEHOLDER)].map(match => ma
 
 export function coerceSetting(key, raw) {
   const spec = SCHEMA[key]
-  if (!spec) return { error: 'unknown setting', field: key }
+  if (!spec) return { error: caseyText("src/portal/portal-config.js#w59"), field: key }
   if (raw === null) return { value: null }
   const value = COERCE[spec.type](spec, raw)
-  if (value === null) return { error: `${key} must be ${describe(spec)}`, field: key }
+  if (value === null) return { error: caseyText("src/portal/portal-config.js#w60", [key, describe(spec)]), field: key }
   if (spec.type === 'text' && placeholdersIn(value).some(name => !TEXT_PLACEHOLDERS.includes(name))) {
-    return { error: `${key} may use only the placeholders ${TEXT_PLACEHOLDERS.map(name => `{{${name}}}`).join(', ')}`, field: key }
+    return { error: caseyText("src/portal/portal-config.js#w61", [key, TEXT_PLACEHOLDERS.map(name => `{{${name}}}`).join(', ')]), field: key }
   }
   return { value }
 }
 
 export function checkSettingsPatch(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'settings must be an object', field: 'settings' }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: caseyText("src/portal/portal-config.js#w62"), field: 'settings' }
   const values = {}
   for (const [key, raw] of Object.entries(input)) {
     const checked = coerceSetting(key, raw)

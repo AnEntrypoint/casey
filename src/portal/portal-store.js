@@ -1,6 +1,7 @@
 import { COUNTRY_CODE, TRUNK_PREFIX, LOCAL_NUMBER_RE } from '../locale.js'
 import crypto from 'node:crypto'
 import { ROUTER_STATUS_DEFAULT_HEARTBEAT_S, ROUTER_STATUS_DEFAULT_GRACE_S, routerLiveness } from '../dashboard/public/src/router-status.js'
+import { caseyText } from '../deployment-text.js';
 
 export const TABLE = Object.freeze({
   routers: 'routers',
@@ -96,11 +97,11 @@ export const newRouterId = (prefix) => {
 
 export async function createRouter(store, { name, routerId, routerIdPrefix, site = '', uplinkSsid = '', wgPublicKey = '', tunnelIp = '' }) {
   const label = String(name || '').trim().slice(0, 120)
-  if (!label) refuse('name is required', 400)
+  if (!label) refuse(caseyText("src/portal/portal-store.js#w0"), 400)
   const id = routerId ?? newRouterId(routerIdPrefix)
-  if (!validRouterId(id)) refuse('router_id may hold only letters, digits, - and _ (max 64)', 400)
+  if (!validRouterId(id)) refuse(caseyText("src/portal/portal-store.js#w1"), 400)
   const [dup] = await store.t.list(TABLE.routers, { router_id: id }, { limit: 1 })
-  if (dup) refuse(`router_id ${id} already exists`)
+  if (dup) refuse(caseyText("src/portal/portal-store.js#w2", [id]))
   const token = newToken()
   const row = await store.t.create(TABLE.routers, {
     router_id: id, token_hash: hashToken(token), name: label, site: String(site).trim().slice(0, SITE_MAX),
@@ -123,27 +124,27 @@ export async function findRouter(store, routerId) {
 
 export async function rotateRouterToken(store, routerId, now = new Date().toISOString()) {
   const row = await findRouter(store, routerId)
-  if (!row) refuse(`unknown router_id ${routerId}`, 404)
+  if (!row) refuse(caseyText("src/portal/portal-store.js#w3", [routerId]), 404)
   const token = newToken()
   await store.t.update(TABLE.routers, row.id, { token_hash: hashToken(token), updated_at: now }, ACTOR, { expectedVersion: row._version })
   return { token, router_id: routerId }
 }
 
 export function parseEvents(events) {
-  if (!Array.isArray(events)) return { error: 'events must be an array' }
-  if (events.length > EVENT_BATCH_MAX) return { error: `at most ${EVENT_BATCH_MAX} events per request` }
+  if (!Array.isArray(events)) return { error: caseyText("src/portal/portal-store.js#w4") }
+  if (events.length > EVENT_BATCH_MAX) return { error: caseyText("src/portal/portal-store.js#w5", [EVENT_BATCH_MAX]) }
   const out = []
   for (const e of events) {
-    if (!e || typeof e !== 'object') return { error: 'each event must be an object' }
+    if (!e || typeof e !== 'object') return { error: caseyText("src/portal/portal-store.js#w6") }
     const ts = isoOrNull(e.ts)
-    if (!ts) return { error: 'each event needs a valid ts (ISO 8601)' }
-    if (!EVENT_TYPES.includes(e.type)) return { error: `type must be one of ${EVENT_TYPES.join(', ')}` }
+    if (!ts) return { error: caseyText("src/portal/portal-store.js#w7") }
+    if (!EVENT_TYPES.includes(e.type)) return { error: caseyText("src/portal/portal-store.js#w8", [EVENT_TYPES.join(', ')]) }
     const mac = e.mac == null || e.mac === '' ? '' : normaliseMac(e.mac)
-    if (mac === null) return { error: 'mac must be AA:BB:CC:DD:EE:FF when given' }
+    if (mac === null) return { error: caseyText("src/portal/portal-store.js#w9") }
     const detail = e.detail == null ? {} : e.detail
-    if (typeof detail !== 'object' || Array.isArray(detail)) return { error: 'detail must be a JSON object' }
+    if (typeof detail !== 'object' || Array.isArray(detail)) return { error: caseyText("src/portal/portal-store.js#w10") }
     const json = JSON.stringify(detail)
-    if (json.length > EVENT_DETAIL_MAX_CHARS) return { error: `detail must be at most ${EVENT_DETAIL_MAX_CHARS} characters` }
+    if (json.length > EVENT_DETAIL_MAX_CHARS) return { error: caseyText("src/portal/portal-store.js#w11", [EVENT_DETAIL_MAX_CHARS]) }
     out.push({ ts, type: e.type, mac, detail: json })
   }
   return { events: out }
@@ -159,20 +160,20 @@ export async function recordEvents(store, router, events, now = new Date().toISO
 
 export async function recordSerial(store, router, serialRaw, now = new Date().toISOString()) {
   const serial = normaliseSerial(serialRaw)
-  if (!serial) refuse('serial must be 6 to 20 letters and digits', 400)
-  if (router.last_seen && router.serial && router.serial !== serial) refuse('serial differs from the one recorded at first check-in')
+  if (!serial) refuse(caseyText("src/portal/portal-store.js#w12"), 400)
+  if (router.last_seen && router.serial && router.serial !== serial) refuse(caseyText("src/portal/portal-store.js#w13"))
   const holders = await store.t.list(TABLE.routers, { serial }, { limit: 5 })
-  if (holders.some(r => r.router_id !== router.router_id)) refuse('serial is already recorded on another router')
+  if (holders.some(r => r.router_id !== router.router_id)) refuse(caseyText("src/portal/portal-store.js#w14"))
   await store.t.update(TABLE.routers, router.id, { serial, serial_at: now, last_seen: now }, ACTOR)
   return { router_id: router.router_id, serial }
 }
 
 export async function setRouterUplink(store, routerId, { site, uplinkSsid }, now = new Date().toISOString()) {
   const row = await findRouter(store, routerId)
-  if (!row) refuse(`unknown router_id ${routerId}`, 404)
+  if (!row) refuse(caseyText("src/portal/portal-store.js#w15", [routerId]), 404)
   const label = String(site ?? '').trim()
-  if (!label || label.length > SITE_MAX) refuse(`site is required and at most ${SITE_MAX} characters`, 400)
-  if (!validSsid(uplinkSsid)) refuse('uplink_ssid must be 1 to 32 printable ASCII characters', 400)
+  if (!label || label.length > SITE_MAX) refuse(caseyText("src/portal/portal-store.js#w16", [SITE_MAX]), 400)
+  if (!validSsid(uplinkSsid)) refuse(caseyText("src/portal/portal-store.js#w17"), 400)
   await store.t.update(TABLE.routers, row.id, { site: label, uplink_ssid: uplinkSsid, updated_at: now }, ACTOR, { expectedVersion: row._version })
   return { router_id: routerId, site: label, uplink_ssid: uplinkSsid }
 }
@@ -240,11 +241,11 @@ export async function routerOverview(store, now = Date.now(), settingsFor = asyn
 
 export async function deleteRouter(store, routerId) {
   const row = await findRouter(store, routerId)
-  if (!row) refuse('unknown router_id ' + routerId, 404)
-  if (row.last_seen || row.serial) refuse('router_id ' + routerId + ' has checked in; refusing to delete')
+  if (!row) refuse(caseyText("src/portal/portal-store.js#w18") + routerId, 404)
+  if (row.last_seen || row.serial) refuse('router_id ' + routerId + caseyText("src/portal/portal-store.js#w19"))
   for (const table of [TABLE.admin, TABLE.adminLog, TABLE.health, TABLE.outages, TABLE.events, TABLE.usage, TABLE.settings]) {
     const [used] = await store.t.list(table, { router_id: routerId }, { limit: 1 })
-    if (used) refuse('router_id ' + routerId + ' has rows in ' + table + '; refusing to delete')
+    if (used) refuse('router_id ' + routerId + caseyText("src/portal/portal-store.js#w20") + table + caseyText("src/portal/portal-store.js#w21"))
   }
   await store.t.delete(TABLE.routers, row.id)
   return { router_id: routerId, name: row.name }

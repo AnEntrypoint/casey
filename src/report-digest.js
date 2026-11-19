@@ -4,6 +4,7 @@ import path from 'node:path'
 import { loadResolved, buildDiseaseReport, reportCsvLines, monthStartOf, monthEndOf, monthOf, previousPeriod, parseBound, periodLabel, printName } from './dashboard/routes/reports-map.js'
 import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY } from './privacy.js'
 import { fmtTimeLocal } from './format.js'
+import { caseyText } from './deployment-text.js';
 
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/
 const TOP_DISEASES = 5
@@ -45,39 +46,39 @@ export function digestCsv(rep, month) {
 function trendLine(rep, month) {
   const before = previousPeriod(month)
   const diseases = rep.trend && rep.trend.period === month ? rep.trend.diseases : []
-  if (!diseases.length) return `Trend against ${before}: not enough cases to compare.`
+  if (!diseases.length) return caseyText("src/report-digest.js#w0", [before])
   const parts = diseases.slice(0, TOP_DISEASES).map(d => {
-    if (d.change == null) return `${printName(d.disease)} (no comparable figure for ${before})`
+    if (d.change == null) return caseyText("src/report-digest.js#w1", [printName(d.disease), before])
     const sign = d.change > 0 ? '+' : ''
     return `${printName(d.disease)} ${sign}${d.change} (${d.previous} in ${before})`
   })
-  return `Trend against ${before}: ${parts.join('; ')}.`
+  return caseyText("src/report-digest.js#w2", [before, parts.join('; ')])
 }
 
 export function digestText(rep, month) {
   const lines = [
-    `Casey monthly disease digest, ${month}${rep.truncated ? ' (INCOMPLETE)' : ''}`,
-    `Generated ${fmtTimeLocal(Date.now())}. Months are ${TZ_LABEL} calendar months.`,
+    caseyText("src/report-digest.js#w3", [month, rep.truncated ? ' (INCOMPLETE)' : '']),
+    caseyText("src/report-digest.js#w4", [fmtTimeLocal(Date.now()), TZ_LABEL]),
   ]
   if (rep.month_cases < MIN_AGGREGATE_CELL) {
-    lines.push(`Fewer than ${MIN_AGGREGATE_CELL} resolved cases this month, so no figures are published.`)
+    lines.push(caseyText("src/report-digest.js#w5", [MIN_AGGREGATE_CELL]))
   } else if (!rep.total) {
-    lines.push(`Fewer than ${MIN_AGGREGATE_CELL} cases with a diagnosis this month, so no disease figures are published.`)
+    lines.push(caseyText("src/report-digest.js#w6", [MIN_AGGREGATE_CELL]))
   } else {
-    lines.push(`Signed-off cases with a diagnosis: ${rep.total}`)
+    lines.push(caseyText("src/report-digest.js#w7", [rep.total]))
     const suspected = rep.by_status.find(x => x.status === 'suspected')
-    if (suspected) lines.push(`Of which suspected, not confirmed: ${suspected.count}`)
-    if (rep.ruled_out) lines.push(`Ruled out, not counted: ${rep.ruled_out}`)
+    if (suspected) lines.push(caseyText("src/report-digest.js#w8", [suspected.count]))
+    if (rep.ruled_out) lines.push(caseyText("src/report-digest.js#w9", [rep.ruled_out]))
     const named = rep.by_disease.filter(d => d.disease !== SPARSE_BUCKET_KEY).slice(0, TOP_DISEASES)
-    lines.push('Top diseases: ' + (named.length ? named.map(d => `${printName(d.disease)} ${d.count}`).join(', ') : 'no disease is large enough to show'))
-    lines.push('By district: ' + (rep.by_district.length ? rep.by_district.map(d => `${printName(d.district)} ${d.count}`).join(', ') : 'no district is large enough to show'))
+    lines.push(caseyText("src/report-digest.js#w10") + (named.length ? named.map(d => `${printName(d.disease)} ${d.count}`).join(', ') : caseyText("src/report-digest.js#w11")))
+    lines.push(caseyText("src/report-digest.js#w12") + (rep.by_district.length ? rep.by_district.map(d => `${printName(d.district)} ${d.count}`).join(', ') : caseyText("src/report-digest.js#w13")))
     lines.push(trendLine(rep, month))
-    lines.push('Advice given (one case can count under more than one kind): ' + (rep.by_conclusion.length ? rep.by_conclusion.map(c => `${printName(c.conclusion)} ${c.count}`).join(', ') : 'no group is large enough to show'))
+    lines.push(caseyText("src/report-digest.js#w14") + (rep.by_conclusion.length ? rep.by_conclusion.map(c => `${printName(c.conclusion)} ${c.count}`).join(', ') : caseyText("src/report-digest.js#w15")))
   }
-  lines.push('With a photo: ' + (rep.total && rep.with_photo != null ? rep.with_photo + ' of ' + rep.total : `fewer than ${MIN_AGGREGATE_CELL} cases`))
-  lines.push('Closed without a diagnosis: ' + (rep.closed_without_diagnosis ?? `fewer than ${MIN_AGGREGATE_CELL}`))
-  if (rep.truncated) lines.push('INCOMPLETE: some reports could not be loaded, so figures leave some out.')
-  lines.push(`Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined. No personal data is included.`)
+  lines.push(caseyText("src/report-digest.js#w16") + (rep.total && rep.with_photo != null ? rep.with_photo + ' of ' + rep.total : caseyText("src/report-digest.js#w17", [MIN_AGGREGATE_CELL])))
+  lines.push(caseyText("src/report-digest.js#w18") + (rep.closed_without_diagnosis ?? caseyText("src/report-digest.js#w19", [MIN_AGGREGATE_CELL])))
+  if (rep.truncated) lines.push(caseyText("src/report-digest.js#w20"))
+  lines.push(caseyText("src/report-digest.js#w21", [MIN_AGGREGATE_CELL]))
   return lines.join('\n')
 }
 

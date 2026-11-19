@@ -26,15 +26,15 @@ function roleTable() {
 
 export function mapRole(word) {
   const w = norm(word)
-  if (w === 'secretary') return { error: 'an operator dashboard login is not a WhatsApp role; create it under Accounts' }
-  if (!w) return { error: 'no role given' }
+  if (w === 'secretary') return { error: caseyText("src/team-import.js#w0") }
+  if (!w) return { error: caseyText("src/team-import.js#w1") }
   const tier = roleTable().get(w)
-  if (!tier || tier === TIER.reporter) return { error: `"${clean(word, 40)}" is not a role this import knows (use ${tierLabel(TIER.field, TIER_LABELS)}, ${tierLabel(TIER.specialist, TIER_LABELS)} or ${tierLabel(TIER.operator, TIER_LABELS)})` }
+  if (!tier || tier === TIER.reporter) return { error: caseyText("src/team-import.js#w2", [clean(word, 40), tierLabel(TIER.field, TIER_LABELS), tierLabel(TIER.specialist, TIER_LABELS), tierLabel(TIER.operator, TIER_LABELS)]) }
   return { tier }
 }
 
-const YES = new Set(['yes', 'y', 'true', '1', 'smartphone', 'smart phone', 'has smartphone'])
-const NO = new Set(['no', 'n', 'false', '0', 'none', 'feature phone', 'featurephone', 'basic phone', 'no smartphone'])
+const YES = new Set(['yes', 'y', 'true', '1', 'smartphone', caseyText("src/team-import.js#w3"), caseyText("src/team-import.js#w4")])
+const NO = new Set(['no', 'n', 'false', '0', 'none', caseyText("src/team-import.js#w5"), 'featurephone', caseyText("src/team-import.js#w6"), caseyText("src/team-import.js#w7")])
 export function parseSmartphone(v) {
   const w = norm(v)
   if (!w) return null
@@ -117,41 +117,41 @@ export async function planImport(store, input, { isAdmin = false } = {}) {
     const res = { line: r.line, name, phone: maskPhone(normalizeMsisdn(r.phone)), role: '', area, smartphone: smartLabel(sp === undefined ? null : sp), action: 'error', reason: '' }
     const fail = (reason) => { res.action = 'error'; res.reason = reason; out.push(res) }
     const skip = (reason) => { res.action = 'skip'; res.reason = reason; out.push(res) }
-    if (!name) { fail('no name'); continue }
-    if (sp === undefined) { fail(`"${clean(r.smartphone, 20)}" is not yes or no for smartphone`); continue }
+    if (!name) { fail(caseyText("src/team-import.js#w8")); continue }
+    if (sp === undefined) { fail(caseyText("src/team-import.js#w9", [clean(r.smartphone, 20)])); continue }
     const role = mapRole(r.role)
     if (role.error) { fail(role.error); continue }
     const tier = role.tier
     res.role = tierLabel(tier, TIER_LABELS)
-    if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin) { fail(`only an admin can make someone ${tierLabel(tier, TIER_LABELS)}`); continue }
+    if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin) { fail(caseyText("src/team-import.js#w10", [tierLabel(tier, TIER_LABELS)])); continue }
     const rawPhone = String(r.phone == null ? '' : r.phone).trim()
     const msisdn = normalizeMsisdn(rawPhone)
     if (rawPhone && !msisdn) { fail(caseyText("src/team-import.js#phone")); continue }
     const hasPhone = !!msisdn
-    if (sp !== false && !hasPhone) { fail('no phone number, so they cannot be registered on WhatsApp'); continue }
+    if (sp !== false && !hasPhone) { fail(caseyText("src/team-import.js#w11")); continue }
     const key = rosterKey({ phone: msisdn, name, area })
-    if (seen.has(key)) { skip('the same person appears earlier in the file'); continue }
+    if (seen.has(key)) { skip(caseyText("src/team-import.js#w12")); continue }
     seen.add(key)
     const person = { name, phone: msisdn, tier, area, smartphone: sp }
     const onRoster = people.get(key)
     if (sp === false) {
       res.smartphone = 'no'
       const same = onRoster && onRoster.smartphone === false && onRoster.tier === tier && onRoster.area === area && onRoster.name === name
-      if (same) { skip('already on the training roster with no smartphone'); continue }
+      if (same) { skip(caseyText("src/team-import.js#w13")); continue }
       res.action = onRoster ? 'update' : 'create'
-      res.reason = 'no smartphone: kept on the training roster, not registered on WhatsApp'
+      res.reason = caseyText("src/team-import.js#w14")
       out.push({ ...res, _do: { roster: person } })
       continue
     }
     const existing = byPhone.get(msisdn)
     const held = existing ? resolveTierValue(existing.tier) : null
-    if (existing && tierRank(held) > tierRank(tier)) { skip(`already holds a higher role (${tierLabel(held, TIER_LABELS)}); not changed`); continue }
+    if (existing && tierRank(held) > tierRank(tier)) { skip(caseyText("src/team-import.js#w15", [tierLabel(held, TIER_LABELS)])); continue }
     const areaNow = existing ? areaOfNotes(existing.notes) : ''
     const unchanged = existing && held === tier && (areaNow === area || !area) && onRoster && onRoster.tier === tier && (onRoster.area === area || !area) && onRoster.smartphone === (sp === null ? onRoster.smartphone : sp)
-    if (unchanged) { skip('already registered, nothing to change'); continue }
-    if (!existing) { res.action = 'create'; res.reason = 'new registration' }
-    else if (held !== tier) { res.action = 'update'; res.reason = `promoted from ${tierLabel(held, TIER_LABELS)}` }
-    else { res.action = 'update'; res.reason = 'already registered; area or roster entry updated' }
+    if (unchanged) { skip(caseyText("src/team-import.js#w16")); continue }
+    if (!existing) { res.action = 'create'; res.reason = caseyText("src/team-import.js#w17") }
+    else if (held !== tier) { res.action = 'update'; res.reason = caseyText("src/team-import.js#w18", [tierLabel(held, TIER_LABELS)]) }
+    else { res.action = 'update'; res.reason = caseyText("src/team-import.js#w19") }
     out.push({ ...res, _do: { register: existing ? held !== tier : true, existing, roster: { ...person, smartphone: sp === null ? true : sp } } })
   }
   return out
@@ -184,7 +184,7 @@ export async function runImport(store, input, { dryRun = true, isAdmin = false, 
         await recordRoster(store, { ...p, contactId }, { by: user.id, note: r.action })
       } catch (e) {
         r.action = 'error'
-        r.reason = 'could not be saved: ' + clean(e?.message, 120)
+        r.reason = caseyText("src/team-import.js#w20") + clean(e?.message, 120)
       }
     }
     return { dry_run: false, summary: summarize(plan), results: plan.map(publicRow) }

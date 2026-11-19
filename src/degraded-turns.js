@@ -2,6 +2,7 @@
 
 import { tsMs } from './timestamp.js'
 import { evData } from './safe.js'
+import { caseyText } from './deployment-text.js';
 
 const FAILURE_REASONS = Object.freeze({
   PROVIDER: 'provider',
@@ -22,7 +23,7 @@ export async function recordDegradedTurn(store, { caseId, contactId, reason, tur
       kind: 'observation',
       actor: 'system',
       channel: channel || 'other',
-      text: `Turn degraded: ${normalizedReason}`,
+      text: caseyText("src/degraded-turns.js#w0", [normalizedReason]),
       data: {
         degraded_turn: true,
         contact_id: contactId,

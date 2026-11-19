@@ -6,6 +6,7 @@ import path from 'node:path'
 import { load as yamlLoad } from 'js-yaml'
 import { parseReport } from './timestamp.js'
 import { CRITICAL_FIELDS, FIELD_LABELS, REPORT_FIELD_DEFS, missingMandatoryMinimum, fieldLabel } from './store/report-shape.js'
+import { caseyText } from './deployment-text.js';
 
 const SKIP = new Set(['photos', 'audio', 'language_detected', AREA_FIELD, 'lat', 'lon', 'sites', 'reported_by', 'owner_contact', 'notes'])
 const MAX_FACTS = 8
@@ -13,7 +14,7 @@ const MAX_NEEDED = 5
 const MAX_VALUE = 90
 const MAX_LABEL = 60
 
-export const ENGLISH = Object.freeze({ done: 'Done', needed: 'Still needed', complete: 'The form is complete' })
+export const ENGLISH = Object.freeze({ done: 'Done', needed: caseyText("src/progress-line.js#w0"), complete: caseyText("src/progress-line.js#w1") })
 
 const clip = (v) => {
   const t = String(v ?? '').replace(/\s+/g, ' ').trim()
@@ -85,8 +86,8 @@ const inflight = new Map()
 async function translateOnce(callLLM, language, slug) {
   const en = wanted()
   const prompt = [
-    `Translate these short labels for a form into ${String(language).slice(0, 40)}, as a native speaker would write them on a phone form.`,
-    `Reply with ONLY a JSON object with exactly the same keys and structure, every value a short plain string (under ${MAX_LABEL} characters), no markdown, nothing else.`,
+    caseyText("src/progress-line.js#w2", [String(language).slice(0, 40)]),
+    caseyText("src/progress-line.js#w3", [MAX_LABEL]),
     JSON.stringify(en),
   ].join('\n')
   const out = String((await callLLM({ messages: [{ role: 'user', content: prompt }], tools: [] }))?.content || '')

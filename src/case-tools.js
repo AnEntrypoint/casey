@@ -24,6 +24,7 @@ import { buildRelayTools } from './case-tools-relay.js'
 import { buildLanguageTools } from './case-tools-language.js'
 import { buildNavigateTools } from './case-tools-navigate.js'
 import { shownCase } from './stale-write-guard.js'
+import { caseyText } from './deployment-text.js';
 
 const SHOWS_A_CASE = new Set(['case_get', 'case_search'])
 
@@ -64,24 +65,24 @@ function selfCheckLoadBearingToolDescriptions() {
   const tools = buildCaseToolset({})
   const byName = Object.fromEntries(tools.map(t => [t.name, t]))
   const required = [
-    { tool: 'case_update', field: 'case_type', pattern: /directly and explicitly stated/, name: 'case_type must be agent-stated-only, never inferred' },
-    { tool: 'case_speaker', field: null, pattern: /Never guess or invent a name/, name: 'case_speaker must record a name only as a person said it, never a guess' },
+    { tool: 'case_update', field: 'case_type', pattern: /directly and explicitly stated/, name: caseyText("src/case-tools.js#w0") },
+    { tool: 'case_speaker', field: null, pattern: /Never guess or invent a name/, name: caseyText("src/case-tools.js#w1") },
 
     ...NEVER_INFERRED_FIELDS.map(f => ({
       tool: REPORT_TOOL_NAME, field: f.key,
       pattern: new RegExp(f.never_inferred_guard_pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-      name: `${f.key} must be agent-stated-only, never inferred`,
+      name: caseyText("src/case-tools.js#w2", [f.key]),
     })),
 
     ...(MANDATORY_MINIMUM_FIELDS.length ? [{
       tool: 'case_transition', field: null,
       pattern: /this tool REFUSES a move to/,
-      name: 'case_transition must name the mandatory-minimum refusal in its own description',
+      name: caseyText("src/case-tools.js#w3"),
     }, {
 
       tool: 'case_transition', field: null,
       pattern: /restricted to the animal health technician who signs it off/,
-      name: 'case_transition must name the sign-off-authority refusal in its own description',
+      name: caseyText("src/case-tools.js#w4"),
     }] : []),
   ]
   for (const { tool, field, pattern, name } of required) {

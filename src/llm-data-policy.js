@@ -2,6 +2,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { caseyText } from './deployment-text.js';
 
 export const POLICY_MODES = ['deny', 'zdr', 'allow']
 
@@ -10,7 +11,7 @@ export function dataPolicyMode(env = process.env) {
   const raw = String(env.CASEY_LLM_DATA_POLICY == null ? 'zdr' : env.CASEY_LLM_DATA_POLICY).trim().toLowerCase()
   if (raw === '') return 'zdr'
   if (POLICY_MODES.includes(raw)) return raw
-  if (!warnedInvalid) { warnedInvalid = true; console.warn(`[casey] CASEY_LLM_DATA_POLICY="${raw}" is not one of ${POLICY_MODES.join('/')}; using 'deny'`) }
+  if (!warnedInvalid) { warnedInvalid = true; console.warn(caseyText("src/llm-data-policy.js#w0", [raw, POLICY_MODES.join('/')])) }
   return 'deny'
 }
 
@@ -43,22 +44,22 @@ export function syntheticReasoningField(env = process.env) {
 
 const FREE_ID = /(?::free\b|\/free\b|-free\b)/i
 
-const VENDOR_TERMS = { anthropic: 'Anthropic API', openai: 'OpenAI API', bedrock: 'AWS Bedrock', synthetic: 'Synthetic (synthetic.new) API' }
+const VENDOR_TERMS = { anthropic: caseyText("src/llm-data-policy.js#w1"), openai: caseyText("src/llm-data-policy.js#w2"), bedrock: caseyText("src/llm-data-policy.js#w3"), synthetic: 'Synthetic (synthetic.new) API' }
 
 export function classifyLink(model) {
   const id = String(model || '')
   const m = /^([a-z0-9-]+)\/(.+)$/.exec(id)
   const prefix = m ? m[1] : ''
   if (prefix === 'openrouter') {
-    if (FREE_ID.test(id)) return { model: id, processor: 'OpenRouter (free tier)', enforcement: 'refused', reason: 'free-tier endpoint: OpenRouter answers 404 under data_collection=deny (free endpoints may log and train)' }
+    if (FREE_ID.test(id)) return { model: id, processor: caseyText("src/llm-data-policy.js#w4"), enforcement: 'refused', reason: caseyText("src/llm-data-policy.js#w5") }
     return { model: id, processor: 'OpenRouter', enforcement: 'request', reason: '' }
   }
   if (VENDOR_TERMS[prefix]) {
-    if (FREE_ID.test(id)) return { model: id, processor: VENDOR_TERMS[prefix], enforcement: 'refused', reason: 'free-tier model id' }
+    if (FREE_ID.test(id)) return { model: id, processor: VENDOR_TERMS[prefix], enforcement: 'refused', reason: caseyText("src/llm-data-policy.js#w6") }
     return { model: id, processor: VENDOR_TERMS[prefix], enforcement: 'vendor-terms', reason: '' }
   }
-  if (prefix === 'claude' || !prefix) return { model: id, processor: 'local ACP wrapper', enforcement: 'refused', reason: `"${id}" resolves to an ACP wrapper (localhost daemon), not a named processor with a checkable no-training policy; use openrouter/anthropic/<model> or anthropic/<model>` }
-  return { model: id, processor: prefix, enforcement: 'refused', reason: `"${prefix}" has no no-training guarantee casey can enforce or verify` }
+  if (prefix === 'claude' || !prefix) return { model: id, processor: caseyText("src/llm-data-policy.js#w7"), enforcement: 'refused', reason: `"${id}" resolves to an ACP wrapper (localhost daemon), not a named processor with a checkable no-training policy; use openrouter/anthropic/<model> or anthropic/<model>` }
+  return { model: id, processor: prefix, enforcement: 'refused', reason: caseyText("src/llm-data-policy.js#w9", [prefix]) }
 }
 
 export function auditFile(env = process.env) {
@@ -97,7 +98,7 @@ export function applyDataPolicy(links, { env = process.env, requested = '' } = {
   const list = (Array.isArray(links) ? links : [links]).map(l => (typeof l === 'string' ? l : l?.model)).filter(Boolean)
   if (mode === 'allow') {
     const key = `allow|${list.join(',')}`
-    if (!seenChains.has(key)) { seenChains.add(key); auditWrite({ event: 'chain_resolved', policy: 'allow', requested: requested || list.join(','), kept: list.map(m => ({ model: m, enforcement: 'none (policy off)' })), dropped: [] }, env) }
+    if (!seenChains.has(key)) { seenChains.add(key); auditWrite({ event: 'chain_resolved', policy: 'allow', requested: requested || list.join(','), kept: list.map(m => ({ model: m, enforcement: caseyText("src/llm-data-policy.js#w10") })), dropped: [] }, env) }
     return { links: links, dropped: [], mode }
   }
   const field = openrouterProviderField(mode)
@@ -116,7 +117,7 @@ export function applyDataPolicy(links, { env = process.env, requested = '' } = {
   if (!seenChains.has(key)) {
     seenChains.add(key)
     auditWrite({ event: 'chain_resolved', policy: mode, provider_field: field, requested: requested || list.join(','), kept: keptInfo, dropped }, env)
-    for (const d of dropped) console.warn(`[casey] LLM data policy '${mode}': dropped ${d.model} -- ${d.reason}`)
+    for (const d of dropped) console.warn(caseyText("src/llm-data-policy.js#w11", [mode, d.model, d.reason]))
   }
   if (!kept.length) {
     throw new Error(`CASEY_LLM_DATA_POLICY=${mode} leaves no permitted model in [${list.join(', ')}]: ${dropped.map(d => `${d.model} (${d.reason})`).join('; ')}`)
@@ -144,24 +145,24 @@ export function describeProcessors(env = process.env) {
   const chain = String(env.CASEY_LLM_MODEL || '').split(',').map(s => s.trim()).filter(Boolean)
   const llmPolicy = mode === 'allow' ? 'NONE (CASEY_LLM_DATA_POLICY=allow)' : `${mode}${field ? ` (provider=${JSON.stringify(field)})` : ''}`
   if (!chain.length) {
-    rows.push({ processor: 'chat LLM', data: 'conversation text, extracted report facts', policy: llmPolicy, state: 'no CASEY_LLM_MODEL set (casey default claude/sonnet is an ACP wrapper: refused under deny)' })
+    rows.push({ processor: caseyText("src/llm-data-policy.js#w12"), data: caseyText("src/llm-data-policy.js#w13"), policy: llmPolicy, state: caseyText("src/llm-data-policy.js#w14") })
   }
   for (const model of chain) {
     const c = classifyLink(model)
     const skipped = mode !== 'allow' && c.enforcement === 'refused'
     rows.push({
-      processor: `chat LLM ${model}`, data: 'conversation text, extracted report facts',
-      policy: skipped ? 'REFUSED' : c.enforcement === 'request' ? llmPolicy : c.enforcement === 'vendor-terms' ? `vendor terms (${c.processor}); not enforceable per request` : llmPolicy,
+      processor: caseyText("src/llm-data-policy.js#w15", [model]), data: caseyText("src/llm-data-policy.js#w16"),
+      policy: skipped ? 'REFUSED' : c.enforcement === 'request' ? llmPolicy : c.enforcement === 'vendor-terms' ? caseyText("src/llm-data-policy.js#w17", [c.processor]) : llmPolicy,
       state: skipped ? `dropped: ${c.reason}` : 'routable',
     })
   }
-  const stt = mode === 'allow' ? 'dedicated /audio/transcriptions models' : 'chat-completions audio models (policy enforced)'
-  rows.push({ processor: 'voice transcription (OpenRouter)', data: 'voice-note audio', policy: mode === 'allow' ? 'NONE' : llmPolicy, state: stt })
-  if (env.CASEY_LOCAL_STT !== '0') rows.push({ processor: 'voice transcription (local whisper)', data: 'voice-note audio stays on this machine', policy: 'not applicable: no third party', state: 'offline fallback when OpenRouter has no key or returns nothing; needs scripts/setup-local-stt.sh' })
-  if (String(env.CASEY_STT_ENGINE || '').toLowerCase() === 'google') rows.push({ processor: 'voice transcription (Google Cloud Speech-to-Text)', data: 'voice-note audio', policy: 'Google Cloud terms under this project; no data-logging opt-in is used; not an OpenRouter route', state: `primary engine (${env.CASEY_STT_GOOGLE_MODEL || 'chirp_3'} in ${env.CASEY_STT_GOOGLE_LOCATION || 'us'})` })
-  if (env.CASEY_VOICE_REPLIES === 'google') rows.push({ processor: 'voice replies (Google Cloud Text-to-Speech)', data: 'short non-sensitive reply text', policy: 'Google Cloud terms under this project', state: 'opt-in per case (tag voice-replies)' })
-  if (env.OPENAI_API_KEY) rows.push({ processor: 'voice transcription / photo / tts (OpenAI direct)', data: 'audio, photos, reply text', policy: 'vendor terms (OpenAI API); not enforceable per request', state: 'key present' })
-  if (env.CASEY_VOICE_REPLIES === '1' && env.ELEVENLABS_API_KEY) rows.push({ processor: 'voice replies (ElevenLabs)', data: 'reply text', policy: mode === 'allow' ? 'NONE' : 'REFUSED', state: mode === 'allow' ? 'active' : 'blocked by data policy (no verifiable no-training guarantee)' })
-  rows.push({ processor: 'WhatsApp Cloud API (Meta Graph)', data: 'every message to and from contacts (the channel itself)', policy: 'Meta terms; not an LLM processor', state: env.WHATSAPP_API_TOKEN ? 'configured' : 'not configured' })
+  const stt = mode === 'allow' ? caseyText("src/llm-data-policy.js#w18") : caseyText("src/llm-data-policy.js#w19")
+  rows.push({ processor: caseyText("src/llm-data-policy.js#w20"), data: caseyText("src/llm-data-policy.js#w21"), policy: mode === 'allow' ? 'NONE' : llmPolicy, state: stt })
+  if (env.CASEY_LOCAL_STT !== '0') rows.push({ processor: caseyText("src/llm-data-policy.js#w22"), data: caseyText("src/llm-data-policy.js#w23"), policy: caseyText("src/llm-data-policy.js#w24"), state: caseyText("src/llm-data-policy.js#w25") })
+  if (String(env.CASEY_STT_ENGINE || '').toLowerCase() === 'google') rows.push({ processor: caseyText("src/llm-data-policy.js#w26"), data: caseyText("src/llm-data-policy.js#w27"), policy: caseyText("src/llm-data-policy.js#w28"), state: caseyText("src/llm-data-policy.js#w29", [env.CASEY_STT_GOOGLE_MODEL || 'chirp_3', env.CASEY_STT_GOOGLE_LOCATION || 'us']) })
+  if (env.CASEY_VOICE_REPLIES === 'google') rows.push({ processor: caseyText("src/llm-data-policy.js#w30"), data: caseyText("src/llm-data-policy.js#w31"), policy: caseyText("src/llm-data-policy.js#w32"), state: caseyText("src/llm-data-policy.js#w33") })
+  if (env.OPENAI_API_KEY) rows.push({ processor: caseyText("src/llm-data-policy.js#w34"), data: caseyText("src/llm-data-policy.js#w35"), policy: caseyText("src/llm-data-policy.js#w36"), state: caseyText("src/llm-data-policy.js#w37") })
+  if (env.CASEY_VOICE_REPLIES === '1' && env.ELEVENLABS_API_KEY) rows.push({ processor: caseyText("src/llm-data-policy.js#w38"), data: caseyText("src/llm-data-policy.js#w39"), policy: mode === 'allow' ? 'NONE' : 'REFUSED', state: mode === 'allow' ? 'active' : caseyText("src/llm-data-policy.js#w40") })
+  rows.push({ processor: caseyText("src/llm-data-policy.js#w41"), data: caseyText("src/llm-data-policy.js#w42"), policy: caseyText("src/llm-data-policy.js#w43"), state: env.WHATSAPP_API_TOKEN ? 'configured' : caseyText("src/llm-data-policy.js#w44") })
   return { mode, rows }
 }

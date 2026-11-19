@@ -3,6 +3,7 @@
 import { parseReportTolerant as parseReport } from './timestamp.js'
 import { REPORT_CONCEPT as K } from './report-concepts.js'
 import { loadDomainConfig } from './config-loader.js'
+import { caseyText } from './deployment-text.js';
 
 const BASE_STOP = ['the', 'a', 'an', 'of', 'at', 'in', 'on', 'near', 'by', 'and',
   'area', 'district', 'town', 'next', 'to', 'road', 'r', 'n']
@@ -72,29 +73,29 @@ export function correlationScoreFromSignatures(a, b) {
   let content = 0
 
   if (a.channel === b.channel && a.external_id && a.external_id === b.external_id) {
-    content += 0.5; reasons.push('same contact')
+    content += 0.5; reasons.push(caseyText("src/correlate.js#w0"))
   }
 
   if (a.nums.some(n => b.nums.includes(n)) && !(a.external_id === b.external_id && a.channel === b.channel)) {
-    content += 0.45; reasons.push('linked by a fallback contact number')
+    content += 0.45; reasons.push(caseyText("src/correlate.js#w1"))
   }
 
   const locOv = tokenOverlap(a.loc, b.loc)
-  if (locOv > 0) { content += 0.45 * locOv; reasons.push(`shared location (${Math.round(locOv * 100)}%)`) }
+  if (locOv > 0) { content += 0.45 * locOv; reasons.push(caseyText("src/correlate.js#w2", [Math.round(locOv * 100)])) }
   const findOv = tokenOverlap(a.find, b.find)
-  if (findOv > 0) { content += 0.2 * findOv; reasons.push('shared directions to the place') }
+  if (findOv > 0) { content += 0.2 * findOv; reasons.push(caseyText("src/correlate.js#w3")) }
 
   const spOv = tokenOverlap(a[K.kind], b[K.kind])
-  if (spOv > 0) { content += 0.2 * spOv; reasons.push('same species') }
+  if (spOv > 0) { content += 0.2 * spOv; reasons.push(caseyText("src/correlate.js#w4")) }
 
   const symOv = tokenOverlap(a.sym, b.sym)
-  if (symOv > 0) { content += 0.15 * symOv; reasons.push('similar symptoms / suspected disease') }
+  if (symOv > 0) { content += 0.15 * symOv; reasons.push(caseyText("src/correlate.js#w5")) }
 
   let score = content
   const gap = onsetGapDays(a, b)
   if (content > 0 && gap != null && gap <= 7) {
     const boost = (1 - gap / 7) * 0.1
-    score += boost; reasons.push('reported within the same week')
+    score += boost; reasons.push(caseyText("src/correlate.js#w6"))
   }
   return { score: Math.min(1, score), reasons }
 }

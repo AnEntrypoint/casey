@@ -1,9 +1,10 @@
 import { fetchWithTimeout } from '../webhook-platform-base.js'
 import { MAX_ATTACHMENT_BYTES, ATTACHMENT_FETCH_TIMEOUT_MS, contentTypeCategory } from './constants.js'
+import { caseyText } from '../../deployment-text.js';
 
 export async function fetchAttachment(self, a) {
   if (a.size > MAX_ATTACHMENT_BYTES) {
-    console.error(`DiscordAdapter: skipping attachment ${a.filename} (${a.size} bytes exceeds ${MAX_ATTACHMENT_BYTES} byte guard)`)
+    console.error(caseyText("src/adapters/discord-lib/attachments.js#w0", [a.filename, a.size, MAX_ATTACHMENT_BYTES]))
     return null
   }
   try {
@@ -12,7 +13,7 @@ export async function fetchAttachment(self, a) {
     const buffer = Buffer.from(await res.arrayBuffer())
     return { type: contentTypeCategory(a.content_type), mimeType: a.content_type || '', buffer, filename: a.filename }
   } catch (err) {
-    console.error(`DiscordAdapter: attachment fetch failed for ${a.filename}`, err)
+    console.error(caseyText("src/adapters/discord-lib/attachments.js#w1", [a.filename]), err)
     return null
   }
 }

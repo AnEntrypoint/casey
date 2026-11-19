@@ -1,6 +1,7 @@
 
 
 import { crashBudgetExceeded } from './supervisor-machine.js'
+import { caseyText } from './deployment-text.js';
 
 export const CRASH_WINDOW_MS = Number(process.env.CASEY_CRASH_WINDOW_MS || 60_000)
 
@@ -17,10 +18,10 @@ export function restartBackoffMs(restarts) {
 
 export function classifyWorkerExit({ code, signal, crashes, restarts, now, lastCrashReason }) {
   if (code === CONFIG_FATAL_EXIT_CODE) {
-    return { kind: 'config-fatal', code, reason: lastCrashReason || 'dashboard port in use' }
+    return { kind: 'config-fatal', code, reason: lastCrashReason || caseyText("src/supervisor-crash-policy.js#w0") }
   }
   const nextCrashes = [...crashes, now].filter(t => now - t <= CRASH_WINDOW_MS)
-  const reason = lastCrashReason || `worker exited code=${code} signal=${signal || ''}`
+  const reason = lastCrashReason || caseyText("src/supervisor-crash-policy.js#w1", [code, signal || ''])
   if (crashBudgetExceeded(nextCrashes, now, { windowMs: CRASH_WINDOW_MS, limit: CRASH_LIMIT })) {
 
     return { kind: 'budget', code, signal, reason, crashes: nextCrashes, windowMs: CRASH_WINDOW_MS, limit: CRASH_LIMIT }

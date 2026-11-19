@@ -1,4 +1,5 @@
-const NOT_CONFIGURED = 'no CASEY_EXTERNAL_SYNC_ADAPTER configured -- set it to a module path implementing src/sync/adapters/base.js\'s contract before calling this'
+import { caseyText } from '../../deployment-text.js';
+const NOT_CONFIGURED = caseyText("src/sync/adapters/none.js#w0")
 
 export function fetchRemoteRecords() {
   throw new Error(NOT_CONFIGURED)

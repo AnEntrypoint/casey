@@ -1,6 +1,7 @@
 import { REPORT_KEYS } from '../store/report-shape.js';
 import { fillIfEmptyReport } from '../store/report-merge.js';
 import { syncConfig } from './sync-config.js';
+import { caseyText } from '../deployment-text.js';
 
 export function externalRecordToReportPatch(externalRecord) {
   const patch = {};
@@ -13,13 +14,13 @@ export function externalRecordToReportPatch(externalRecord) {
 }
 
 export async function applyConfirmedLink(link, externalRecord, store, actingUser) {
-  if (link.status !== 'confirmed') throw new Error('applyConfirmedLink requires a confirmed link, got status=' + link.status);
+  if (link.status !== 'confirmed') throw new Error(caseyText("src/sync/apply-link.js#w0") + link.status);
   if (link.local_entity !== 'case') {
-    return { applied: false, reason: 'local_entity is not case; nothing to fill' };
+    return { applied: false, reason: caseyText("src/sync/apply-link.js#w1") };
   }
 
   const caseRow = await store.t.get('case', link.local_id);
-  if (!caseRow) throw new Error('applyConfirmedLink: local case ' + link.local_id + ' not found');
+  if (!caseRow) throw new Error(caseyText("src/sync/apply-link.js#w2") + link.local_id + caseyText("src/sync/apply-link.js#w3"));
 
   let currentReport = {};
   try { currentReport = caseRow.report ? JSON.parse(caseRow.report) : {}; } catch { currentReport = {}; }

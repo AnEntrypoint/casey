@@ -13,6 +13,7 @@ import { AREA_FIELD } from './store/report-shape.js'
 import { REPORT_CONCEPT as K } from './report-concepts.js'
 import { FIELD_ROLES } from './domain-roles.js'
 import { haversineKm } from './case-tools-shared.js'
+import { caseyText } from './deployment-text.js';
 
 const KEY = 'areas'
 const TAG = 'area-map'
@@ -110,24 +111,24 @@ async function append(store, rec, note) {
 
 export async function checkResponder(store, key) {
   const k = String(key || '').trim()
-  if (!k || k === UNCLAIMED) return { ok: false, why: 'no ranger given' }
+  if (!k || k === UNCLAIMED) return { ok: false, why: caseyText("src/areas.js#w0") }
   if (isContactAssignee(k)) {
     const contact = await store.getContact(contactIdOfAssignee(k)).catch(() => null)
-    if (!contact || contact.channel === 'system') return { ok: false, why: 'that team member is not registered' }
+    if (!contact || contact.channel === 'system') return { ok: false, why: caseyText("src/areas.js#w1") }
     const t = resolveTierValue(contact.tier)
-    if (t !== TIER.field && t !== TIER.specialist) return { ok: false, why: 'that person does not hold a ranger or technician role' }
+    if (t !== TIER.field && t !== TIER.specialist) return { ok: false, why: caseyText("src/areas.js#w2") }
     return { ok: true, name: staffLabel(contact), contact }
   }
   const [acct] = await store.t.list('operator_account', { username: k }, { limit: 1 }).catch(() => [])
-  if (!acct || acct.status === 'deleted' || acct.disabled === 1 || acct.disabled === '1' || acct.disabled === true) return { ok: false, why: 'no login by that name' }
-  if (!FIELD_ROLES.includes(acct.role)) return { ok: false, why: 'that login is not an eco ranger or technician' }
+  if (!acct || acct.status === 'deleted' || acct.disabled === 1 || acct.disabled === '1' || acct.disabled === true) return { ok: false, why: caseyText("src/areas.js#w3") }
+  if (!FIELD_ROLES.includes(acct.role)) return { ok: false, why: caseyText("src/areas.js#w4") }
   return { ok: true, name: acct.display_name || acct.username, contact: null }
 }
 
 async function responderName(store, key) {
   if (isContactAssignee(key)) {
     const c = await store.getContact(contactIdOfAssignee(key)).catch(() => null)
-    return c ? staffLabel(c) : 'a team member'
+    return c ? staffLabel(c) : caseyText("src/areas.js#w5")
   }
   const [acct] = await store.t.list('operator_account', { username: String(key) }, { limit: 1 }).catch(() => [])
   return String(acct?.display_name || '').trim() || key
@@ -181,7 +182,7 @@ export async function addArea(store, input, by = 'operator') {
     const id = slug(v.name)
     if (!id) throw new Error('that name has no usable letters')
     if (areas.some(a => a.id === id)) throw new Error(`the area ${v.name} already exists; update it instead`)
-    await append(store, { op: 'set', id, ...v, at: Date.now(), by: String(by).slice(0, 80) }, `area added: ${v.name}`)
+    await append(store, { op: 'set', id, ...v, at: Date.now(), by: String(by).slice(0, 80) }, caseyText("src/areas.js#w6", [v.name]))
     return (await loadAreas(store)).find(a => a.id === id)
   })
 }
@@ -192,7 +193,7 @@ export async function updateArea(store, ref, patch, by = 'operator') {
     const cur = findArea(areas, ref)
     if (!cur) throw new Error('no such area')
     const v = await normaliseInput(store, areas, patch, cur)
-    await append(store, { op: 'set', id: cur.id, ...v, at: Date.now(), by: String(by).slice(0, 80) }, `area updated: ${v.name}`)
+    await append(store, { op: 'set', id: cur.id, ...v, at: Date.now(), by: String(by).slice(0, 80) }, caseyText("src/areas.js#w7", [v.name]))
     return (await loadAreas(store)).find(a => a.id === cur.id)
   })
 }
@@ -208,7 +209,7 @@ export async function removeArea(store, ref, by = 'operator') {
     const areas = await loadAreas(store)
     const cur = findArea(areas, ref)
     if (!cur) throw new Error('no such area')
-    await append(store, { op: 'remove', id: cur.id, at: Date.now(), by: String(by).slice(0, 80) }, `area removed: ${cur.name}`)
+    await append(store, { op: 'remove', id: cur.id, at: Date.now(), by: String(by).slice(0, 80) }, caseyText("src/areas.js#w8", [cur.name]))
     return true
   })
 }
@@ -257,13 +258,13 @@ async function nearestCapKm(store) {
 }
 
 export async function autoAssignByArea(store, caseId, { user = SYSTEM_ACTOR, nearest = true } = {}) {
-  if (!AREA_FIELD) return { assigned: false, why: 'no area field configured' }
+  if (!AREA_FIELD) return { assigned: false, why: caseyText("src/areas.js#w9") }
   return store._withLock(`assign|${caseId}`, async () => {
     const c = await store.getCase(caseId)
-    if (!c || c.channel === 'system' || !isOpenCase(c)) return { assigned: false, why: 'not an open report' }
-    if (!isUnheld(c)) return { assigned: false, why: 'already held by someone' }
+    if (!c || c.channel === 'system' || !isOpenCase(c)) return { assigned: false, why: caseyText("src/areas.js#w10") }
+    if (!isUnheld(c)) return { assigned: false, why: caseyText("src/areas.js#w11") }
     const areas = await loadAreas(store)
-    if (!areas.length) return { assigned: false, why: 'no areas mapped' }
+    if (!areas.length) return { assigned: false, why: caseyText("src/areas.js#w12") }
     const report = parseReport(c)
     const named = resolveArea(areas, { stated: statedArea(report), location: report.location })
       || resolveAreaFromLocation(areas, report.location)
@@ -275,10 +276,10 @@ export async function autoAssignByArea(store, caseId, { user = SYSTEM_ACTOR, nea
         if (!candidates.some(x => x.area.id === r.area.id)) candidates.push(r)
       }
     }
-    if (!candidates.length) return { assigned: false, why: 'area not mapped' }
+    if (!candidates.length) return { assigned: false, why: caseyText("src/areas.js#w13") }
 
     const events = await store.listEvents(c.id)
-    if (events.some(e => evData(e).area_auto_assigned)) return { assigned: false, why: 'already auto-assigned once' }
+    if (events.some(e => evData(e).area_auto_assigned)) return { assigned: false, why: caseyText("src/areas.js#w14") }
 
     let target = null
     let pick = null
@@ -286,12 +287,12 @@ export async function autoAssignByArea(store, caseId, { user = SYSTEM_ACTOR, nea
       const r = await pickResponder(store, cand.area, c)
       if (r) { target = cand; pick = r; break }
     }
-    if (!pick) return { assigned: false, why: 'no valid ranger for the nearest area', area: candidates[0].area.name }
+    if (!pick) return { assigned: false, why: caseyText("src/areas.js#w15"), area: candidates[0].area.name }
     await store.updateCase(c.id, { assignee: pick.key }, user)
     const data = { assignee: pick.key, by: 'area-router', assigned_name: pick.name, area_id: target.area.id, area_name: target.area.name, matched_by: target.matched_by, area_auto_assigned: true }
     if (target.km != null) data.distance_km = Math.round(target.km * 10) / 10
     if (pick.contact) data.assigned_contact_id = pick.contact.id
-    await store.appendEvent(c.id, { kind: 'action', actor: 'system', text: `given automatically to ${pick.name} (area ${target.area.name})`, data })
+    await store.appendEvent(c.id, { kind: 'action', actor: 'system', text: caseyText("src/areas.js#w16", [pick.name, target.area.name]), data })
     return { assigned: true, to: pick.key, name: pick.name, area: target.area.name, ref: c.ref, matched_by: target.matched_by, ...(target.km != null ? { distance_km: Math.round(target.km * 10) / 10 } : {}) }
   })
 }
@@ -388,18 +389,18 @@ export async function areaInfoFor(store, caseRow, areas = null) {
   }
 }
 
-export async function relocateCase(store, caseId, { area = '', stated = '', assignee = '', reassign = true, reason = '', by = 'an operator', user = SYSTEM_ACTOR } = {}) {
-  if (!AREA_FIELD) return { ok: false, error: 'areas are not set up for this system' }
+export async function relocateCase(store, caseId, { area = '', stated = '', assignee = '', reassign = true, reason = '', by = caseyText("src/areas.js#w17"), user = SYSTEM_ACTOR } = {}) {
+  if (!AREA_FIELD) return { ok: false, error: caseyText("src/areas.js#w18") }
   return store._withLock(`assign|${caseId}`, async () => {
     const c = await store.getCase(caseId)
-    if (!c || c.channel === 'system') return { ok: false, error: 'No such report.' }
-    if (!isOpenCase(c)) return { ok: false, error: 'That report is finished. Reopen it before moving it to another area.' }
+    if (!c || c.channel === 'system') return { ok: false, error: caseyText("src/areas.js#w19") }
+    if (!isOpenCase(c)) return { ok: false, error: caseyText("src/areas.js#w20") }
     const areas = await loadAreas(store)
     const wanted = String(area || '').trim()
     const target = wanted ? findArea(areas, wanted) : null
-    if (wanted && !target) return { ok: false, error: `No area called "${wanted.slice(0, 80)}". Add the area first, or write the place in your own words.` }
+    if (wanted && !target) return { ok: false, error: caseyText("src/areas.js#w21", [wanted.slice(0, 80)]) }
     const spelling = target ? target.name : String(stated || '').trim().slice(0, 120)
-    if (!spelling) return { ok: false, error: 'Say which area the report belongs in.' }
+    if (!spelling) return { ok: false, error: caseyText("src/areas.js#w22") }
 
     const report = parseReport(c)
     const oldStated = statedArea(report)
@@ -409,12 +410,12 @@ export async function relocateCase(store, caseId, { area = '', stated = '', assi
     let next = null
     if (assignee) {
       const r = await checkResponder(store, assignee)
-      if (!r.ok) return { ok: false, error: `That person cannot be used: ${r.why}.` }
-      if (r.contact && isOwnConversation(c, r.contact)) return { ok: false, error: 'That is the reporter\'s own chat, so it cannot be given to them.' }
+      if (!r.ok) return { ok: false, error: caseyText("src/areas.js#w23", [r.why]) }
+      if (r.contact && isOwnConversation(c, r.contact)) return { ok: false, error: caseyText("src/areas.js#w24") }
       next = { key: String(assignee).trim(), name: r.name, contact: r.contact }
     } else if (target && reassign) {
       next = await pickResponder(store, target, c)
-      if (!next) return { ok: false, error: `No valid ranger is set for ${target.name}. Fix the area first, or choose a person.` }
+      if (!next) return { ok: false, error: caseyText("src/areas.js#w25", [target.name]) }
     }
 
     const merged = await store.mergeReport(c.id, { [AREA_FIELD]: spelling }, user, { bypassObserve: true, autoAssign: false })
@@ -434,7 +435,7 @@ export async function relocateCase(store, caseId, { area = '', stated = '', assi
     if (reassigned) { data.assignee = next.key; data.assigned_name = next.name; if (had && had !== UNCLAIMED) data.was = had; if (next.contact) data.assigned_contact_id = next.contact.id }
     await store.appendEvent(c.id, {
       kind: 'action', actor: 'operator',
-      text: `Moved to another area by ${by}: ${data.from_area || 'no area'} -> ${spelling}${reassigned ? `; now with ${next.name}` : ''}${reason ? ` (${String(reason).slice(0, 200)})` : ''}`,
+      text: caseyText("src/areas.js#w26", [by, data.from_area || caseyText("src/areas.js#w27"), spelling, reassigned ? caseyText("src/areas.js#w28", [next.name]) : '', reason ? ` (${String(reason).slice(0, 200)})` : '']),
       data,
     })
     return { ok: true, ref: c.ref, from_area: data.from_area, to_area: spelling, mapped: !!target, reassigned, assigned_to: next ? { key: next.key, name: next.name } : null }

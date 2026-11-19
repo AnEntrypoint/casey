@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { TABLE, ACTOR, RouterRefusal } from './portal-store.js'
+import { caseyText } from '../deployment-text.js';
 
 export const ADMIN_WINDOW_DEFAULT_MIN = 30
 export const ADMIN_WINDOW_MAX_MIN = 120
@@ -66,7 +67,7 @@ export async function ensureAdminRow(store, routerId, pub, now = new Date().toIS
 
 export async function setAdminWindow(store, routerId, minutes, actor, now = Date.now()) {
   const row = await adminRow(store, routerId)
-  if (!row) throw new RouterRefusal('the router has not checked in yet, so it has no admin key to open', 409)
+  if (!row) throw new RouterRefusal(caseyText("src/portal/portal-admin.js#w0"), 409)
   const until = new Date(now + minutes * 60e3).toISOString()
   await store.t.update(TABLE.admin, row.id, { admin_until: until, updated_at: new Date(now).toISOString() }, ACTOR)
   await store.t.create(TABLE.adminLog, { router_id: routerId, action: 'open', minutes, actor: actor.id, at: new Date(now).toISOString() }, ACTOR)
@@ -75,7 +76,7 @@ export async function setAdminWindow(store, routerId, minutes, actor, now = Date
 
 export async function closeAdminWindow(store, routerId, actor, now = Date.now()) {
   const row = await adminRow(store, routerId)
-  if (!row) throw new RouterRefusal('the router has not checked in yet, so it has no admin key to close', 409)
+  if (!row) throw new RouterRefusal(caseyText("src/portal/portal-admin.js#w1"), 409)
   await store.t.update(TABLE.admin, row.id, { admin_until: '', updated_at: new Date(now).toISOString() }, ACTOR)
   await store.t.create(TABLE.adminLog, { router_id: routerId, action: 'close', minutes: 0, actor: actor.id, at: new Date(now).toISOString() }, ACTOR)
 }

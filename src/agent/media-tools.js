@@ -1,8 +1,9 @@
 import fs from 'node:fs'
 import { callLLM, getAcptoapiUrl } from './acptoapi-bridge.js'
+import { caseyText } from '../deployment-text.js';
 
 export async function transcribe({ file_path, model = 'whisper-1' }) {
-  if (!fs.existsSync(file_path)) return { error: 'file not found: ' + file_path }
+  if (!fs.existsSync(file_path)) return { error: caseyText("src/agent/media-tools.js#w0") + file_path }
   const base = (getAcptoapiUrl() || '').replace(/\/v1\/?$/, '')
   const blob = new Blob([fs.readFileSync(file_path)])
   const fd = new FormData()
@@ -10,13 +11,13 @@ export async function transcribe({ file_path, model = 'whisper-1' }) {
   fd.append('model', model)
   const r = await fetch(base + '/v1/audio/transcriptions', {
     method: 'POST',
-    headers: { authorization: 'Bearer none' },
+    headers: { authorization: caseyText("src/agent/media-tools.js#w1") },
     body: fd,
   })
   return await r.json()
 }
 
-export async function describeImage({ image_url, prompt = 'Describe this image.', model }) {
+export async function describeImage({ image_url, prompt = caseyText("src/agent/media-tools.js#w2"), model }) {
   const messages = [{
     role: 'user',
     content: [
@@ -40,7 +41,7 @@ export async function synthesizeSpeech({ text, provider = 'openai', voice = 'all
   const xProv = provider === 'elevenlabs' ? 'tts.elevenlabs' : 'speech.openai'
   const r = await fetch(base + '/v1/audio/speech', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-provider': xProv, authorization: 'Bearer none' },
+    headers: { 'content-type': 'application/json', 'x-provider': xProv, authorization: caseyText("src/agent/media-tools.js#w3") },
     body: JSON.stringify(body),
   })
   const buf = Buffer.from(await r.arrayBuffer())

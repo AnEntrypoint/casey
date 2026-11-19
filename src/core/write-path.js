@@ -1,6 +1,7 @@
 
 import { mkObservation, withSyncedAt } from './observation.js'
 import { canReplace, requireProvenance, mkValue } from './provenance.js'
+import { caseyText } from '../deployment-text.js';
 
 const _locks = new Map()
 
@@ -36,7 +37,7 @@ export async function writeObservation(rawLog, params, { nowFn = () => Date.now(
       requireProvenance(incoming, `findings.${field}`)
       const currentTop = latestByField.get(field)?.val
       if (currentTop && !canReplace(currentTop, incoming)) {
-        rejectedFields.push({ field, reason: `incoming provenance "${incoming.provenance}" cannot overwrite existing "${currentTop.provenance}"`, current: currentTop, incoming })
+        rejectedFields.push({ field, reason: caseyText("src/core/write-path.js#w0", [incoming.provenance, currentTop.provenance]), current: currentTop, incoming })
         continue
       }
       acceptedFindings[field] = incoming

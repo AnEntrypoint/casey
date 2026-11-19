@@ -2,6 +2,7 @@
 
 import { evData } from './safe.js'
 import { mergeTag, dropTag } from './hooks/heuristics.js'
+import { caseyText } from './deployment-text.js';
 
 export const DELIVERY_FAILED_TAG = 'delivery-failed'
 const SYSTEM = { id: 'system', role: 'system' }
@@ -10,18 +11,18 @@ const PARK_TTL_MS = 2 * 60e3
 const PARK_CAP = 500
 
 export const DELIVERY_ERROR_HINTS = Object.freeze({
-  131047: 'the 24-hour window is closed: this person has not messaged in the last 24 hours, so WhatsApp refuses a free-form reply. Call them, or wait for them to message first',
-  131026: 'undeliverable: the number is not on WhatsApp, has not accepted the terms, or is on an old version',
-  131049: 'Meta withheld the message to protect recipient engagement; retrying immediately will not help',
-  131048: 'spam rate limit hit on the sending number',
-  131056: 'too many messages to this one person in a short time; wait and retry',
-  130429: 'throughput limit reached on the sending number',
-  131051: 'unsupported message type for this recipient',
-  131052: 'the media the message carried could not be downloaded by WhatsApp',
-  131053: 'the media the message carried could not be uploaded',
-  131000: 'Meta reported an unspecified send error',
-  131031: 'the sending account is locked or restricted by Meta',
-  132000: 'a template parameter count mismatch',
+  131047: caseyText("src/delivery-status.js#w0"),
+  131026: caseyText("src/delivery-status.js#w1"),
+  131049: caseyText("src/delivery-status.js#w2"),
+  131048: caseyText("src/delivery-status.js#w3"),
+  131056: caseyText("src/delivery-status.js#w4"),
+  130429: caseyText("src/delivery-status.js#w5"),
+  131051: caseyText("src/delivery-status.js#w6"),
+  131052: caseyText("src/delivery-status.js#w7"),
+  131053: caseyText("src/delivery-status.js#w8"),
+  131000: caseyText("src/delivery-status.js#w9"),
+  131031: caseyText("src/delivery-status.js#w10"),
+  132000: caseyText("src/delivery-status.js#w11"),
 })
 
 const tally = { received: 0, applied: 0, duplicates: 0, failed: 0, recovered: 0, unmatched: 0, by_code: new Map(), last_failed_at: null, last_status_at: null }
@@ -140,7 +141,7 @@ async function applyToRow(store, eventId, st, { log, now }) {
       next.failed_ignored = { at, code: err?.code ?? null }
     } else {
       failedNow = !data.delivery_failed
-      const detail = err ? `${err.code ?? '?'}: ${err.title || err.message || 'delivery failed'}` : 'delivery failed'
+      const detail = err ? `${err.code ?? '?'}: ${err.title || err.message || caseyText("src/delivery-status.js#w12")}` : caseyText("src/delivery-status.js#w13")
       next.delivered = false
       next.delivery_failed = { at, code: err?.code ?? null, title: err?.title || '', message: err?.message || '', details: err?.details || '' }
       next.send_error = detail.slice(0, 300)
@@ -184,10 +185,10 @@ async function clearPending(store, eventId, next) {
 async function notifyFailure(store, row, next, err, { log }) {
   try {
     const code = err?.code ?? null
-    const hint = DELIVERY_ERROR_HINTS[code] || err?.details || err?.message || err?.title || 'no reason given'
+    const hint = DELIVERY_ERROR_HINTS[code] || err?.details || err?.message || err?.title || caseyText("src/delivery-status.js#w14")
     await store.appendEvent(row.case_id, {
       kind: 'observation', actor: 'system', touch: false,
-      text: `DELIVERY FAILED: the reply was not delivered${code ? ` (WhatsApp error ${code})` : ''} -- ${hint}`,
+      text: caseyText("src/delivery-status.js#w15", [code ? caseyText("src/delivery-status.js#w16", [code]) : '', hint]),
       data: { delivery_failed: true, wamid: next.wamid, code, event_id: row.id },
     })
     await setCaseTag(store, row.case_id, DELIVERY_FAILED_TAG, true)
@@ -198,7 +199,7 @@ async function notifyRecovered(store, row, { log }) {
   try {
     await store.appendEvent(row.case_id, {
       kind: 'observation', actor: 'system', touch: false,
-      text: 'DELIVERY RECOVERED: a reply first reported as not delivered has now been delivered',
+      text: caseyText("src/delivery-status.js#w17"),
       data: { delivery_recovered: true, event_id: row.id },
     })
 

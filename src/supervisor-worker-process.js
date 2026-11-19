@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WORKER_MSG } from './supervisor-ipc.js'
 import { classifyWorkerExit } from './supervisor-crash-policy.js'
+import { caseyText } from './deployment-text.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const WORKER_ENTRY = path.join(__dirname, '..', 'bin', 'worker.js')
@@ -92,7 +93,7 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
 
       lastCrashReason: child._fatalReason || (() => {
         const cause = causeFromStderrTail(flushStderrTail(child))
-        return cause ? `worker exited code=${code} signal=${signal || ''} -- ${cause}` : null
+        return cause ? caseyText("src/supervisor-worker-process.js#w0", [code, signal || '', cause]) : null
       })(),
     })
     if (decision.kind === 'config-fatal') {

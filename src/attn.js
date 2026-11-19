@@ -5,6 +5,7 @@ import { healthTag } from './case-health.js'
 import { OPTED_OUT_TAG } from './hooks/heuristics.js'
 import { SEVERITY_SIGNAL_FIELDS } from './store/report-shape.js'
 import { canQueryCases } from './contact-tiers.js'
+import { caseyText } from './deployment-text.js';
 
 function ageHours(c, now) {
   const t = tsMs(c?.last_event_at || c?.created_at)
@@ -111,29 +112,29 @@ function attnScore(c, now = Date.now()) {
 function caseHints(c, now = Date.now()) {
   const tags = tagList(c)
 
-  if (tags.includes(OPTED_OUT_TAG)) return { reason: 'This person asked to stop.', todo: 'This person asked to stop. Do not message them. Leave this one alone.' }
-  if (c.status === 'closed') return { reason: 'This one is finished.', todo: 'This one is finished. Nothing to do.' }
+  if (tags.includes(OPTED_OUT_TAG)) return { reason: caseyText("src/attn.js#w0"), todo: caseyText("src/attn.js#w1") }
+  if (c.status === 'closed') return { reason: caseyText("src/attn.js#w2"), todo: caseyText("src/attn.js#w3") }
 
-  if (tags.includes('needs-human')) return { reason: 'This person asked to talk to a real person.', todo: 'This person asked for a real person. Reply to them below.' }
-  if (tags.includes(healthTag('unanswered_handoff_escalated'))) return { reason: 'A person was asked for a long time ago and still no one has replied. Please step in.', todo: 'A person was asked for a long time ago and still no one has replied. Step in below.' }
-  if (tags.includes(healthTag('unanswered_handoff'))) return { reason: 'A person was asked for and no one has replied yet.', todo: 'A person was asked for and no one has replied. Reply below to take this one on.' }
-  if (tags.includes('draft-pending') || tags.includes('unsent_draft') || tags.includes(healthTag('unsent_draft'))) return { reason: 'The AI helper drafted a reply. Review it, then send or change it.', todo: 'The AI helper prepared a reply but waits for a person. Check it, then send.' }
-  if (tags.includes(healthTag('incomplete_critical'))) return { reason: `Still active but the visit-critical facts are missing. Reach the reporter now.`, todo: 'The visit-critical facts are still missing and this one is still active. Try to reach the reporter now -- once they move on some facts cannot be recovered.' }
-  if (tags.includes(healthTag('premature_complete'))) return { reason: 'The AI helper marked this done, but most of the visit facts are still blank. Worth a check.', todo: 'The conversation was marked complete, but most of the visit-critical facts were never recorded. Check the report -- it may need a follow-up message.' }
-  if (tags.includes(healthTag('abandoned_intake'))) return { reason: 'The reporter may have moved on. On-site facts are still missing.', todo: 'On-site facts are still missing and the reporter may be gone. Check if they are still reachable and ask for the most important detail (location or how to find the place).' }
-  if (c.status === 'waiting' && ageHours(c, now) >= 24) return { reason: 'No answer for over a day. A check-in may help.', todo: 'No answer for over a day. A check-in may help -- reply below.' }
+  if (tags.includes('needs-human')) return { reason: caseyText("src/attn.js#w4"), todo: caseyText("src/attn.js#w5") }
+  if (tags.includes(healthTag('unanswered_handoff_escalated'))) return { reason: caseyText("src/attn.js#w6"), todo: caseyText("src/attn.js#w7") }
+  if (tags.includes(healthTag('unanswered_handoff'))) return { reason: caseyText("src/attn.js#w8"), todo: caseyText("src/attn.js#w9") }
+  if (tags.includes('draft-pending') || tags.includes('unsent_draft') || tags.includes(healthTag('unsent_draft'))) return { reason: caseyText("src/attn.js#w10"), todo: caseyText("src/attn.js#w11") }
+  if (tags.includes(healthTag('incomplete_critical'))) return { reason: caseyText("src/attn.js#w12"), todo: caseyText("src/attn.js#w13") }
+  if (tags.includes(healthTag('premature_complete'))) return { reason: caseyText("src/attn.js#w14"), todo: caseyText("src/attn.js#w15") }
+  if (tags.includes(healthTag('abandoned_intake'))) return { reason: caseyText("src/attn.js#w16"), todo: caseyText("src/attn.js#w17") }
+  if (c.status === 'waiting' && ageHours(c, now) >= 24) return { reason: caseyText("src/attn.js#w18"), todo: caseyText("src/attn.js#w19") }
 
-  if (tags.includes(healthTag('timestamp_corrupt'))) return { reason: 'This one\'s own dates are unreadable, so nothing can tell how long it has been waiting.', todo: 'The stored dates on this one are unreadable, so the usual "going cold" and "stuck too long" checks never ran on it. Open it and judge it by its messages instead.' }
-  if (tags.includes(healthTag('stuck'))) return { reason: 'This one has been in the same stage too long.', todo: 'This one has been in the same stage for a while. Check if it needs a push or can be closed.' }
-  if (tags.includes(healthTag('stale'))) return { reason: 'No activity in a while. A check may be due.', todo: 'No activity for a while. Check if anything needs following up.' }
+  if (tags.includes(healthTag('timestamp_corrupt'))) return { reason: caseyText("src/attn.js#w20"), todo: caseyText("src/attn.js#w21") }
+  if (tags.includes(healthTag('stuck'))) return { reason: caseyText("src/attn.js#w22"), todo: caseyText("src/attn.js#w23") }
+  if (tags.includes(healthTag('stale'))) return { reason: caseyText("src/attn.js#w24"), todo: caseyText("src/attn.js#w25") }
 
-  if (c.autonomy === 'observe') return { reason: 'The AI helper is only listening here. A reply has to come from you.', todo: 'This one is waiting for you. Read it and reply, or set Who answers to "Answer on its own" so it can answer.' }
-  if (c.autonomy === 'assisted') return { reason: 'The AI helper can draft, but you send. Open it to check.', todo: 'The AI helper can draft, but you send. Open it and check the draft.' }
+  if (c.autonomy === 'observe') return { reason: caseyText("src/attn.js#w26"), todo: caseyText("src/attn.js#w27") }
+  if (c.autonomy === 'assisted') return { reason: caseyText("src/attn.js#w28"), todo: caseyText("src/attn.js#w29") }
 
-  if (c.status === 'resolved') return { reason: 'This one is marked done.', todo: 'This one is marked done. Close it if you are finished.' }
-  if (c.status === 'waiting') return { reason: 'Waiting on the person to reply.', todo: 'Waiting on the person to reply. Nothing to do until they answer.' }
-  if (c.status === 'new' || c.status === 'triaging') return { reason: 'A new message came in.', todo: 'A new message came in. The AI helper is sorting it out.' }
-  return { reason: 'This one is worth a look.', todo: 'The AI helper is handling this one on its own. Step in only if you need to.' }
+  if (c.status === 'resolved') return { reason: caseyText("src/attn.js#w30"), todo: caseyText("src/attn.js#w31") }
+  if (c.status === 'waiting') return { reason: caseyText("src/attn.js#w32"), todo: caseyText("src/attn.js#w33") }
+  if (c.status === 'new' || c.status === 'triaging') return { reason: caseyText("src/attn.js#w34"), todo: caseyText("src/attn.js#w35") }
+  return { reason: caseyText("src/attn.js#w36"), todo: caseyText("src/attn.js#w37") }
 }
 
 function attnReason(c, now = Date.now()) { return caseHints(c, now).reason }

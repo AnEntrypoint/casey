@@ -3,6 +3,7 @@ import { ACTOR, TABLE, normaliseMac, parseEvents, recordEvents, routerStatus } f
 import { parseHealth, recordHealth, latestHealth } from './portal-health.js'
 import { parseUsageSamples, ingestUsage, USAGE_SAMPLES_MAX } from './portal-usage.js'
 import { validWgKey } from './portal-admin.js'
+import { caseyText } from '../deployment-text.js';
 
 export const CYCLE_EVENTS_MAX = 200
 export const STATUS_BATCH_MAX = 50
@@ -42,7 +43,7 @@ export function lteFromCycle(a) {
 }
 
 export function healthFromCycle(h) {
-  if (!isArray(h) || h.length < HEALTH_MIN_ITEMS) return fail('h must be an array of at least 16 items', 'h')
+  if (!isArray(h) || h.length < HEALTH_MIN_ITEMS) return fail(caseyText("src/portal/portal-cycle.js#w0"), 'h')
   const raw = {}
   HEALTH_POSITIONS.forEach((key, i) => { if (h[i] !== undefined && h[i] !== null) raw[key] = h[i] })
   try {
@@ -51,21 +52,21 @@ export function healthFromCycle(h) {
     if (isArray(h[12])) raw.lte = lteFromCycle(h[12])
     else if (h[12] !== undefined) raw.lte = { running: h[12] === 1 }
     if (isArray(h[14])) raw.wan = { interface: 'wifi1', address: h[14][0], up: h[14][1] === 1 }
-  } catch { return fail('h has a malformed nested item', 'h') }
+  } catch { return fail(caseyText("src/portal/portal-cycle.js#w1"), 'h') }
   if (!isArray(h[16])) delete raw.log_errors
   return parseHealth(raw)
 }
 
 export function parseCycle(body) {
-  if (!body || typeof body !== 'object' || isArray(body)) return fail('body must be an object', 'body')
-  if (body.v !== 2) return fail('v must be 2', 'v')
-  if (typeof body.r !== 'string' || !body.r) return fail('r is required', 'r')
+  if (!body || typeof body !== 'object' || isArray(body)) return fail(caseyText("src/portal/portal-cycle.js#w2"), 'body')
+  if (body.v !== 2) return fail(caseyText("src/portal/portal-cycle.js#w3"), 'v')
+  if (typeof body.r !== 'string' || !body.r) return fail(caseyText("src/portal/portal-cycle.js#w4"), 'r')
   const cv = body.cv === undefined ? '' : body.cv
-  if (typeof cv !== 'string' || cv.length > 64) return fail('cv must be a short string', 'cv')
+  if (typeof cv !== 'string' || cv.length > 64) return fail(caseyText("src/portal/portal-cycle.js#w5"), 'cv')
   const rows = body.u === undefined ? [] : body.u
-  if (!isArray(rows)) return fail('u must be an array', 'u')
-  if (rows.length > USAGE_SAMPLES_MAX) return { ...fail(`at most ${USAGE_SAMPLES_MAX} usage entries`, 'u'), tooLarge: true }
-  if (!rows.every((row) => isArray(row) && row.length === 5)) return fail('each u entry is [mac, ip, up_bytes, down_bytes, epoch]', 'u')
+  if (!isArray(rows)) return fail(caseyText("src/portal/portal-cycle.js#w6"), 'u')
+  if (rows.length > USAGE_SAMPLES_MAX) return { ...fail(caseyText("src/portal/portal-cycle.js#w7", [USAGE_SAMPLES_MAX]), 'u'), tooLarge: true }
+  if (!rows.every((row) => isArray(row) && row.length === 5)) return fail(caseyText("src/portal/portal-cycle.js#w8"), 'u')
   const usage = parseUsageSamples(rows.map(([mac, ip, up_bytes, down_bytes, epoch]) => ({ mac, ip, up_bytes, down_bytes, epoch })))
   if (usage.error) return fail(usage.error, usage.field)
   let health
@@ -76,28 +77,28 @@ export function parseCycle(body) {
   }
   let pub
   if (body.p !== undefined) {
-    if (!validWgKey(body.p)) return fail('p must be a WireGuard public key', 'p')
+    if (!validWgKey(body.p)) return fail(caseyText("src/portal/portal-cycle.js#w9"), 'p')
     pub = body.p
   }
   let sync = null
   if (body.q !== undefined) {
-    if (!isArray(body.q) || body.q.length !== 3) return fail('q must be [since, resume_ok, tls_path]', 'q')
+    if (!isArray(body.q) || body.q.length !== 3) return fail(caseyText("src/portal/portal-cycle.js#w10"), 'q')
     const [since, resumeOk, tlsPath] = body.q
-    if (since !== '' && (typeof since !== 'string' || since.length > 40 || !Number.isFinite(Date.parse(since)))) return fail('q since must be an ISO time or empty', 'q')
-    if (typeof resumeOk !== 'boolean') return fail('q resume_ok must be a boolean', 'q')
-    if (tlsPath !== 'full' && tlsPath !== 'resume') return fail('q tls_path must be full or resume', 'q')
+    if (since !== '' && (typeof since !== 'string' || since.length > 40 || !Number.isFinite(Date.parse(since)))) return fail(caseyText("src/portal/portal-cycle.js#w11"), 'q')
+    if (typeof resumeOk !== 'boolean') return fail(caseyText("src/portal/portal-cycle.js#w12"), 'q')
+    if (tlsPath !== 'full' && tlsPath !== 'resume') return fail(caseyText("src/portal/portal-cycle.js#w13"), 'q')
     sync = { since: since || null, resumeOk, tlsPath }
   }
   const eventRows = body.e === undefined ? [] : body.e
-  if (!isArray(eventRows)) return fail('e must be an array', 'e')
-  if (eventRows.length > CYCLE_EVENTS_MAX) return { ...fail(`at most ${CYCLE_EVENTS_MAX} events per request`, 'e'), tooLarge: true }
+  if (!isArray(eventRows)) return fail(caseyText("src/portal/portal-cycle.js#w14"), 'e')
+  if (eventRows.length > CYCLE_EVENTS_MAX) return { ...fail(caseyText("src/portal/portal-cycle.js#w15", [CYCLE_EVENTS_MAX]), 'e'), tooLarge: true }
   const events = []
   for (const row of eventRows) {
-    if (!isArray(row) || row.length !== 4) return fail('each e entry is [ts, type, mac, detail]', 'e')
+    if (!isArray(row) || row.length !== 4) return fail(caseyText("src/portal/portal-cycle.js#w16"), 'e')
     const [ts, type, mac, detail] = row
     let parsedDetail = {}
     if (typeof detail === 'string' && detail.length) {
-      try { parsedDetail = JSON.parse(detail) } catch { return fail('event detail must be JSON', 'e') }
+      try { parsedDetail = JSON.parse(detail) } catch { return fail(caseyText("src/portal/portal-cycle.js#w17"), 'e') }
     }
     events.push({ ts, type, mac: typeof mac === 'string' ? mac : '', detail: parsedDetail })
   }
@@ -123,12 +124,12 @@ export async function applyCycle(store, router, cycle, now = new Date().toISOStr
 }
 
 export function parseStatusBatch(body) {
-  if (!body || typeof body !== 'object' || isArray(body)) return fail('body must be an object', 'body')
-  if (typeof body.r !== 'string' || !body.r) return fail('r is required', 'r')
-  if (!isArray(body.m)) return fail('m must be an array of MACs', 'm')
-  if (body.m.length > STATUS_BATCH_MAX) return fail(`at most ${STATUS_BATCH_MAX} MACs per request`, 'm')
+  if (!body || typeof body !== 'object' || isArray(body)) return fail(caseyText("src/portal/portal-cycle.js#w18"), 'body')
+  if (typeof body.r !== 'string' || !body.r) return fail(caseyText("src/portal/portal-cycle.js#w19"), 'r')
+  if (!isArray(body.m)) return fail(caseyText("src/portal/portal-cycle.js#w20"), 'm')
+  if (body.m.length > STATUS_BATCH_MAX) return fail(caseyText("src/portal/portal-cycle.js#w21", [STATUS_BATCH_MAX]), 'm')
   const macs = body.m.map((mac) => normaliseMac(mac))
-  if (macs.some((mac) => !mac)) return fail('mac must be AA:BB:CC:DD:EE:FF', 'm')
+  if (macs.some((mac) => !mac)) return fail(caseyText("src/portal/portal-cycle.js#w22"), 'm')
   return { macs: [...new Set(macs)] }
 }
 

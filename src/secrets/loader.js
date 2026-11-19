@@ -1,3 +1,4 @@
+import { caseyText } from '../deployment-text.js';
 const SECRET_ID = /^[A-Za-z0-9_-]{1,255}$/
 const PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$|^[0-9]{6,20}$/
 const ENV_NAME = /^[A-Z][A-Z0-9_]{1,127}$/
@@ -7,23 +8,23 @@ export class SecretsError extends Error {
 }
 
 export function validateManifest(m, { allowLatest = false } = {}) {
-  if (!m || typeof m !== 'object') throw new SecretsError('secrets manifest is not an object')
-  if (!PROJECT_ID.test(String(m.project || ''))) throw new SecretsError('secrets manifest has no valid "project"')
+  if (!m || typeof m !== 'object') throw new SecretsError(caseyText("src/secrets/loader.js#w0"))
+  if (!PROJECT_ID.test(String(m.project || ''))) throw new SecretsError(caseyText("src/secrets/loader.js#w1"))
   const entries = Object.entries(m.secrets || {})
-  if (!entries.length) throw new SecretsError('secrets manifest lists no secrets')
+  if (!entries.length) throw new SecretsError(caseyText("src/secrets/loader.js#w2"))
   const bad = []
   for (const [env, spec] of entries) {
     const okVersion = /^[1-9][0-9]{0,8}$/.test(String(spec?.version || '')) || (allowLatest && spec?.version === 'latest')
     if (!ENV_NAME.test(env) || !SECRET_ID.test(String(spec?.secret || '')) || !okVersion) bad.push(env)
   }
-  if (bad.length) throw new SecretsError(`secrets manifest entries are invalid (name, secret id or pinned version): ${bad.join(', ')}`, bad)
+  if (bad.length) throw new SecretsError(caseyText("src/secrets/loader.js#w3", [bad.join(', ')]), bad)
   return entries.map(([env, spec]) => ({ env, secret: spec.secret, version: String(spec.version) }))
 }
 
 async function defaultClient() {
   let mod
   try { mod = await import('@google-cloud/secret-manager') }
-  catch { throw new SecretsError('the @google-cloud/secret-manager package is not installed') }
+  catch { throw new SecretsError(caseyText("src/secrets/loader.js#w4")) }
   return new mod.SecretManagerServiceClient()
 }
 
@@ -41,6 +42,6 @@ export async function loadSecrets(manifest, { client = null, allowLatest = false
     }
   }))
   const failed = results.filter(r => r.value === undefined)
-  if (failed.length) throw new SecretsError(`could not load ${failed.length} secret(s): ${failed.map(f => `${f.env} (${f.code})`).join(', ')}`, failed.map(f => f.env))
+  if (failed.length) throw new SecretsError(caseyText("src/secrets/loader.js#w5", [failed.length, failed.map(f => `${f.env} (${f.code})`).join(', ')]), failed.map(f => f.env))
   return { env: Object.fromEntries(results.map(r => [r.env, r.value])), names: results.map(r => r.env) }
 }

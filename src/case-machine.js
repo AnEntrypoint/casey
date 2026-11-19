@@ -1,6 +1,7 @@
 
 
 import { createMachine } from 'xstate'
+import { caseyText } from './deployment-text.js';
 
 export function buildCaseMachine(wfGraph) {
   const stages = Object.keys(wfGraph || {})
@@ -21,19 +22,19 @@ function ev(stage) { return 'GO_' + String(stage).toUpperCase() }
 
 export function canTransition(machine, from, to, role) {
   const node = machine.config.states?.[from]
-  if (!node) return { ok: false, error: `invalid current stage "${from}"` }
+  if (!node) return { ok: false, error: caseyText("src/case-machine.js#w0", [from]) }
   const toNode = machine.config.states?.[to]
-  if (!toNode) return { ok: false, error: `invalid target stage "${to}"` }
+  if (!toNode) return { ok: false, error: caseyText("src/case-machine.js#w1", [to]) }
   const edge = node.on?.[ev(to)]
   if (!edge) {
     const allowed = node.on ? Object.values(node.on).map(d => d.target).join(', ') : ''
-    return { ok: false, error: `cannot move ${from} -> ${to}; allowed: ${allowed || 'none'}` }
+    return { ok: false, error: caseyText("src/case-machine.js#w2", [from, to, allowed || 'none']) }
   }
   if (!edge.meta?.viaBackward) return { ok: true }
   const rr = node.meta?.requires_role || []
 
   if (rr.length && (!role || !rr.includes(role))) {
-    return { ok: false, error: `role "${role || 'none'}" cannot leave "${from}" (requires ${rr.join('/')})` }
+    return { ok: false, error: caseyText("src/case-machine.js#w3", [role || 'none', from, rr.join('/')]) }
   }
   return { ok: true }
 }

@@ -2,6 +2,7 @@
 import { loadDomainConfig } from '../config-loader.js'
 import { TIER_ORDER, tierLabel } from '../contact-tiers.js'
 import { FIELD_ROLES, SPECIALIST_ROLE } from '../domain-roles.js'
+import { caseyText } from '../deployment-text.js';
 
 export const DIAGNOSIS_STATUS_KEY = 'diagnosis_status'
 
@@ -106,7 +107,7 @@ export function deriveReportShape(reportFields) {
     return DIAGNOSIS_STATUS_OPTIONS && DIAGNOSIS_STATUS_OPTIONS.includes(s) ? s : null
   }
   const withOptionsNote = (f) => FIELD_OPTIONS[f.key]
-    ? { ...f, description: `${f.description || ''} Usual answers: ${FIELD_OPTIONS[f.key].join(', ')}. If they clearly mean one of these, record it with exactly that spelling; if it is anything else (an ostrich, a camel), record their own word as they said it -- never force it into this list.`.trim() }
+    ? { ...f, description: caseyText("src/store/report-shape.js#w0", [f.description || '', FIELD_OPTIONS[f.key].join(', ')]).trim() }
     : f
 
   const HIDE_GROUPS = [...new Set(['all', 'staff', ...FIELD_ROLES, SPECIALIST_ROLE])]
@@ -122,14 +123,14 @@ export function deriveReportShape(reportFields) {
   function hiddenFieldsReport() {
     const rows = []
     for (const g of Object.keys(hiddenCfg)) {
-      if (!HIDE_GROUPS.includes(g)) { rows.push({ level: 'warn', text: `dashboard_ui.hidden_fields: "${g}" is not a screen group (use ${HIDE_GROUPS.join(', ')}); ignored`, fix: 'rename or remove that entry in report-fields.yml' }); continue }
+      if (!HIDE_GROUPS.includes(g)) { rows.push({ level: 'warn', text: caseyText("src/store/report-shape.js#w1", [g, HIDE_GROUPS.join(', ')]), fix: caseyText("src/store/report-shape.js#w2") }); continue }
       for (const k of listOf(g)) {
-        if (!REPORT_KEYS.has(k)) rows.push({ level: 'warn', text: `dashboard_ui.hidden_fields.${g}: "${k}" is not a report field; ignored`, fix: 'check the spelling against report-fields.yml' })
-        else if (NEVER_HIDDEN.has(k)) rows.push({ level: 'warn', text: `dashboard_ui.hidden_fields.${g}: "${k}" is part of the mandatory / visit-critical / sign-off set and stays visible`, fix: 'remove it from hidden_fields' })
+        if (!REPORT_KEYS.has(k)) rows.push({ level: 'warn', text: caseyText("src/store/report-shape.js#w3", [g, k]), fix: caseyText("src/store/report-shape.js#w4") })
+        else if (NEVER_HIDDEN.has(k)) rows.push({ level: 'warn', text: caseyText("src/store/report-shape.js#w5", [g, k]), fix: caseyText("src/store/report-shape.js#w6") })
       }
     }
     const shown = HIDE_GROUPS.map(g => [g, hiddenFieldsFor(g)]).filter(([, ks]) => ks.length)
-    rows.push({ level: 'ok', text: shown.length ? 'fields hidden on screens: ' + shown.map(([g, ks]) => `${g} [${ks.join(', ')}]`).join('; ') + ' (data untouched)' : 'no fields are hidden on any screen' })
+    rows.push({ level: 'ok', text: shown.length ? caseyText("src/store/report-shape.js#w7") + shown.map(([g, ks]) => `${g} [${ks.join(', ')}]`).join('; ') + caseyText("src/store/report-shape.js#w8") : caseyText("src/store/report-shape.js#w9") })
     return rows
   }
 

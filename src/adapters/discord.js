@@ -3,6 +3,7 @@ import { DEFAULT_INTENTS, SEND_TIMEOUT_MS } from './discord-lib/constants.js'
 import { fetchWithTimeout } from './webhook-platform-base.js'
 import * as gateway from './discord-lib/gateway.js'
 import * as rest from './discord-lib/rest.js'
+import { caseyText } from '../deployment-text.js';
 
 export class DiscordAdapter extends EventEmitter {
   constructor(opts = {}) {
@@ -36,14 +37,14 @@ export class DiscordAdapter extends EventEmitter {
   async start() {
     if (!this.token) throw new Error('DiscordAdapter: DISCORD_BOT_TOKEN required')
     const gw = await fetchWithTimeout(`${this.api}/gateway/bot`, { headers: { authorization: `Bot ${this.token}` } }, SEND_TIMEOUT_MS).then(r => r.json())
-    if (!gw.url) throw new Error('DiscordAdapter: gateway lookup failed: ' + JSON.stringify(gw))
+    if (!gw.url) throw new Error(caseyText("src/adapters/discord.js#w0") + JSON.stringify(gw))
     this.gatewayUrl = gw.url + '/?v=10&encoding=json'
     if (this.receive) {
       this._closed = false
       this._retries = 0
       const stored = this.sessionStore?.load?.()
       if (stored && !stored.botUserId) {
-        this.log?.warn?.('[discord] stored gateway session carries no bot identity; identifying fresh instead of resuming')
+        this.log?.warn?.(caseyText("src/adapters/discord.js#w1"))
         this.sessionStore?.clear?.()
       } else if (stored) {
         this._sessionId = stored.sessionId
@@ -52,7 +53,7 @@ export class DiscordAdapter extends EventEmitter {
         this._botUserId = stored.botUserId || null
         this._resumeStateSavedAt = stored.savedAt
         this._resumeFromDisk = true
-        this.log?.info?.('[discord] resuming the previous process gateway session', { seq: stored.seq, botUserKnown: !!stored.botUserId, downMs: stored.savedAt ? Date.now() - stored.savedAt : null })
+        this.log?.info?.(caseyText("src/adapters/discord.js#w2"), { seq: stored.seq, botUserKnown: !!stored.botUserId, downMs: stored.savedAt ? Date.now() - stored.savedAt : null })
       }
       gateway.connect(this)
     }

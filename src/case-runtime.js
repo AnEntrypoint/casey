@@ -1,3 +1,4 @@
+import { caseyText } from './deployment-text.js';
 
 
 let _store = null
@@ -7,8 +8,8 @@ export function setCaseStore(store) { _store = store; _closed = false }
 
 export function getCaseStore() {
   if (!_store) throw new Error(_closed
-    ? 'CaseStore was closed (stop called?)'
-    : 'CaseStore not initialised  --  casey must call setCaseStore() at boot')
+    ? caseyText("src/case-runtime.js#w0")
+    : caseyText("src/case-runtime.js#w1"))
   return _store
 }
 

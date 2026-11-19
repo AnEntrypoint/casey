@@ -1,11 +1,12 @@
 import net from 'node:net'
 import tls from 'node:tls'
+import { caseyText } from '../deployment-text.js';
 
 const TIMEOUT_MS = 20000
 
 export class MailNotConfigured extends Error {
   constructor() {
-    super('setup email is not configured: set CASEY_SMTP_HOST and CASEY_SMTP_FROM')
+    super(caseyText("src/mail/smtp.js#w0"))
     this.code = 'smtp_not_configured'
   }
 }
@@ -95,21 +96,21 @@ export async function sendMail(message, env = process.env) {
   let io = replyReader(sock)
   try {
     await step(io, 'greeting', null, [220])
-    let ehlo = await step(io, 'EHLO', 'EHLO casey', [250])
+    let ehlo = await step(io, 'EHLO', caseyText("src/mail/smtp.js#w1"), [250])
     if (!implicitTls && ehlo.lines.some(l => /^STARTTLS$/i.test(l))) {
       await step(io, 'STARTTLS', 'STARTTLS', [220])
       sock = tls.connect({ socket: sock, servername: cfg.host, minVersion: 'TLSv1.2' })
       io = replyReader(sock)
-      ehlo = await step(io, 'EHLO', 'EHLO casey', [250])
+      ehlo = await step(io, 'EHLO', caseyText("src/mail/smtp.js#w2"), [250])
     }
     if (cfg.user) {
       if (!sock.encrypted) throw new Error('refusing to send SMTP credentials without TLS')
       if (!ehlo.lines.some(l => /^AUTH\b/i.test(l))) throw new Error('SMTP server offers no AUTH')
       const credential = Buffer.from(`\0${cfg.user}\0${cfg.pass}`).toString('base64')
-      await step(io, 'AUTH', `AUTH PLAIN ${credential}`, [235])
+      await step(io, 'AUTH', caseyText("src/mail/smtp.js#w3", [credential]), [235])
     }
-    await step(io, 'MAIL FROM', `MAIL FROM:<${envelopeAddress(cfg.from)}>`, [250])
-    await step(io, 'RCPT TO', `RCPT TO:<${message.to}>`, [250, 251])
+    await step(io, caseyText("src/mail/smtp.js#w4"), caseyText("src/mail/smtp.js#w5", [envelopeAddress(cfg.from)]), [250])
+    await step(io, caseyText("src/mail/smtp.js#w6"), caseyText("src/mail/smtp.js#w7", [message.to]), [250, 251])
     await step(io, 'DATA', 'DATA', [354])
     await step(io, 'message', composeMessage(cfg.from, message) + '.', [250])
     io.write('QUIT')

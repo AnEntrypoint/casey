@@ -1,11 +1,12 @@
 import { createRouter, RouterRefusal } from './portal-store.js'
 import { newWgKeyPair, allocateTunnelIp } from './portal-admin.js'
 import { bootstrapScript, uplinkPassphraseFrom, UPLINK_PASSPHRASE_ENV } from './router-provisioning.js'
+import { caseyText } from '../deployment-text.js';
 
 export async function provisionRouter(store, input, { bundle, base, env = process.env }) {
   const lte = input.uplink === 'lte'
   const uplinkPassphrase = lte ? '' : uplinkPassphraseFrom(env)
-  if (!lte && !uplinkPassphrase) throw new RouterRefusal(`uplink passphrase is not configured: the ${UPLINK_PASSPHRASE_ENV} secret is missing or not 8 to 63 printable characters`, 503)
+  if (!lte && !uplinkPassphrase) throw new RouterRefusal(caseyText("src/portal/router-lifecycle.js#w0", [UPLINK_PASSPHRASE_ENV]), 503)
   const keys = newWgKeyPair()
   const tunnelIp = await allocateTunnelIp(store)
   const { row, token } = await createRouter(store, {

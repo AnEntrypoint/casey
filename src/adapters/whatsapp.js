@@ -4,6 +4,7 @@ import { splitForWhatsapp } from './whatsapp-chunks.js'
 import { KIND_BUTTONS, MODE_TEXT, INTERACTIVE_BODY_MAX, LIST_BUTTON_MAX, choiceLabel } from '../choices.js'
 import { EventEmitter } from 'node:events'
 import { fetchWithTimeout, timingSafeEqualStr, verifiedSend, emitWithDetachedMedia, verifyWebhookOr401 } from './webhook-platform-base.js'
+import { caseyText } from '../deployment-text.js';
 
 const SEND_TIMEOUT_MS = 15000
 const DISPLAY_TIMEOUT_MS = 4000
@@ -72,7 +73,7 @@ export class WhatsappAdapter extends EventEmitter {
           if (attempt < DISPLAY_ATTEMPTS) await new Promise(resolve => setTimeout(resolve, DISPLAY_BACKOFF_MS * 2 ** (attempt - 1)))
         }
       }
-      if (lastError) console.warn(`[whatsapp] could not read the display phone number after ${DISPLAY_ATTEMPTS} attempts:`, lastError)
+      if (lastError) console.warn(caseyText("src/adapters/whatsapp.js#w0", [DISPLAY_ATTEMPTS]), lastError)
       this._displayInflight = null
       return this._displayNumber
     })()
@@ -116,7 +117,7 @@ export class WhatsappAdapter extends EventEmitter {
     fd.append('type', mimeType)
     fd.append('file', new Blob([buffer], { type: mimeType }), 'reply')
     const r = await fetchWithTimeout(`${this.api}/${this.phoneId}/media`, { method: 'POST', headers: { authorization: `Bearer ${this.token}` }, body: fd }, SEND_TIMEOUT_MS).then(x => x.json())
-    if (!r?.id) throw new Error('WhatsappAdapter: media upload returned no id: ' + JSON.stringify(r))
+    if (!r?.id) throw new Error(caseyText("src/adapters/whatsapp.js#w1") + JSON.stringify(r))
     return r.id
   }
 
@@ -307,7 +308,7 @@ export function dispatchWhatsappWebhookBody(adapter, body, now = Date.now()) {
   if (statuses.length) { bump('statuses', statuses.length); stats.last_status_at = now }
   for (const st of statuses) {
     try { adapter.emit('status', st) }
-    catch (err) { console.error('WhatsappAdapter: a status listener threw; the status was delivered once and is not retried', err) }
+    catch (err) { console.error(caseyText("src/adapters/whatsapp.js#w2"), err) }
   }
   for (const { event, pending } of events) {
     emitWithDetachedMedia(
@@ -326,7 +327,7 @@ export function dispatchWhatsappWebhookBody(adapter, body, now = Date.now()) {
         return p
       },
       (err) => {
-        console.error('WhatsappAdapter: media download failed', err)
+        console.error(caseyText("src/adapters/whatsapp.js#w3"), err)
         return { type: pending.type, mimeType: pending.mediaObj.mime_type || '', buffer: null, error: String(err?.message || err) }
       },
     )
@@ -360,7 +361,7 @@ export function serveWhatsappWebhook(adapter, req, res) {
   bump('posts')
   try { dispatchWhatsappWebhookBody(adapter, body) }
   catch (err) {
-    console.error('WhatsappAdapter: webhook body could not be fully dispatched (answering 500 so Meta redelivers)', err?.message || err)
+    console.error(caseyText("src/adapters/whatsapp.js#w4"), err?.message || err)
     res.sendStatus(500)
     return
   }

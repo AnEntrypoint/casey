@@ -1,4 +1,5 @@
 import { dataPolicyMode, applyDataPolicy, auditServed } from '../llm-data-policy.js'
+import { caseyText } from '../deployment-text.js';
 
 const ACPTOAPI_TIMEOUT_MS = Number(process.env.ACPTOAPI_TIMEOUT_MS) || 240000
 export const REACHABILITY_PROBE_TIMEOUT_MS = Number(process.env.ACPTOAPI_REACHABILITY_PROBE_TIMEOUT_MS) || 45000
@@ -13,7 +14,7 @@ function assertServedBy(r) {
   const served = (Array.isArray(r.__chainAttempted) ? r.__chainAttempted.filter(a => a?.ok) : []).map(a => bareModel(a.model))
   if (served.length && served.every(m => m === want)) return r
   if (!served.length && !Array.isArray(r.__chainAttempted)) return r
-  throw new Error(`model guard: CASEY_LLM_REQUIRE_MODEL=${want} but the reply was served by ${served.join(', ') || 'no successful link'}; refused`)
+  throw new Error(`model guard: CASEY_LLM_REQUIRE_MODEL=${want} but the reply was served by ${served.join(', ') || caseyText("src/agent/acptoapi-bridge.js#w0")}; refused`)
 }
 let _inFlight = 0
 const _waiting = []

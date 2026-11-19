@@ -2,6 +2,7 @@
 
 import { loadDomainConfig } from './config-loader.js'
 import { evData } from './safe.js'
+import { caseyText } from './deployment-text.js';
 
 const { persona } = loadDomainConfig()
 const MAX_OTHER_CASES = 25
@@ -38,7 +39,7 @@ export async function consentState(store, contactId, { caseId = null, events = n
 export async function recordConsent(store, caseId, agreed) {
   await store.appendEvent(caseId, {
     kind: 'observation', actor: 'system',
-    text: agreed ? 'consent: this number agreed, in conversation, to what is kept' : 'consent: this number declined; nothing is recorded',
+    text: agreed ? caseyText("src/phone-consent.js#w0") : caseyText("src/phone-consent.js#w1"),
     data: { phone_consent: agreed ? 'agreed' : 'declined', consent_version: consentVersion() },
     touch: false,
   })

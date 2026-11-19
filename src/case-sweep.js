@@ -4,6 +4,7 @@ import { classifyCaseHealth, healthTag, ALL_HEALTH_TAGS, BREACH_LABEL, DEFAULT_T
 import { flushDroppedIntake } from './hooks/dropped-intake.js'
 
 import { tsMs, tagList } from './timestamp.js'
+import { caseyText } from './deployment-text.js';
 
 const HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
@@ -33,7 +34,7 @@ function detectCoverageGap(cases, eventsByCaseId, roster = [], now = Date.now(),
     gap, open_breaches: openBreaches, replies_in_window: repliesInWindow,
     roster_size: rosterSize, window_ms: windowMs,
     reason: gap
-      ? `${openBreaches} open case(s) need attention and no one on the team of ${rosterSize} has replied in the last ${Math.round(windowMs / 60000)} minutes`
+      ? caseyText("src/case-sweep.js#w0", [openBreaches, rosterSize, Math.round(windowMs / 60000)])
       : '',
   }
 }
@@ -64,15 +65,15 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
       summary.errors.push({ caseId: c.id, error: e.message, phase: 'classify' })
 
       if (summary.errors.length > 100) {
-        log?.error?.('[sweep] aborted', { error_count: summary.errors.length, reason: 'too many errors, sweep halted for safety' })
-        summary.errors.push({ phase: 'aborted', reason: 'too many errors, sweep halted for safety' })
+        log?.error?.('[sweep] aborted', { error_count: summary.errors.length, reason: caseyText("src/case-sweep.js#w1") })
+        summary.errors.push({ phase: 'aborted', reason: caseyText("src/case-sweep.js#w2") })
         break
       }
       continue
     }
     if (summary.errors.length > 100) {
-      log?.error?.('[sweep] aborted', { error_count: summary.errors.length, reason: 'too many errors, sweep halted for safety' })
-      summary.errors.push({ phase: 'aborted', reason: 'too many errors, sweep halted for safety' })
+      log?.error?.('[sweep] aborted', { error_count: summary.errors.length, reason: caseyText("src/case-sweep.js#w3") })
+      summary.errors.push({ phase: 'aborted', reason: caseyText("src/case-sweep.js#w4") })
       break
     }
     const desired = new Set(breaches.map(b => healthTag(b.breach)))
@@ -97,7 +98,7 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
           await store.appendEvent(c.id, {
             kind: 'observation', actor: 'system', touch: false,
 
-            text: `This report ${BREACH_LABEL[b.breach] || b.breach} -- ${b.detail}.`,
+            text: caseyText("src/case-sweep.js#w5", [BREACH_LABEL[b.breach] || b.breach, b.detail]),
             data: { guardrail: b.breach, since_ms: b.since_ms },
           })
           summary.breaches[b.breach] = (summary.breaches[b.breach] || 0) + 1

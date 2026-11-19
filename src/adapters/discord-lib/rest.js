@@ -1,5 +1,6 @@
 import { fetchWithTimeout, verifiedSend } from '../webhook-platform-base.js'
 import { SEND_TIMEOUT_MS, TYPING_REFRESH_MS } from './constants.js'
+import { caseyText } from '../../deployment-text.js';
 
 export async function send(self, reply) {
   if (!self.token) throw new Error('DiscordAdapter: token required')
@@ -20,9 +21,9 @@ export async function triggerTyping(self, channelId) {
   if (!self.token) throw new Error('DiscordAdapter: token required')
   try {
     const res = await fetchWithTimeout(`${self.api}/channels/${channelId}/typing`, { method: 'POST', headers: { authorization: `Bot ${self.token}` } }, SEND_TIMEOUT_MS)
-    if (!res.ok && res.status !== 204) self.log?.warn?.('[discord] triggerTyping non-ok response', { channelId, status: res.status })
+    if (!res.ok && res.status !== 204) self.log?.warn?.(caseyText("src/adapters/discord-lib/rest.js#w0"), { channelId, status: res.status })
   } catch (e) {
-    self.log?.warn?.('[discord] triggerTyping failed', { channelId, error: e.message })
+    self.log?.warn?.(caseyText("src/adapters/discord-lib/rest.js#w1"), { channelId, error: e.message })
   }
 }
 

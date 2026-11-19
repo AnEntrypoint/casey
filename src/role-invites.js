@@ -4,6 +4,7 @@ import { COUNTRY_CODE, TRUNK_PREFIX, NATIONAL_LENGTH } from './locale.js'
 import crypto from 'node:crypto'
 import { TIER_ORDER, grantableBy, resolveTierValue, TIER } from './contact-tiers.js'
 import { taggedObservations } from './store/settings-log.js'
+import { caseyText } from './deployment-text.js';
 
 const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
 const CODE_LEN = 8
@@ -53,7 +54,7 @@ export async function withoutIssuedCodes(store, text) {
   const { invites } = await load(store)
   const known = new Set([...invites.values()].map(v => v.hash))
   let hit = false
-  const out = tidy.replace(re, (tok) => { if (known.has(hashCode(tok.toUpperCase()))) { hit = true; return '[code removed]' } return tok })
+  const out = tidy.replace(re, (tok) => { if (known.has(hashCode(tok.toUpperCase()))) { hit = true; return caseyText("src/role-invites.js#w0") } return tok })
   return hit ? out : null
 }
 
@@ -91,7 +92,7 @@ const publicView = (v, now) => ({ id: v.id, tier: v.tier, label: v.label, create
 
 export async function createInvite(store, { tier, label = '', ttlHours = DEFAULT_TTL_HOURS, maxUses = 1, by = 'operator', grantableTiers = grantableBy(false), now = Date.now() } = {}) {
   if (!TIER_ORDER.includes(tier) || tier === TIER.reporter) throw new Error(`tier must be one of ${TIER_ORDER.filter(t => t !== TIER.reporter).join(', ')}`)
-  if (!grantableTiers.includes(tier)) throw new Error(`you cannot invite someone as ${tier}${grantableBy(true).includes(tier) && !grantableBy(false).includes(tier) ? ' -- only an admin can' : ''}`)
+  if (!grantableTiers.includes(tier)) throw new Error(`you cannot invite someone as ${tier}${grantableBy(true).includes(tier) && !grantableBy(false).includes(tier) ? caseyText("src/role-invites.js#w1") : ''}`)
   const ttl = Math.min(Math.max(Number(ttlHours) || DEFAULT_TTL_HOURS, 1), MAX_TTL_HOURS)
   const uses = Math.min(Math.max(Math.floor(Number(maxUses)) || 1, 1), 25)
   const code = generateCode()
@@ -99,7 +100,7 @@ export async function createInvite(store, { tier, label = '', ttlHours = DEFAULT
 
   if ([...invites.values()].filter(v => statusOf(v, now) === 'active').length >= MAX_ACTIVE_INVITES) throw new Error(`there are already ${MAX_ACTIVE_INVITES} unused codes; revoke some before making more`)
   const rec = { op: 'create', id: crypto.randomBytes(6).toString('hex'), h: hashCode(code), tier, label: String(label).slice(0, 80), by: String(by).slice(0, 80), at: now, exp: now + ttl * 3600e3, max: uses }
-  await append(store, caseId, rec, `invite created for ${tier}`)
+  await append(store, caseId, rec, caseyText("src/role-invites.js#w2", [tier]))
   return { code, ...publicView({ ...rec, hash: rec.h, created_at: rec.at, expires_at: rec.exp, max_uses: rec.max, uses: 0, revoked: false, by: rec.by }, now) }
 }
 
@@ -122,7 +123,7 @@ export async function listInvites(store, now = Date.now()) {
 export async function revokeInvite(store, id, by = 'operator') {
   const { caseId, invites } = await load(store)
   if (!invites.has(id)) throw new Error('no such invite')
-  await append(store, caseId, { op: 'revoke', id, at: Date.now(), by }, 'invite revoked')
+  await append(store, caseId, { op: 'revoke', id, at: Date.now(), by }, caseyText("src/role-invites.js#w3"))
   return true
 }
 
@@ -137,7 +138,7 @@ export async function claimInvite(store, code, contact, now = Date.now()) {
     if (v.claimed_by.some(c => c.contact_id === contact.id)) return { ok: false, reason: 'already' }
 
     if (resolveTierValue(contact.tier) === v.tier || TIER_ORDER.indexOf(resolveTierValue(contact.tier)) > TIER_ORDER.indexOf(v.tier)) return { ok: false, reason: 'already' }
-    await append(store, caseId, { op: 'claim', id: v.id, contact: contact.id, at: now }, `code claimed by contact ${contact.id}`)
+    await append(store, caseId, { op: 'claim', id: v.id, contact: contact.id, at: now }, caseyText("src/role-invites.js#w4", [contact.id]))
     await store.setContactTier(contact.id, v.tier, { id: `invite:${v.id}`, role: 'system' })
     return { ok: true, tier: v.tier, invite: publicView({ ...v, uses: v.uses + 1 }, now) }
   })

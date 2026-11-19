@@ -2,6 +2,7 @@ import WebSocket from 'ws'
 import { emitWithDetachedMedia } from '../webhook-platform-base.js'
 import { OP, RECONNECT_MAX_RETRIES, RECONNECT_GIVEUP_RETRY_MS, RECONNECT_BASE_MS, RECONNECT_MAX_MS } from './constants.js'
 import { fetchAttachment } from './attachments.js'
+import { caseyText } from '../../deployment-text.js';
 
 export function connect(self, resume = false) {
   const canResume = (resume || self._resumeFromDisk) && !!self._sessionId && !!self._resumeUrl
@@ -22,7 +23,7 @@ export function connect(self, resume = false) {
       case OP.HEARTBEAT: send(self, { op: OP.HEARTBEAT, d: self._seq }); break
       case OP.HEARTBEAT_ACK: self._acked = true; break
       case OP.RECONNECT:
-        try { ws.close(4000, 'server requested reconnect') } catch {  }
+        try { ws.close(4000, caseyText("src/adapters/discord-lib/gateway.js#w0")) } catch {  }
         break
       case OP.INVALID_SESSION:
         if (self._resumeAttempted) reportUnresumableGap(self)
@@ -40,34 +41,34 @@ export function connect(self, resume = false) {
     clearInterval(self._heartbeat)
     scheduleReconnect(self)
   })
-  ws.on('error', (e) => { self.log?.error?.('[discord] ws error', e.message); try { ws.terminate() } catch {  } })
+  ws.on('error', (e) => { self.log?.error?.(caseyText("src/adapters/discord-lib/gateway.js#w1"), e.message); try { ws.terminate() } catch {  } })
 }
 
 export function scheduleReconnect(self) {
   if (self._closed || self._reconnecting) return
   if (self._retries >= RECONNECT_MAX_RETRIES) {
-    self.log?.error?.(`[discord] reconnect failed after ${RECONNECT_MAX_RETRIES} attempts, retrying in 1 hour`)
+    self.log?.error?.(caseyText("src/adapters/discord-lib/gateway.js#w2", [RECONNECT_MAX_RETRIES]))
     self._reconnecting = true
     self.gatewayUrl = null
     self._reconnectTimeout = setTimeout(() => {
       self._reconnecting = false
       self._retries = 0
-      self.start().catch((e) => { self.log?.error?.('[discord] reconnect failed', e.message); scheduleReconnect(self) })
+      self.start().catch((e) => { self.log?.error?.(caseyText("src/adapters/discord-lib/gateway.js#w3"), e.message); scheduleReconnect(self) })
     }, RECONNECT_GIVEUP_RETRY_MS)
     return
   }
   self._reconnecting = true
   const delay = Math.min(RECONNECT_BASE_MS * 2 ** self._retries, RECONNECT_MAX_MS)
   self._retries++
-  self.log?.warn?.(`[discord] gateway closed, reconnecting in ${Math.round(delay / 1000)}s (attempt ${self._retries}/${RECONNECT_MAX_RETRIES})`)
+  self.log?.warn?.(caseyText("src/adapters/discord-lib/gateway.js#w4", [Math.round(delay / 1000), self._retries, RECONNECT_MAX_RETRIES]))
   self._reconnectTimeout = setTimeout(() => { self._reconnecting = false; connect(self, true) }, delay)
 }
 
 function reportUnresumableGap(self) {
   const downMs = self._resumeStateSavedAt ? Date.now() - self._resumeStateSavedAt : null
   self._resumeStateSavedAt = null
-  const note = downMs != null ? `gateway was unresumable after ~${Math.round(downMs / 1000)}s disconnected` : 'gateway session was refused on resume'
-  self.log?.warn?.('[discord] RESUME refused; messages sent during the disconnect are not replayable', { downMs })
+  const note = downMs != null ? caseyText("src/adapters/discord-lib/gateway.js#w5", [Math.round(downMs / 1000)]) : caseyText("src/adapters/discord-lib/gateway.js#w6")
+  self.log?.warn?.(caseyText("src/adapters/discord-lib/gateway.js#w7"), { downMs })
   try { self.onUnresumableGap?.(note) } catch {  }
 }
 
@@ -81,7 +82,7 @@ export function dispatch(self, p) {
     self._botUserId = p.d?.user?.id || null
     self._seq = p.s ?? self._seq
     self.sessionStore?.save?.({ sessionId: self._sessionId, resumeUrl: self._resumeUrl, seq: self._seq, botUserId: self._botUserId })
-    self.log?.info?.('[discord] gateway READY', { botUser: p.d?.user?.username || null })
+    self.log?.info?.(caseyText("src/adapters/discord-lib/gateway.js#w8"), { botUser: p.d?.user?.username || null })
     self.emit('ready', p.d)
     return
   }
@@ -90,7 +91,7 @@ export function dispatch(self, p) {
     self._resumeFromDisk = false
     self._resumeStateSavedAt = null
     self.sessionStore?.save?.({ sessionId: self._sessionId, resumeUrl: self._resumeUrl, seq: self._seq, botUserId: self._botUserId })
-    self.log?.info?.('[discord] session resumed successfully', { botUser: self._botUserId ? 'restored' : 'UNKNOWN' })
+    self.log?.info?.(caseyText("src/adapters/discord-lib/gateway.js#w9"), { botUser: self._botUserId ? 'restored' : 'UNKNOWN' })
     self.emit('ready', null)
     return
   }

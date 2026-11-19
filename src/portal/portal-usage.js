@@ -1,5 +1,6 @@
 import { UTC_OFFSET_HOURS } from '../locale.js'
 import { TABLE, ACTOR, isoOrNull, normaliseMac, validRouterId } from './portal-store.js'
+import { caseyText } from '../deployment-text.js';
 
 export const DAY_MS = 24 * 3600e3
 export const USAGE_SAMPLES_MAX = 500
@@ -11,15 +12,15 @@ const SAMPLE_IP_MAX_CHARS = 64
 const isCounter = (value) => Number.isSafeInteger(value) && value >= 0
 
 export function parseUsageSamples(samples) {
-  if (!Array.isArray(samples)) return { error: 'samples must be an array', field: 'samples' }
+  if (!Array.isArray(samples)) return { error: caseyText("src/portal/portal-usage.js#w0"), field: 'samples' }
   const out = []
   for (const sample of samples) {
-    if (!sample || typeof sample !== 'object' || Array.isArray(sample)) return { error: 'each sample must be an object', field: 'samples' }
+    if (!sample || typeof sample !== 'object' || Array.isArray(sample)) return { error: caseyText("src/portal/portal-usage.js#w1"), field: 'samples' }
     const mac = normaliseMac(sample.mac)
-    if (!mac) return { error: 'mac must be AA:BB:CC:DD:EE:FF', field: 'mac' }
-    if (!isCounter(sample.up_bytes) || !isCounter(sample.down_bytes)) return { error: 'up_bytes and down_bytes must be non-negative integers', field: 'up_bytes' }
+    if (!mac) return { error: caseyText("src/portal/portal-usage.js#w2"), field: 'mac' }
+    if (!isCounter(sample.up_bytes) || !isCounter(sample.down_bytes)) return { error: caseyText("src/portal/portal-usage.js#w3"), field: 'up_bytes' }
     const epoch = typeof sample.epoch === 'string' ? sample.epoch.trim().slice(0, SAMPLE_EPOCH_MAX_CHARS) : ''
-    if (!epoch) return { error: 'epoch is required', field: 'epoch' }
+    if (!epoch) return { error: caseyText("src/portal/portal-usage.js#w4"), field: 'epoch' }
     const ip = typeof sample.ip === 'string' ? sample.ip.slice(0, SAMPLE_IP_MAX_CHARS) : ''
     out.push({ mac, ip, epoch, up_bytes: sample.up_bytes, down_bytes: sample.down_bytes })
   }
@@ -45,18 +46,18 @@ export async function ingestUsage(store, router, samples, now = Date.now()) {
 export function parseWindow(query = {}, now = Date.now()) {
   const hasValue = (value) => value !== undefined && value !== null && value !== ''
   const until = hasValue(query.until) ? isoOrNull(query.until) : new Date(now).toISOString()
-  if (!until) return { error: 'until must be ISO 8601', field: 'until' }
+  if (!until) return { error: caseyText("src/portal/portal-usage.js#w5"), field: 'until' }
   const since = hasValue(query.since) ? isoOrNull(query.since) : new Date(Date.parse(until) - DAY_MS).toISOString()
-  if (!since) return { error: 'since must be ISO 8601', field: 'since' }
-  if (Date.parse(since) >= Date.parse(until)) return { error: 'since must be before until', field: 'since' }
+  if (!since) return { error: caseyText("src/portal/portal-usage.js#w6"), field: 'since' }
+  if (Date.parse(since) >= Date.parse(until)) return { error: caseyText("src/portal/portal-usage.js#w7"), field: 'since' }
   return { since, until }
 }
 
 export function parseUsageFilter(query = {}) {
   const routerId = query.router_id === undefined || query.router_id === '' ? null : query.router_id
-  if (routerId !== null && !validRouterId(routerId)) return { error: 'router_id is not valid', field: 'router_id' }
+  if (routerId !== null && !validRouterId(routerId)) return { error: caseyText("src/portal/portal-usage.js#w8"), field: 'router_id' }
   const mac = query.mac === undefined || query.mac === '' ? null : normaliseMac(query.mac)
-  if (query.mac !== undefined && query.mac !== '' && !mac) return { error: 'mac must be AA:BB:CC:DD:EE:FF', field: 'mac' }
+  if (query.mac !== undefined && query.mac !== '' && !mac) return { error: caseyText("src/portal/portal-usage.js#w9"), field: 'mac' }
   return { routerId, mac }
 }
 

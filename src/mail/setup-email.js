@@ -1,7 +1,8 @@
 import { sendMail } from './smtp.js'
 import { appsScriptConfig, sendViaAppsScript } from './apps-script.js'
+import { caseyText } from '../deployment-text.js';
 
-export const SETUP_SUBJECT = 'Set your password'
+export const SETUP_SUBJECT = caseyText("src/mail/setup-email.js#w0")
 
 const oneLine = (v, n) => String(v || '').replace(/[\r\n]+/g, ' ').slice(0, n)
 
@@ -9,11 +10,11 @@ export function setupEmailText({ name, link, expiresAt }) {
   return [
     `Hello ${oneLine(name, 80)},`,
     '',
-    'Your login is ready. Set your password with this one-time link:',
+    caseyText("src/mail/setup-email.js#w1"),
     '',
     link,
     '',
-    `The link works once and expires at ${new Date(expiresAt).toUTCString()}.`,
+    caseyText("src/mail/setup-email.js#w2", [new Date(expiresAt).toUTCString()]),
     '',
   ].join('\n')
 }
