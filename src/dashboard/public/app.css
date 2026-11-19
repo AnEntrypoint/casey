@@ -11,6 +11,20 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   outline: var(--focus-w) solid var(--focus-color);
   outline-offset: 2px;
 }
+
+.ds-247420 {
+  --sa-green: var(--dark-green);
+  --sa-gold: var(--sun);
+  --sa-red: var(--dark-danger);
+  --sa-blue: var(--presence-focus);
+  --focus-color: var(--sa-blue);
+}
+.ds-247420 header.app-chrome {
+  background-image: linear-gradient(90deg, var(--sa-green) 0 25%, var(--sa-gold) 25% 50%, var(--sa-red) 50% 75%, var(--sa-blue) 75% 100%);
+  background-size: 100% 2px;
+  background-repeat: no-repeat;
+  background-position: left bottom;
+}
 .ds-app-root, .ds-app-surface { display: flex; flex-direction: column; min-height: 100vh; }
 
 .app-two-pane { display: flex; width: 100%; height: 100%; min-height: 0; }
