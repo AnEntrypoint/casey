@@ -3,6 +3,7 @@
 import { tagList, parseReport } from './timestamp.js'
 import { MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMandatoryMinimum, fieldLabel, SIGNOFF_DIAGNOSIS_FIELDS } from './store/report-shape.js'
 import { mergeTag, dropTag } from './hooks/heuristics.js'
+import { caseyText } from './deployment-text.js'
 
 export const HANDED_OFF_TAG = 'handed-off'
 const UNCLAIMED = 'agent'
@@ -60,7 +61,7 @@ export async function withdrawHandoff(store, caseId, { by = 'a team member', use
     await store.updateCase(c.id, { tags: dropTag(c.tags || '', HANDED_OFF_TAG) }, user)
     await store.appendEvent(c.id, {
       kind: 'action', actor: 'operator',
-      text: `${byRanger ? `HAND-OFF WITHDRAWN by ranger ${by}` : `HAND-OVER WITHDRAWN by ${by}`}${reason ? `: ${String(reason).slice(0, 400)}` : ''}`,
+      text: `${byRanger ? caseyText("src/signoff-desk.js#o0", [by]) : `HAND-OVER WITHDRAWN by ${by}`}${reason ? `: ${String(reason).slice(0, 400)}` : ''}`,
       data: byRanger ? { ...data, by, handoff_withdrawn_by_ranger: true } : { ...data, by, handoff_withdrawn: true },
     })
     return { ok: true, was: true, ref: c.ref }

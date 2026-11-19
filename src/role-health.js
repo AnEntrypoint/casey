@@ -3,6 +3,7 @@
 import fs from 'node:fs'
 import { TIER_ORDER, atLeast, resolveTierValue, TIER } from './contact-tiers.js'
 import { FIELD_ROLES, SPECIALIST_ROLE } from './domain-roles.js'
+import { caseyText } from './deployment-text.js'
 
 const row = (id, level, text, fix) => ({ id, level, text, ...(fix ? { fix } : {}) })
 const DAY = 86400e3
@@ -54,7 +55,7 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
     const byTier = {}
     for (const c of teamContacts) byTier[resolveTierValue(c.tier)] = (byTier[resolveTierValue(c.tier)] || 0) + 1
     if (!teamContacts.length && !fieldLogins.length) {
-      rows.push(row('team', 'warn', 'nobody is registered as a ranger, technician or operator: no case can be assigned and the field roles are unused',
+      rows.push(row('team', 'warn', caseyText("src/role-health.js#o0"),
         'Register the first person: casey roles assign <phone> <tier> --name "..." , or casey roles invite <tier> for a one-time WhatsApp code. Tiers: ' + TIER_ORDER.filter(t => t !== 'reporter').join(', ') + '.'))
     } else {
       const parts = Object.entries(byTier).map(([t, n]) => `${n} ${t}`)

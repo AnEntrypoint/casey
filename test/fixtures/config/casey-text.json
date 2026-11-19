@@ -1292,5 +1292,7 @@
   "src/translate.js#s0": "[src/translate.js#s0]",
   "src/translate.js#s1": "[src/translate.js#s1]",
   "src/translate.js#s2": "[src/translate.js#s2]",
-  "src/translate.js#s3": "[src/translate.js#s3]"
+  "src/translate.js#s3": "[src/translate.js#s3]",
+  "src/role-health.js#o0": "[src/role-health.js#o0]",
+  "src/signoff-desk.js#o0": "[src/signoff-desk.js#o0] {$0}"
 }
