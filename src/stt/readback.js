@@ -4,9 +4,10 @@ import { caseyText } from '../deployment-text.js';
 
 export const MIN_HEARD_NON_SPACE_CHARS = 8
 
-export function unheardKind(tr) {
+export function unheardKind(tr, minConfidence) {
   if (!tr?.text) return tr?.failureKind || STT_FAILURE.UNAVAILABLE
   if (tr.languageSupported === false || (tr.language && !languageOf(tr.language))) return STT_FAILURE.UNSUPPORTED_LANGUAGE
+  if (typeof tr.confidence === 'number' && tr.confidence < minConfidence) return STT_FAILURE.LOW_CONFIDENCE
   if (tr.text.replace(/\s/g, '').length < MIN_HEARD_NON_SPACE_CHARS) return STT_FAILURE.LOW_CONFIDENCE
   return ''
 }

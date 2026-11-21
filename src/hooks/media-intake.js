@@ -5,8 +5,10 @@ import { observation, raiseOperatorItem } from './case-writes.js'
 import { transcribeAudioDetailed, describePhoto } from './media.js'
 import { loadDomainConfig } from '../config-loader.js'
 import { withoutIssuedCodes } from '../role-invites.js'
+import { parseReport } from '../timestamp.js'
 import { languageOf } from '../stt/languages.js'
 import { unheardKind } from '../stt/readback.js'
+import { googleSttConfig } from '../stt/config.js'
 import { failureKindOf } from '../stt/errors.js'
 import { caseyText } from '../deployment-text.js';
 
@@ -94,22 +96,44 @@ export function sttProvenance(tr) {
   }
 }
 
+async function languageHint(store, log, caseId) {
+  try { return parseReport(await store.getCase(caseId)).language_detected || null }
+  catch (e) { log.warn?.('[casey] language hint unavailable for transcription', { caseId, error: e.message }); return null }
+}
+
+const PERSISTED_CHOICE_KEYS = ['chosen', 'source', 'confidence', 'llm_model', 'decided_at', 'note']
+
+function sttStageMs(tr) {
+  if (!Array.isArray(tr.candidates)) return {}
+  return Object.fromEntries(tr.candidates.filter(c => c.id).map(c => [`stt_ms_${c.id}`, c.ms]))
+}
+
+function persistedCandidates(tr) {
+  if (!Array.isArray(tr.candidates)) return {}
+  const choice = tr.stt_choice
+  return {
+    stt_candidates: tr.candidates.map(({ text, ...meta }) => ({ ...meta, has_text: !!text })),
+    stt_choice: choice ? Object.fromEntries(PERSISTED_CHOICE_KEYS.filter(k => k in choice).map(k => [k, choice[k]])) : null,
+  }
+}
+
 export function inboundAudioData(msg, typedText) {
   const tr = msg._transcript
   if (!tr) return {}
   const base = { typed_chars: typedText.length }
-  if (tr.unheard) return { ...base, stt_verdict: tr.text ? 'unheard' : 'failed', stt_failure: tr.unheard }
-  return { ...base, stt_verdict: 'heard', transcribed: true, transcribed_by: 'ai_helper', stt: sttProvenance(tr) }
+  const candidates = persistedCandidates(tr)
+  if (tr.unheard) return { ...base, ...candidates, stt_verdict: tr.text ? 'unheard' : 'failed', stt_failure: tr.unheard }
+  return { ...base, ...candidates, stt_verdict: 'heard', transcribed: true, transcribed_by: 'ai_helper', stt: sttProvenance(tr) }
 }
 
-export async function transcribeInboundAudio({ store, log, caseId, msg }) {
+export async function transcribeInboundAudio({ store, log, caseId, msg, callLLM = null }) {
   if (msg._transcript) return msg._transcript
   const audioItem = pickMediaItem(msg, 'audio')
   if (!audioItem) return { text: '', error: '' }
   let tr
   try {
     const redact = (text) => withoutIssuedCodes(store, text).then(clean => (clean != null ? clean : text))
-    tr = await transcribeAudioDetailed(audioItem.buffer, audioItem.mimeType, { redact })
+    tr = await transcribeAudioDetailed(audioItem.buffer, audioItem.mimeType, { hintLanguage: await languageHint(store, log, caseId), callLLM, redact })
     if (tr.text) {
       try { const clean = await withoutIssuedCodes(store, tr.text); if (clean != null) tr.text = clean }
       catch (e) { log.error?.('[casey] transcript code redaction failed', { caseId, error: e.message }); tr.text = ''; tr.error = tr.error || caseyText("src/hooks/media-intake.js#s9") }
@@ -118,7 +142,7 @@ export async function transcribeInboundAudio({ store, log, caseId, msg }) {
     log.error?.('[casey] voice.transcribe_threw', { code: 'voice.transcribe_threw', caseId, failureKind: failureKindOf(e) })
     tr = { text: '', error: String(e.message || e), failureKind: failureKindOf(e) }
   }
-  tr.unheard = unheardKind(tr)
+  tr.unheard = unheardKind(tr, googleSttConfig().minConfidence)
   Object.defineProperty(msg, '_transcript', { value: tr, enumerable: false, configurable: true })
   return tr
 }

@@ -4,7 +4,7 @@ import { transcribeAudioDetailed } from '../src/hooks/media.js'
 
 const MIME = { '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.oga': 'audio/ogg', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.wav': 'audio/wav', '.flac': 'audio/flac', '.amr': 'audio/amr', '.webm': 'audio/webm' }
 
-const USAGE = 'usage: node scripts/stt-eval.mjs <folder> [expected.tsv] [--json]\n  expected.tsv: one line per file, tab separated: <file name> <language code or name> <expected text>\n  engine and credentials come from the environment (OPENAI_API_KEY, OPENROUTER_API_KEY, or the local engine via CASEY_LOCAL_STT)'
+const USAGE = 'usage: node scripts/stt-eval.mjs <folder> [expected.tsv] [--json]\n  expected.tsv: one line per file, tab separated: <file name> <language code or name> <expected text>\n  engine and credentials come from the environment (CASEY_STT_ENGINE=google on the GCP VM)'
 
 export function normalise(text) {
   return String(text || '').toLowerCase().normalize('NFC').replace(/[^\p{L}\p{N}\s']/gu, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)

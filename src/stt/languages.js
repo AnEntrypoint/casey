@@ -21,3 +21,8 @@ export function languageOf(value) {
   const base = raw.split(/[-_]/)[0]
   return BY_KEY.get(base) || BY_NAME.get(raw) || null
 }
+
+export function longModelLanguage(hint) {
+  const lang = languageOf(hint)
+  return lang && !lang.chirp ? lang : null
+}

@@ -39,7 +39,7 @@ export function checkAdmission({ admission, store, log, msg, channel, external_i
   return null
 }
 
-export async function openCaseForInbound({ store, log, msg, channel, external_id, replyTo, platform }) {
+export async function openCaseForInbound({ store, log, msg, channel, external_id, replyTo, platform, callLLM = null }) {
   const msgId = messageId(msg)
   if (!msgId) log?.warn?.('[casey] inbound message missing id; dedup guarantee not applied', { channel })
 
@@ -60,7 +60,7 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
     return { done: { to: replyTo, text: '', platform, error: e.message } }
   }
 
-  const tr = await transcribeInboundAudio({ store, log, caseId: caseRow.id, msg })
+  const tr = await transcribeInboundAudio({ store, log, caseId: caseRow.id, msg, callLLM })
   const typedText = stripChannelMarkup(msg.text || '')
   const spoken = tr.unheard ? '' : tr.text
   const inboundText = [typedText, spoken].filter(Boolean).join('\n')
