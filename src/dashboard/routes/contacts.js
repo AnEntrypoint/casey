@@ -37,7 +37,7 @@ export function postContactTier({ store, authed, isAdmin, actingOperator }) {
     try {
       const { tier } = req.body || {}
       if (!TIER_ORDER.includes(tier)) return res.status(400).json({ error: caseyText("src/dashboard/routes/contacts.js#w0", [TIER_ORDER.map(t => `"${t}"`).join(', ')]) })
-      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/contacts.js#w1", [tier === TIER.operator ? caseyText("src/dashboard/routes/contacts.js#w2") : 'a technician']) })
+      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/contacts.js#w1", [tier === TIER.operator ? caseyText("src/dashboard/routes/contacts.js#w2") : caseyText("src/dashboard/routes/contacts.js#w10")]) })
       const existing = await store.getContact(req.params.id)
       if (existing && resolveContactTier(existing) === TIER.operator && tier !== TIER.operator && !isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/contacts.js#w3") })
       await store.setContactTier(req.params.id, tier, { id: actingOperator(req).id, role: 'operator' })
@@ -67,7 +67,7 @@ export function postContactRegister({ store, authed, isAdmin, actingOperator }) 
       const external_id = normalizeMsisdn(phone)
       if (!external_id) return res.status(400).json({ error: caseyText("src/dashboard/routes/contacts.js#phone-example") })
       if (!TIER_ORDER.includes(tier) || tier === TIER.reporter) return res.status(400).json({ error: caseyText("src/dashboard/routes/contacts.js#w5", [TIER_ORDER.filter(t => t !== TIER.reporter).map(t => `"${t}"`).join(', ')]) })
-      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/contacts.js#w6", [tier === TIER.operator ? caseyText("src/dashboard/routes/contacts.js#w7") : 'a technician']) })
+      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/contacts.js#w6", [tier === TIER.operator ? caseyText("src/dashboard/routes/contacts.js#w7") : caseyText("src/dashboard/routes/contacts.js#w11")]) })
       const known = (await store.listContacts({ limit: 1000 })).find(k => k.channel === 'whatsapp' && k.external_id === external_id)
       if (known && resolveContactTier(known) === TIER.operator && tier !== TIER.operator && !isAdmin(req)) return res.status(403).json({ error: caseyText("src/dashboard/routes/contacts.js#w8") })
       const contact = await store.registerContact({ channel: 'whatsapp', external_id, display_name: String(name || '').trim().slice(0, 80), tier }, { id: actingOperator(req).id, role: 'operator' })

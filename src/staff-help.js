@@ -50,6 +50,6 @@ const asList = (v) => (Array.isArray(v) ? v : [v]).filter(Boolean)
 export function helpFor(tier) {
   const { persona } = loadDomainConfig()
   const examples = atLeast(tier, TIER.specialist) ? persona.helpTechnician : persona.helpRanger
-  if (!examples) throw new Error('persona.helpRanger/helpTechnician missing: add bot.help_ranger and bot.help_technician to vocabulary.yml')
+  if (!examples) throw new Error(caseyText("src/staff-help.js#s1"))
   return { examples: asList(examples), onboarding: persona.helpOnboarding ? String(asList(persona.helpOnboarding).join(' ')) : '' }
 }

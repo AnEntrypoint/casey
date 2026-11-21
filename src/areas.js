@@ -139,10 +139,10 @@ async function normaliseInput(store, areas, input, existing) {
   if (!name) throw new Error('an area needs a name')
   const primary = String(input.primary ?? existing?.primary ?? '').trim()
   const p = await checkResponder(store, primary)
-  if (!p.ok) throw new Error(`the first ranger: ${p.why}`)
+  if (!p.ok) throw new Error(caseyText("src/areas.js#w29", [p.why]))
   const backups = [...new Set((input.backups ?? existing?.backups ?? []).map(b => String(b).trim()).filter(Boolean))].filter(b => b !== primary)
-  if (backups.length > MAX_BACKUPS) throw new Error(`at most ${MAX_BACKUPS} backup rangers`)
-  for (const b of backups) { const r = await checkResponder(store, b); if (!r.ok) throw new Error(`backup ranger ${await responderName(store, b)}: ${r.why}`) }
+  if (backups.length > MAX_BACKUPS) throw new Error(caseyText("src/areas.js#w30", [MAX_BACKUPS]))
+  for (const b of backups) { const r = await checkResponder(store, b); if (!r.ok) throw new Error(caseyText("src/areas.js#w31", [await responderName(store, b), r.why])) }
   const aliases = [...new Set((input.aliases ?? existing?.aliases ?? []).map(a => String(a).trim().replace(/\s+/g, ' ').slice(0, 80)).filter(Boolean))]
   if (aliases.length > MAX_ALIASES) throw new Error(`at most ${MAX_ALIASES} other names for one area`)
 

@@ -17,7 +17,7 @@ export const refsIn = (text) => [...new Set((String(text || '').match(CASE_REF_R
 
 export function identifyingLine(c) {
   const r = parseReport(c)
-  const what = String(r[K.kind] || '').trim() || 'animals'
+  const what = String(r[K.kind] || '').trim() || caseyText("src/team-focus.js#s5")
   const where = String(r.location || '').trim() || caseyText("src/team-focus.js#s0")
   return `${what.slice(0, 60)} at ${where.slice(0, 80)}`
 }

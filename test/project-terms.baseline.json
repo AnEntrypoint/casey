@@ -1,7 +1,7 @@
 {
-  "total": 93,
+  "total": 83,
   "skippedBinary": [
     "data/db.sqlite"
   ],
-  "note": "recorded 2026-11-19 at the end of the wording stretch (casey 93cc445): 93 hits in 27 files. Each remaining hit is classed with its reason in uhh's docs/casey-generic-inventory.md: the 10 compatibility alias lines (removed in the next release), stored and wire payload keys, configuration keys, client i18n keys, module paths, code identifiers on the public surface, stored values, string texts left in code, and documentation. The ratchet only goes down."
+  "note": "recorded at the end of the last-ten move (casey generic-text-move, from 516607e): 83 hits in 27 files, down from 93 by moving the seven texts that carried ten hits (areas.js 142,144,145; staff-help.js 53; contacts.js 40,70; team-focus.js 20) into config/casey-text.json. Each remaining hit is classed with its reason in uhh docs/casey-generic-inventory.md. The ratchet only goes down."
 }
