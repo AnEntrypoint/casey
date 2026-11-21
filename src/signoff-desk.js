@@ -78,5 +78,3 @@ export async function sendBackToResponder(store, caseId, { by = caseyText("src/s
   await withdrawHandoff(store, c.id, { by, user, reason: caseyText("src/signoff-desk.js#w12") })
   return { ok: true, ref: c.ref }
 }
-export const handoffToTechnician = handoffToSpecialist;
-export const sendBackToRanger = sendBackToResponder;

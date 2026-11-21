@@ -56,4 +56,3 @@ export function hostIsLocal() {
   return hostTimezone() === LOCAL_TZ
 }
 export const fmtTimeSAST = fmtTimeLocal;
-export const hostIsSAST = hostIsLocal;

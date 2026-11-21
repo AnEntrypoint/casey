@@ -442,7 +442,4 @@ export async function relocateCase(store, caseId, { area = '', stated = '', assi
   })
 }
 
-export { responderName, responderName as rangerName }
-export const checkRanger = checkResponder;
-export const areasOfRanger = areasOfResponder;
-export const pickRanger = pickResponder;
+export { responderName }

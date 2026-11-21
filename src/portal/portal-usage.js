@@ -217,5 +217,4 @@ export async function registeredPhone(store, routerId, mac) {
   const [registration] = await store.t.list(TABLE.registrations, { router_id: routerId, mac }, { limit: 1, sort: [{ field: 'registered_at', dir: 'DESC' }] })
   return registration?.phone_e164 || null
 }
-export const SAST_OFFSET_MS = LOCAL_OFFSET_MS;
 export const sastDayStart = localDayStart;
