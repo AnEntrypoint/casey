@@ -61,4 +61,3 @@ export function assigneeName(value) {
   if (hit) return hit.name;
   return v.startsWith('contact:') ? 'a team member' : v;
 }
-export const isTechnician = isSpecialist;

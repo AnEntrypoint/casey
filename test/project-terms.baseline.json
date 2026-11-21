@@ -1,7 +1,7 @@
 {
-  "total": 77,
+  "total": 76,
   "skippedBinary": [
     "data/db.sqlite"
   ],
-  "note": "recorded at the alias removal (casey generic-text-move): 77 hits in 27 files, down from 83 by removing eight compatibility aliases with no importers (SAST_OFFSET_MS, hostIsSAST, areasOfRanger, checkRanger, rangerName, pickRanger, handoffToTechnician, sendBackToRanger). The aliases still imported (fmtTimeSAST, SAST_TZ, sastDayStart, TECHNICIAN_NOTE, RANGER_NOTE, isTechnician) stay, each with its importer named in uhh docs/casey-generic-inventory.md. The ratchet only goes down."
+  "note": "recorded at the alias removal (casey generic-text-move): 76 hits in 27 files, down from 83. Removed: eight compatibility aliases with no importer (SAST_OFFSET_MS, hostIsSAST, areasOfRanger, checkRanger, rangerName, pickRanger, handoffToTechnician, sendBackToRanger), and the client copy of isTechnician in src/dashboard/public/src/api-roles.js, which nothing imports. Kept, each with an importer recorded in uhh docs/casey-generic-inventory.md: fmtTimeSAST, SAST_TZ, sastDayStart, TECHNICIAN_NOTE, RANGER_NOTE, and the server isTechnician in src/dashboard/roles.js (imported by golden/roles-lib.mjs). The ratchet only goes down."
 }
