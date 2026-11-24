@@ -53,9 +53,9 @@ function canonicalizedNote(raw, incoming) {
 
 export function caseListProjection(c, name = (v) => v) {
   if (!c) return null
-  const { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type } = c
+  const { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type, test_material } = c
   return {
-    id, ref, channel, status, priority,
+    id, ref, channel, status, priority, test_material: test_material || '',
     subject: markInvisibles(subject), summary: markInvisibles(summary), report: markInvisibles(report),
     tags, assignee: name(assignee), autonomy, last_event_at, fill_rate, created_at, case_type,
   }

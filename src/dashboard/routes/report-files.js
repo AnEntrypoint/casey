@@ -3,6 +3,7 @@ import path from 'node:path'
 import { mountRoutes } from './register.js'
 import { DIGEST_STATUS_FILE, lastCompletedMonth } from '../../report-digest.js'
 import { caseyText } from '../../deployment-text.js';
+import { digestMonthIsTest, parseLaunchCutoff, readDomainSettings } from '../../test-material.js'
 
 export const DIGEST_FILE = /^casey-digest-(\d{4}-\d{2})\.(csv|txt)$/
 
@@ -33,6 +34,8 @@ export function listFiles({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const dir = digestsDir(store)
+    const cutoffMs = parseLaunchCutoff(readDomainSettings().launch_cutoff)
+    const hiddenMonth = (month) => Date.now() >= cutoffMs && digestMonthIsTest(month, cutoffMs)
     let names
     try { names = await fs.readdir(dir) } catch (e) {
       if (e.code === 'ENOENT') names = []
@@ -42,17 +45,17 @@ export function listFiles({ store, authed }) {
     const rows = []
     for (const name of names) {
       const m = DIGEST_FILE.exec(name)
-      if (!m) continue
+      if (!m || hiddenMonth(m[1])) continue
       const st = await fs.stat(path.join(dir, name))
       if (!st.isFile()) continue
-      rows.push({ name, month: m[1], kind: KINDS[m[2]].kind, bytes: st.size, modified: st.mtime.toISOString(), status: stateOf(status[m[1]]) })
+      rows.push({ name, month: m[1], kind: KINDS[m[2]].kind, bytes: st.size, modified: st.mtime.toISOString(), status: stateOf(status[m[1]]), test_material: digestMonthIsTest(m[1], cutoffMs) ? 'test' : '' })
     }
     const have = new Set(rows.map(r => r.month))
     const evidence = [...have, ...Object.keys(status)].filter(k => /^\d{4}-\d{2}$/.test(k)).sort()
     if (evidence.length) {
       const last = lastCompletedMonth()
       for (const month of monthsBetween(evidence[0], last)) {
-        if (have.has(month)) continue
+        if (have.has(month) || hiddenMonth(month)) continue
         rows.push({ name: null, month, kind: 'missing', bytes: 0, modified: null, status: status[month]?.ok === false ? 'failed' : 'missing', error: status[month]?.error ?? null })
       }
     }

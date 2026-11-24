@@ -20,6 +20,7 @@ import { validateCaseConfig, parseFieldEnums } from './store/config-schema.js'
 import { deriveAuthorKey, mintRef } from './store/ref.js'
 import { saveMediaFile } from './store/media.js'
 import { createBusyRetryProxy } from './store/busy-retry.js'
+import { withTestMaterial, parseLaunchCutoff, readDomainSettings } from './test-material.js'
 import { APPEND_FIELD_MAX_LEN, parseReportJson, mergeReportFields, fillIfEmptyReport } from './store/report-merge.js'
 import { taggedObservations } from './store/settings-log.js'
 import { parseJsonArray, foldAreas } from './store/operator-areas.js'
@@ -162,7 +163,11 @@ export class CaseStore {
     if (!this.thatcher) throw new Error('CaseStore not initialised  --  call init() first')
     if (this._tProxy) return this._tProxy
 
-    this._tProxy = installVersionGuard(createBusyRetryProxy(this.thatcher, this.log))
+    const settings = readDomainSettings()
+    this._tProxy = withTestMaterial(installVersionGuard(createBusyRetryProxy(this.thatcher, this.log)), {
+      cutoffMs: parseLaunchCutoff(settings.launch_cutoff),
+      reporterTier: settings.tiers?.reporter || 'reporter',
+    })
     return this._tProxy
   }
 
