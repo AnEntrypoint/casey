@@ -156,9 +156,6 @@ export function describeProcessors(env = process.env) {
       state: skipped ? `dropped: ${c.reason}` : 'routable',
     })
   }
-  const stt = mode === 'allow' ? caseyText("src/llm-data-policy.js#w18") : caseyText("src/llm-data-policy.js#w19")
-  rows.push({ processor: caseyText("src/llm-data-policy.js#w20"), data: caseyText("src/llm-data-policy.js#w21"), policy: mode === 'allow' ? 'NONE' : llmPolicy, state: stt })
-  if (env.CASEY_LOCAL_STT !== '0') rows.push({ processor: caseyText("src/llm-data-policy.js#w22"), data: caseyText("src/llm-data-policy.js#w23"), policy: caseyText("src/llm-data-policy.js#w24"), state: caseyText("src/llm-data-policy.js#w25") })
   if (String(env.CASEY_STT_ENGINE || '').toLowerCase() === 'google') rows.push({ processor: caseyText("src/llm-data-policy.js#w26"), data: caseyText("src/llm-data-policy.js#w27"), policy: caseyText("src/llm-data-policy.js#w28"), state: caseyText("src/llm-data-policy.js#w29", [env.CASEY_STT_GOOGLE_MODEL || 'chirp_3', env.CASEY_STT_GOOGLE_LOCATION || 'us']) })
   if (env.CASEY_VOICE_REPLIES === 'google') rows.push({ processor: caseyText("src/llm-data-policy.js#w30"), data: caseyText("src/llm-data-policy.js#w31"), policy: caseyText("src/llm-data-policy.js#w32"), state: caseyText("src/llm-data-policy.js#w33") })
   if (env.OPENAI_API_KEY) rows.push({ processor: caseyText("src/llm-data-policy.js#w34"), data: caseyText("src/llm-data-policy.js#w35"), policy: caseyText("src/llm-data-policy.js#w36"), state: caseyText("src/llm-data-policy.js#w37") })

@@ -86,8 +86,7 @@ export async function runDataProcessorChecks() {
     }
   } catch {}
   const { sttDoctorRows } = await import('../src/stt/doctor.js')
-  const { localSttAvailable } = await import('../src/hooks/local-stt.js')
-  out.push(...await sttDoctorRows({ offline: process.env.CASEY_DOCTOR_OFFLINE === '1', hasOtherEngine: !!process.env.OPENROUTER_API_KEY || !!process.env.OPENAI_API_KEY || localSttAvailable() }))
+  out.push(...await sttDoctorRows({ offline: process.env.CASEY_DOCTOR_OFFLINE === '1' }))
   const af = auditFile(process.env)
   out.push({ level: 'skip', text: af ? caseyText("bin/casey-doctor-checks.js#w25", [af]) : caseyText("bin/casey-doctor-checks.js#w26") })
   const proactive = String(process.env.CASEY_PROACTIVE_SENDS || 'off').trim().toLowerCase()

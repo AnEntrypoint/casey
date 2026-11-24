@@ -50,32 +50,23 @@ function statusFailure(status) {
   return STT_FAILURE.UNAVAILABLE
 }
 
-export async function recognizeChunk({ content, target, cfg, signalMs }) {
+export async function recognizeChunk({ content, target, cfg }) {
   const [token, project] = await Promise.all([accessToken(), projectId()])
   const req = buildRecognizeRequest({
     project, location: target.location, model: target.model, languageCodes: target.languageCodes,
     content, wordConfidence: target.model === 'chirp_2', origin: cfg.origin,
   })
-  const attempt = async () => {
-    let r
-    try {
-      r = await fetch(req.url, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify(req.body),
-        signal: AbortSignal.timeout(signalMs()),
-      })
-    } catch (e) {
-      throw new SttError(e?.name === 'TimeoutError' ? STT_FAILURE.TIMEOUT : STT_FAILURE.UNAVAILABLE, caseyText("src/stt/google-recognize.js#s0", [e.message]))
-    }
-    const j = await r.json().catch(() => ({}))
-    if (!r.ok) throw new SttError(statusFailure(r.status), `speech ${r.status}: ${String(j?.error?.message || '').slice(0, 200)}`)
-    return j
+  let r
+  try {
+    r = await fetch(req.url, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(req.body),
+    })
+  } catch (e) {
+    throw new SttError(STT_FAILURE.UNAVAILABLE, caseyText("src/stt/google-recognize.js#s0", [e.message]))
   }
-  try { return parseRecognizeResponse(await attempt()) }
-  catch (e) {
-    if (e.kind !== STT_FAILURE.QUOTA && e.kind !== STT_FAILURE.UNAVAILABLE) throw e
-    await new Promise(r => setTimeout(r, 400))
-    return parseRecognizeResponse(await attempt())
-  }
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) throw new SttError(statusFailure(r.status), `speech ${r.status}: ${String(j?.error?.message || '').slice(0, 200)}`)
+  return parseRecognizeResponse(j)
 }

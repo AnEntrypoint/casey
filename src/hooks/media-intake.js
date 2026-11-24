@@ -8,7 +8,6 @@ import { withoutIssuedCodes } from '../role-invites.js'
 import { parseReport } from '../timestamp.js'
 import { languageOf } from '../stt/languages.js'
 import { unheardKind } from '../stt/readback.js'
-import { googleSttConfig } from '../stt/config.js'
 import { failureKindOf } from '../stt/errors.js'
 import { caseyText } from '../deployment-text.js';
 
@@ -101,19 +100,17 @@ async function languageHint(store, log, caseId) {
   catch (e) { log.warn?.('[casey] language hint unavailable for transcription', { caseId, error: e.message }); return null }
 }
 
-const PERSISTED_CHOICE_KEYS = ['chosen', 'source', 'confidence', 'llm_model', 'decided_at', 'note']
-
 function sttStageMs(tr) {
-  if (!Array.isArray(tr.candidates)) return {}
-  return Object.fromEntries(tr.candidates.filter(c => c.id).map(c => [`stt_ms_${c.id}`, c.ms]))
+  if (!Array.isArray(tr.engines)) return {}
+  return Object.fromEntries(tr.engines.map(e => [`stt_ms_${e.id}`, e.ms]))
 }
 
-function persistedCandidates(tr) {
-  if (!Array.isArray(tr.candidates)) return {}
-  const choice = tr.stt_choice
+function persistedEngines(tr) {
+  if (!Array.isArray(tr.engines)) return {}
+  const synthesis = tr.synthesis
   return {
-    stt_candidates: tr.candidates.map(({ text, ...meta }) => ({ ...meta, has_text: !!text })),
-    stt_choice: choice ? Object.fromEntries(PERSISTED_CHOICE_KEYS.filter(k => k in choice).map(k => [k, choice[k]])) : null,
+    stt_engines: tr.engines.map(({ text, ...meta }) => ({ ...meta, has_text: !!text })),
+    stt_synthesis: synthesis ? { verdict: synthesis.verdict, agreed: synthesis.agreed, llm_model: synthesis.llm_model, decided_at: synthesis.decided_at, error: synthesis.error || '' } : null,
   }
 }
 
@@ -121,9 +118,9 @@ export function inboundAudioData(msg, typedText) {
   const tr = msg._transcript
   if (!tr) return {}
   const base = { typed_chars: typedText.length }
-  const candidates = persistedCandidates(tr)
-  if (tr.unheard) return { ...base, ...candidates, stt_verdict: tr.text ? 'unheard' : 'failed', stt_failure: tr.unheard }
-  return { ...base, ...candidates, stt_verdict: 'heard', transcribed: true, transcribed_by: 'ai_helper', stt: sttProvenance(tr) }
+  const engines = persistedEngines(tr)
+  if (tr.unheard) return { ...base, ...engines, stt_verdict: tr.text ? 'unheard' : 'failed', stt_failure: tr.unheard }
+  return { ...base, ...engines, stt_verdict: 'heard', transcribed: true, transcribed_by: 'ai_helper', stt: sttProvenance(tr) }
 }
 
 export async function transcribeInboundAudio({ store, log, caseId, msg, callLLM = null }) {
@@ -142,7 +139,7 @@ export async function transcribeInboundAudio({ store, log, caseId, msg, callLLM 
     log.error?.('[casey] voice.transcribe_threw', { code: 'voice.transcribe_threw', caseId, failureKind: failureKindOf(e) })
     tr = { text: '', error: String(e.message || e), failureKind: failureKindOf(e) }
   }
-  tr.unheard = unheardKind(tr, googleSttConfig().minConfidence)
+  tr.unheard = unheardKind(tr)
   Object.defineProperty(msg, '_transcript', { value: tr, enumerable: false, configurable: true })
   return tr
 }

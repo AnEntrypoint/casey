@@ -4,7 +4,6 @@ export const STT_FAILURE = Object.freeze({
   AUTH: 'auth',
   QUOTA: 'quota',
   UNAVAILABLE: 'unavailable',
-  TIMEOUT: 'timeout',
   BAD_AUDIO: 'bad_audio',
   TOO_LONG: 'too_long',
   FFMPEG_MISSING: 'ffmpeg_missing',

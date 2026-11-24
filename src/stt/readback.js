@@ -4,10 +4,9 @@ import { caseyText } from '../deployment-text.js';
 
 export const MIN_HEARD_NON_SPACE_CHARS = 8
 
-export function unheardKind(tr, minConfidence) {
+export function unheardKind(tr) {
   if (!tr?.text) return tr?.failureKind || STT_FAILURE.UNAVAILABLE
   if (tr.languageSupported === false || (tr.language && !languageOf(tr.language))) return STT_FAILURE.UNSUPPORTED_LANGUAGE
-  if (typeof tr.confidence === 'number' && tr.confidence < minConfidence) return STT_FAILURE.LOW_CONFIDENCE
   if (tr.text.replace(/\s/g, '').length < MIN_HEARD_NON_SPACE_CHARS) return STT_FAILURE.LOW_CONFIDENCE
   return ''
 }
@@ -18,7 +17,6 @@ const heardLine = (tr) => {
   if (tr.engine) parts.push(`engine ${tr.provider || tr.engine}`)
   parts.push(caseyText("src/stt/readback.js#s0", [lang ? lang.label : (tr.language || 'unknown')]))
   if (tr.languages?.length > 1) parts.push(caseyText("src/stt/readback.js#0", [tr.languages.join(', ')]))
-  parts.push(typeof tr.confidence === 'number' ? `confidence ${tr.confidence.toFixed(2)}` : caseyText("src/stt/readback.js#s1"))
   if (tr.durationSec) parts.push(caseyText("src/stt/readback.js#s2", [Math.round(tr.durationSec)]))
   return parts.join(', ')
 }
@@ -36,7 +34,6 @@ export function voiceNote(tr, { staff = false } = {}) {
 }
 
 const FAILURE_WORDS = {
-  [STT_FAILURE.TIMEOUT]: caseyText("src/stt/readback.js#7"),
   [STT_FAILURE.QUOTA]: caseyText("src/stt/readback.js#s3"),
   [STT_FAILURE.UNAVAILABLE]: caseyText("src/stt/readback.js#s4"),
   [STT_FAILURE.AUTH]: caseyText("src/stt/readback.js#8"),

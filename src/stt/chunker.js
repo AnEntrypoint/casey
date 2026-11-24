@@ -7,11 +7,10 @@ import { caseyText } from '../deployment-text.js';
 
 const FFMPEG_ENV = { PATH: '/usr/local/bin:/usr/bin:/bin', LANG: 'C' }
 
-function runFfmpeg(ffmpeg, args, timeoutMs) {
+function runFfmpeg(ffmpeg, args) {
   return new Promise((resolve, reject) => {
-    execFile(ffmpeg, ['-nostdin', '-hide_banner', ...args], { timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024, env: FFMPEG_ENV }, (err, stdout, stderr) => {
+    execFile(ffmpeg, ['-nostdin', '-hide_banner', ...args], { killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024, env: FFMPEG_ENV }, (err, stdout, stderr) => {
       if (err && err.code === 'ENOENT') return reject(new SttError(STT_FAILURE.FFMPEG_MISSING, caseyText("src/stt/chunker.js#0", [ffmpeg])))
-      if (err && err.killed) return reject(new SttError(STT_FAILURE.TIMEOUT, caseyText("src/stt/chunker.js#s0")))
       resolve({ code: err ? err.code : 0, stdout: String(stdout || ''), stderr: String(stderr || '') })
     })
   })
@@ -43,14 +42,13 @@ export function planChunks(durationSec, silences, { chunkSeconds, minSeconds = c
   return plan
 }
 
-export async function splitAudio(buffer, { ffmpeg, chunkSeconds, maxSeconds, deadline }) {
+export async function splitAudio(buffer, { ffmpeg, chunkSeconds, maxSeconds }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'casey-stt-'))
   try {
     fs.chmodSync(dir, 0o700)
     const input = path.join(dir, 'in.bin')
     fs.writeFileSync(input, buffer, { mode: 0o600 })
-    const left = () => Math.max(1000, deadline - Date.now())
-    const probe = await runFfmpeg(ffmpeg, ['-i', input, '-vn', '-af', 'silencedetect=noise=-35dB:d=0.35', '-f', 'null', '-'], left())
+    const probe = await runFfmpeg(ffmpeg, ['-i', input, '-vn', '-af', 'silencedetect=noise=-35dB:d=0.35', '-f', 'null', '-'])
     const { durationSec, silences } = parseProbe(probe.stderr)
     if (!durationSec) throw new SttError(STT_FAILURE.BAD_AUDIO, caseyText("src/stt/chunker.js#s1"))
     if (durationSec > maxSeconds) throw new SttError(STT_FAILURE.TOO_LONG, caseyText("src/stt/chunker.js#s2", [Math.round(durationSec), maxSeconds]))
@@ -58,7 +56,7 @@ export async function splitAudio(buffer, { ffmpeg, chunkSeconds, maxSeconds, dea
     const chunks = []
     for (const [i, p] of plan.entries()) {
       const out = path.join(dir, `c${i}.flac`)
-      const r = await runFfmpeg(ffmpeg, ['-y', '-v', 'error', '-ss', String(p.start), '-t', String(p.end - p.start), '-i', input, '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'flac', out], left())
+      const r = await runFfmpeg(ffmpeg, ['-y', '-v', 'error', '-ss', String(p.start), '-t', String(p.end - p.start), '-i', input, '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'flac', out])
       if (r.code || !fs.existsSync(out)) throw new SttError(STT_FAILURE.BAD_AUDIO, caseyText("src/stt/chunker.js#s3"))
       chunks.push({ content: fs.readFileSync(out), startSec: p.start, endSec: p.end })
     }

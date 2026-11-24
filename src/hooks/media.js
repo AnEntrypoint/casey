@@ -1,19 +1,13 @@
 
 
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
 import { truncate } from './heuristics.js'
-import { fetchWithTimeout } from '../adapters/webhook-platform-base.js'
-import { transcribeLocal, localSttEnabled, localSttAvailable } from './local-stt.js'
 import { googleSttEnabled } from '../stt/config.js'
-import { transcribeGoogle } from '../stt/engine.js'
-import { arbitrateVoiceNote } from '../stt/arbitrate.js'
+import { transcribeVoiceNote } from '../stt/voice-note.js'
 import { recordStt } from '../stt/metrics.js'
 import { STT_FAILURE } from '../stt/errors.js'
 import { googleVoiceRepliesEnabled, voiceReplyEligible, synthesizeGoogle } from '../stt/tts.js'
 import { parseReport } from '../timestamp.js'
-import { dataPolicyMode, openrouterProviderField, auditWrite } from '../llm-data-policy.js'
+import { dataPolicyMode } from '../llm-data-policy.js'
 import { caseyText } from '../deployment-text.js';
 
 const MEDIA_TOOL_TIMEOUT_MS = Number(process.env.CASEY_MEDIA_TOOL_TIMEOUT_MS) || 12000
@@ -25,143 +19,21 @@ function withTimeout(promise, ms) {
   })
 }
 
-const OPENROUTER_TRANSCRIBE_MODELS = (process.env.CASEY_TRANSCRIBE_MODEL || 'google/gemini-3.5-transcribe,openai/whisper-large-v3').split(',').map(x => x.trim()).filter(Boolean)
-
-const OPENROUTER_TRANSCRIBE_CHAT_MODELS = (process.env.CASEY_TRANSCRIBE_CHAT_MODEL || 'google/gemini-2.5-flash,mistralai/voxtral-small-24b-2507').split(',').map(x => x.trim()).filter(Boolean)
-const NO_SPEECH = 'NO_SPEECH'
-
-function openrouterKey() {
-  if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY
-  try {
-    const m = /^OPENROUTER_API_KEY=(.+)$/m.exec(fs.readFileSync(path.join(os.homedir(), '.acptoapi', '.env'), 'utf8'))
-    return m ? m[1].trim() : ''
-  } catch { return '' }
-}
-
-function audioFormat(mimeType) {
-  const t = mimeType || ''
-  return /ogg|opus/.test(t) ? 'ogg' : /mp3|mpeg/.test(t) ? 'mp3' : /m4a|mp4|aac/.test(t) ? 'aac' : /flac/.test(t) ? 'flac' : /webm/.test(t) ? 'webm' : 'wav'
-}
-
-async function transcribeViaOpenrouter(buffer, mimeType, model) {
-  const key = openrouterKey()
-  if (!key) return { text: '', error: caseyText("src/hooks/media.js#s0") }
-  const r = await fetchWithTimeout('https://openrouter.ai/api/v1/audio/transcriptions', {
-    method: 'POST',
-    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ model, input_audio: { data: buffer.toString('base64'), format: audioFormat(mimeType) } }),
-  }, MEDIA_TOOL_TIMEOUT_MS)
-  const j = await r.json().catch(() => ({}))
-  if (!r.ok) return { text: '', error: `${model} ${r.status}: ${truncate(j?.error?.message || '', 160)}` }
-  const text = String(j?.text || '').trim()
-  return { text, error: text ? '' : caseyText("src/hooks/media.js#s1", [model]) }
-}
-
-async function transcribeViaOpenrouterChat(buffer, mimeType, model, providerField) {
-  const key = openrouterKey()
-  if (!key) return { text: '', error: caseyText("src/hooks/media.js#s2") }
-  const r = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model, max_tokens: 1024, provider: providerField,
-      messages: [{ role: 'user', content: [
-        { type: 'text', text: caseyText("src/hooks/media.js#0", [NO_SPEECH]) },
-        { type: 'input_audio', input_audio: { data: buffer.toString('base64'), format: audioFormat(mimeType) } },
-      ] }],
-    }),
-  }, MEDIA_TOOL_TIMEOUT_MS)
-  const j = await r.json().catch(() => ({}))
-  if (!r.ok) return { text: '', error: `${model} ${r.status}: ${truncate(j?.error?.message || '', 160)}` }
-  const raw = j?.choices?.[0]?.message?.content
-  const text = String(Array.isArray(raw) ? raw.map(p => p?.text || '').join('') : (raw || '')).trim()
-  if (!text || text === NO_SPEECH) return { text: '', error: caseyText("src/hooks/media.js#s3", [model]), noSpeech: true, served_by: j?.provider || null }
-  return { text, error: '', served_by: j?.provider || null }
-}
-
-const LOCAL_RESCUES = new Set([STT_FAILURE.UNAVAILABLE, STT_FAILURE.TIMEOUT, STT_FAILURE.AUTH, STT_FAILURE.QUOTA, STT_FAILURE.FFMPEG_MISSING])
-
-function failureKindFor(tr) {
-  if (/disabled/.test(tr.error || '')) return STT_FAILURE.DISABLED
-  if (/no audio bytes/.test(tr.error || '')) return STT_FAILURE.NO_AUDIO
-  if (/no intelligible speech/.test(tr.error || '')) return STT_FAILURE.NO_SPEECH
-  return STT_FAILURE.UNAVAILABLE
-}
-
-async function redactTranscripts(tr, redact) {
-  if (!redact) return tr
-  const text = tr.text ? await redact(tr.text) : tr.text
-  const candidates = Array.isArray(tr.candidates)
-    ? await Promise.all(tr.candidates.map(async (c) => (c.text ? { ...c, text: await redact(c.text) } : c)))
-    : tr.candidates
-  return { ...tr, text, candidates }
-}
-
 export async function transcribeAudioDetailed(buffer, mimeType, { hintLanguage = null, callLLM = null, redact = null } = {}) {
   const t0 = Date.now()
   let tr
-  if (googleSttEnabled() && process.env.CASEY_TRANSCRIBE_VOICE_NOTES !== '0' && buffer?.length) {
-    tr = await transcribeGoogle(buffer, mimeType, { hintLanguage })
-    tr = await redactTranscripts(tr, redact)
-    tr = await arbitrateVoiceNote(tr, { callLLM, caseLanguage: tr.language || hintLanguage || null })
-    if (!tr.text && LOCAL_RESCUES.has(tr.failureKind) && localSttAvailable()) {
-      const local = await transcribeLocal(buffer, mimeType)
-      tr = local.text
-        ? { ...local, engine: 'local', failureKind: '', ms: Date.now() - t0, rescued_from: tr.failureKind, candidates: tr.candidates, stt_choice: tr.stt_choice }
-        : { ...tr, error: [tr.error, local.error].filter(Boolean).join('; ') }
-    }
+  if (process.env.CASEY_TRANSCRIBE_VOICE_NOTES === '0') {
+    tr = { engine: null, text: '', error: caseyText("src/hooks/media.js#1"), failureKind: STT_FAILURE.DISABLED }
+  } else if (!googleSttEnabled()) {
+    tr = { engine: null, text: '', error: caseyText("src/hooks/media.js#s6"), failureKind: STT_FAILURE.DISABLED }
+  } else if (!buffer?.length) {
+    tr = { engine: null, text: '', error: caseyText("src/hooks/media.js#s4"), failureKind: STT_FAILURE.NO_AUDIO }
   } else {
-    tr = await transcribeLegacy(buffer, mimeType)
-    if (tr.text) tr = { engine: tr.provider, failureKind: '', ...tr }
-    else tr = { ...tr, failureKind: tr.failureKind || failureKindFor(tr) }
+    tr = await transcribeVoiceNote(buffer, mimeType, { hintLanguage, callLLM, redact })
   }
+  tr.ms = Date.now() - t0
   recordStt(tr)
   return tr
-}
-
-async function transcribeLegacy(buffer, mimeType) {
-  const t0 = Date.now()
-  if (process.env.CASEY_TRANSCRIBE_VOICE_NOTES === '0') return { text: '', provider: 'off', ms: 0, error: caseyText("src/hooks/media.js#1") }
-  if (!buffer?.length) return { text: '', provider: 'none', ms: 0, error: caseyText("src/hooks/media.js#s4") }
-  try {
-    if (process.env.OPENAI_API_KEY) {
-      const tmpPath = path.join(os.tmpdir(), `casey-voice-${Date.now()}-${Math.random().toString(36).slice(2)}.${audioFormat(mimeType) === 'ogg' ? 'ogg' : audioFormat(mimeType)}`)
-      try {
-        fs.writeFileSync(tmpPath, buffer)
-        const { transcribe } = await import('../agent/media-tools.js')
-        const parsed = await withTimeout(transcribe({ file_path: tmpPath }), MEDIA_TOOL_TIMEOUT_MS)
-        const text = typeof parsed?.text === 'string' ? parsed.text.trim() : ''
-        if (text) return { text, provider: 'whisper', ms: Date.now() - t0, error: '' }
-      } finally { try { fs.unlinkSync(tmpPath) } catch {  } }
-    }
-    let last = { text: '', error: caseyText("src/hooks/media.js#s5"), provider: 'none' }
-    const mode = dataPolicyMode()
-    const providerField = openrouterProviderField(mode)
-    const chatPath = mode !== 'allow'
-
-    const models = (!openrouterKey() && localSttEnabled()) ? [] : (chatPath ? OPENROUTER_TRANSCRIBE_CHAT_MODELS : OPENROUTER_TRANSCRIBE_MODELS)
-    for (const model of models) {
-      let res
-      try { res = chatPath ? await transcribeViaOpenrouterChat(buffer, mimeType, model, providerField) : await transcribeViaOpenrouter(buffer, mimeType, model) } catch (e) { res = { text: '', error: `${model}: ${String(e?.message || e)}` } }
-      last = { ...res, provider: `openrouter:${model}` }
-      auditWrite({ event: 'transcribe', policy: mode, endpoint: chatPath ? 'chat/completions' : 'audio/transcriptions', provider_field: providerField, model, ok: !!res.text, served_by: res.served_by || null })
-
-      if (res.text || res.noSpeech) break
-    }
-    if (!last.text && !last.noSpeech && localSttEnabled()) {
-
-      const local = await transcribeLocal(buffer, mimeType)
-      if (local.text) return { ...local, ms: Date.now() - t0 }
-      last = { ...last, error: [last.error, local.error].filter(Boolean).join('; ') }
-    }
-    return { ...last, ms: Date.now() - t0 }
-  } catch (e) {
-    return { text: '', provider: 'error', ms: Date.now() - t0, error: String(e?.message || e) }
-  }
-}
-
-export async function transcribeAudio(buffer, mimeType) {
-  return (await transcribeAudioDetailed(buffer, mimeType)).text
 }
 
 export async function describePhoto(buffer, mimeType) {

@@ -8,8 +8,6 @@ import { runSpecialists } from './specialist.js'
 import { caseyText } from '../deployment-text.js';
 
 const MAX_INLINE_BYTES = 9 * 1024 * 1024
-const NO_SPECIALIST_LANGUAGE = 'nso'
-const NO_SPECIALIST_NOTE = caseyText("src/stt/engine.js#0")
 
 function routeFor(cfg, hintLanguage) {
   const long = longModelLanguage(hintLanguage)
@@ -17,75 +15,52 @@ function routeFor(cfg, hintLanguage) {
   return { model: cfg.model, location: cfg.location, languageCodes: cfg.languageCodes, hinted: null }
 }
 
-async function mapLimited(items, limit, fn) {
-  const out = new Array(items.length)
-  let next = 0
-  const worker = async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i], i) } }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
-  return out
-}
-
-async function recognizeGoogle(buffer, cfg, target, t0) {
+async function recognizeGoogle(buffer, cfg, target) {
   if (!buffer?.length) throw new SttError(STT_FAILURE.NO_AUDIO, caseyText("src/stt/engine.js#s0"))
-  const deadline = t0 + cfg.budgetMs
-  const signalMs = () => {
-    const left = deadline - Date.now()
-    if (left < 500) throw new SttError(STT_FAILURE.TIMEOUT, caseyText("src/stt/engine.js#s1", [cfg.budgetMs]))
-    return Math.min(cfg.requestTimeoutMs, left)
-  }
   const ogg = oggOpusDurationSeconds(buffer)
   let durationSec = ogg
   let chunks
   if (ogg !== null && ogg <= cfg.chunkSeconds && buffer.length <= MAX_INLINE_BYTES) {
     chunks = [{ content: buffer, startSec: 0, endSec: ogg }]
   } else {
-    const split = await splitAudio(buffer, { ffmpeg: cfg.ffmpeg, chunkSeconds: cfg.chunkSeconds, maxSeconds: cfg.maxSeconds, deadline })
+    const split = await splitAudio(buffer, { ffmpeg: cfg.ffmpeg, chunkSeconds: cfg.chunkSeconds, maxSeconds: cfg.maxSeconds })
     durationSec = split.durationSec
     chunks = split.chunks
   }
-  const results = await mapLimited(chunks, cfg.concurrency, (c) => recognizeChunk({ content: c.content, target, cfg, signalMs }))
+  const results = await Promise.all(chunks.map((c) => recognizeChunk({ content: c.content, target, cfg })))
   const merged = mergeSegments(results)
   const lang = languageOf(target.hinted ? target.languageCodes[0] : merged.language)
   return { merged, lang, durationSec, chunks: chunks.length }
 }
 
-export async function transcribeGoogle(buffer, mimeType, { hintLanguage = null, env = process.env } = {}) {
+async function runGoogle(buffer, { hintLanguage, env }) {
   const t0 = Date.now()
   const cfg = googleSttConfig(env)
   const target = routeFor(cfg, hintLanguage)
-  const base = { engine: 'google', provider: `google-${target.model}`, model: target.model, location: target.location, hinted: target.hinted }
-
-  let rec = null
-  let failure = null
+  const provider = `google-${target.model}`
   try {
-    rec = await recognizeGoogle(buffer, cfg, target, t0)
-  } catch (e) {
-    failure = { error: caseyText("src/stt/engine.js#s2", [String(e?.message || e)]), failureKind: failureKindOf(e) }
-  }
-  if (!rec && !buffer?.length) return { ...base, ms: Date.now() - t0, text: '', ...failure }
-
-  const googleMs = Date.now() - t0
-  const googleText = rec?.merged.text || ''
-  const lang = rec?.lang || null
-  const googleCandidate = {
-    id: 'google', engine: 'google', provider: base.provider, text: googleText,
-    error: rec ? (googleText ? '' : caseyText("src/stt/engine.js#s3")) : failure.error, status: null, cold: false, ms: googleMs,
-  }
-
-  const skipSpecialists = lang?.key === NO_SPECIALIST_LANGUAGE
-  const specialists = skipSpecialists ? [] : await runSpecialists(buffer, mimeType, { timeoutMs: cfg.requestTimeoutMs, env })
-  const candidates = [googleCandidate, ...specialists]
-
-  const common = {
-    ...base, ms: Date.now() - t0, candidates,
-    ...(skipSpecialists ? { specialists_skipped: NO_SPECIALIST_NOTE } : {}),
-    ...(rec ? {
+    const rec = await recognizeGoogle(buffer, cfg, target)
+    const text = rec.merged.text
+    return {
+      id: 'google', engine: 'google', provider, ms: Date.now() - t0, text,
+      error: text ? '' : caseyText("src/stt/engine.js#s3"), status: null, failureKind: text ? '' : STT_FAILURE.NO_SPEECH,
+      language: rec.merged.language || (target.hinted ? target.languageCodes[0] : null),
+      languages: rec.merged.languages, languageKey: rec.lang?.key || null,
       durationSec: rec.durationSec, chunks: rec.chunks,
-      language: rec.merged.language || (target.hinted ? target.languageCodes[0] : null), languageKey: lang?.key || null,
-      languages: rec.merged.languages, languageSupported: !!lang, confidence: rec.merged.confidence, segments: rec.merged.segments,
-    } : {}),
+    }
+  } catch (e) {
+    return {
+      id: 'google', engine: 'google', provider, ms: Date.now() - t0, text: '',
+      error: caseyText("src/stt/engine.js#s2", [String(e?.message || e)]), status: null, failureKind: failureKindOf(e),
+      language: null, languages: [], languageKey: null, durationSec: null, chunks: 0,
+    }
   }
-  if (googleText) return { ...common, text: googleText, error: '', failureKind: '' }
-  if (rec) return { ...common, text: '', error: caseyText("src/stt/engine.js#s4"), failureKind: STT_FAILURE.NO_SPEECH }
-  return { ...common, text: '', ...failure }
+}
+
+export async function transcribeEngines(buffer, mimeType, { hintLanguage = null, env = process.env } = {}) {
+  const [google, specialists] = await Promise.all([
+    runGoogle(buffer, { hintLanguage, env }),
+    runSpecialists(buffer, mimeType, { env }),
+  ])
+  return { google, engines: [google, ...specialists] }
 }

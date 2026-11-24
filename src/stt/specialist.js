@@ -13,11 +13,6 @@ export function specialistEndpoints(env = process.env) {
   return out
 }
 
-export function specialistFor(languageKey, env = process.env) {
-  if (!languageKey) return null
-  return specialistEndpoints(env).get(languageKey) || null
-}
-
 const METADATA_IDENTITY_URL = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity'
 const IDENTITY_REFRESH_MARGIN_MS = 5 * 60 * 1000
 const identityCache = new Map()
@@ -41,7 +36,6 @@ export async function cloudRunIdentityToken(url, { now = Date.now, fetchImpl = f
   if (cached && now() < cached.expiresAtMs - IDENTITY_REFRESH_MARGIN_MS) return cached.token
   const res = await fetchImpl(`${METADATA_IDENTITY_URL}?audience=${encodeURIComponent(audience)}`, {
     headers: { 'Metadata-Flavor': 'Google' },
-    signal: AbortSignal.timeout(3000),
   })
   if (!res.ok) throw new Error(`metadata identity HTTP ${res.status}`)
   const token = (await res.text()).trim()
@@ -51,11 +45,10 @@ export async function cloudRunIdentityToken(url, { now = Date.now, fetchImpl = f
 
 export const SPECIALIST_KEYS = Object.freeze(['xh', 'zu', 'af'])
 
-const COLD_STATUS = 503
-
-export async function transcribeSpecialist(url, buffer, mimeType, { timeoutMs = 25000, env = process.env } = {}) {
+export async function transcribeSpecialist(id, url, buffer, mimeType, { env = process.env } = {}) {
   const t0 = Date.now()
-  const done = (fields) => ({ text: '', error: '', status: null, cold: false, ...fields, ms: Date.now() - t0 })
+  const provider = `specialist-${id}`
+  const done = (fields) => ({ id, engine: 'specialist', provider, text: '', error: '', status: null, ms: Date.now() - t0, failureKind: '', ...fields })
   const headers = { 'content-type': mimeType || 'audio/ogg' }
   try {
     if (isCloudRunUrl(url)) {
@@ -68,8 +61,8 @@ export async function transcribeSpecialist(url, buffer, mimeType, { timeoutMs = 
     return done({ error: caseyText("src/stt/specialist.js#s0", [String(e?.message || e)]) })
   }
   try {
-    const res = await fetch(url, { method: 'POST', headers, body: buffer, signal: AbortSignal.timeout(timeoutMs) })
-    if (!res.ok) return done({ error: caseyText("src/stt/specialist.js#s1", [res.status]), status: res.status, cold: res.status === COLD_STATUS })
+    const res = await fetch(url, { method: 'POST', headers, body: buffer })
+    if (!res.ok) return done({ error: caseyText("src/stt/specialist.js#s1", [res.status]), status: res.status })
     const body = await res.json()
     const text = String(body?.text ?? '').trim()
     return text ? done({ text, status: res.status }) : done({ error: caseyText("src/stt/specialist.js#s2"), status: res.status })
@@ -78,15 +71,12 @@ export async function transcribeSpecialist(url, buffer, mimeType, { timeoutMs = 
   }
 }
 
-export async function runSpecialists(buffer, mimeType, { timeoutMs = 25000, env = process.env } = {}) {
+export async function runSpecialists(buffer, mimeType, { env = process.env } = {}) {
   const endpoints = specialistEndpoints(env)
-  return Promise.all(SPECIALIST_KEYS.map(async (key) => {
-    const id = key
-    const base = { id, engine: 'specialist', provider: `specialist-${key}` }
-    const url = endpoints.get(key)
-    if (!url) return { ...base, text: '', error: caseyText("src/stt/specialist.js#0"), status: null, cold: false, ms: 0 }
-    if (!buffer?.length) return { ...base, text: '', error: caseyText("src/stt/specialist.js#s3"), status: null, cold: false, ms: 0 }
-    const r = await transcribeSpecialist(url, buffer, mimeType, { timeoutMs, env })
-    return { ...base, text: r.text, error: r.error, status: r.status, cold: r.cold, ms: r.ms }
+  return Promise.all(SPECIALIST_KEYS.map(async (id) => {
+    const url = endpoints.get(id)
+    if (!url) return { id, engine: 'specialist', provider: `specialist-${id}`, text: '', error: caseyText("src/stt/specialist.js#0"), status: null, ms: 0, failureKind: '' }
+    if (!buffer?.length) return { id, engine: 'specialist', provider: `specialist-${id}`, text: '', error: caseyText("src/stt/specialist.js#s3"), status: null, ms: 0, failureKind: '' }
+    return transcribeSpecialist(id, url, buffer, mimeType, { env })
   }))
 }
