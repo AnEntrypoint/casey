@@ -27,6 +27,13 @@ function absorbStderrChunk(child, text) {
   child._stderrTail.push(...parts)
   if (child._stderrTail.length > STDERR_TAIL_LINES) child._stderrTail = child._stderrTail.slice(-STDERR_TAIL_LINES)
 }
+function inheritedListenSockets(env) {
+  return String(env.CASEY_INHERITED_LISTEN || '').split(',').filter(Boolean).map((pair) => {
+    const [port, fd] = pair.split('=')
+    return { port, fd: Number(fd) }
+  })
+}
+
 function flushStderrTail(child) {
   if (child._stderrRest) { child._stderrTail.push(child._stderrRest); child._stderrRest = '' }
   return child._stderrTail
@@ -36,9 +43,10 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
   let pendingRestartTimer = null
   function spawn() {
     rt.booted = false
+    const inherited = inheritedListenSockets(process.env)
     const child = fork(WORKER_ENTRY, workerArgs, {
-
-      stdio: ['inherit', 'inherit', 'pipe', 'ipc'],
+      stdio: ['inherit', 'inherit', 'pipe', 'ipc', ...inherited.map((s) => s.fd)],
+      env: inherited.length ? { ...process.env, CASEY_INHERITED_LISTEN: inherited.map((s, i) => `${s.port}=${4 + i}`).join(',') } : process.env,
     })
     rt.worker = child
     child._stderrTail = []
