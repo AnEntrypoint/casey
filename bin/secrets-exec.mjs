@@ -3,11 +3,13 @@ import fs from 'node:fs'
 import { spawn } from 'node:child_process'
 import { loadSecrets, SecretsError } from '../src/secrets/loader.js'
 import { installLogScrub } from '../src/log-scrub.js'
+import { inheritedSockets, childSocketEnv } from '../src/secrets/inherited-sockets.js'
 
 const argv = process.argv.slice(2)
 const dd = argv.indexOf('--')
 const flags = dd === -1 ? argv : argv.slice(0, dd)
 const cmd = dd === -1 ? [] : argv.slice(dd + 1)
+
 const mi = flags.indexOf('--manifest')
 const manifestPath = mi !== -1 ? flags[mi + 1] : process.env.CASEY_SECRETS_MANIFEST
 if (!manifestPath || !cmd.length) { console.error('usage: secrets-exec.mjs --manifest <file> -- <command> [args...]'); process.exit(64) }
@@ -24,7 +26,8 @@ catch (e) {
   process.exit(78)
 }
 
-const child = spawn(cmd[0], cmd.slice(1), { stdio: 'inherit', env: { ...process.env, ...loaded.env } })
+const inherited = inheritedSockets(process.env, process.pid)
+const child = spawn(cmd[0], cmd.slice(1), { stdio: ['inherit', 'inherit', 'inherit', ...inherited.map((s) => s.fd)], env: childSocketEnv({ ...process.env, ...loaded.env }, inherited) })
 loaded = null
 for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => child.kill(sig))
 child.on('exit', (code, signal) => process.exit(code ?? (signal ? 128 : 1)))
