@@ -886,6 +886,7 @@ __CASEY_FONT_FACES__
   .ds-map-chrome > .ds-map-legend { max-height: 22vh; left: var(--space-2); right: var(--space-2); bottom: var(--space-2); max-width: none; }
   .ds-map-legend-toggle { min-height: 44px; min-width: 44px; }
   .ds-247420 .app :is(button, a.btn, a.btn-link, input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, summary, [role=button], .ds-filter-pill) { min-width: 44px; min-height: 44px; }
+  .ds-dialog-x, .ds-dialog-close { min-width: 44px; min-height: 44px; }
   .ds-247420 .ds-search-clear { min-width: 44px; min-height: 44px; }
   .ds-247420 { --app-status-h: 2.5rem; }
   .ds-247420 .app-status { height: auto; flex-wrap: wrap; row-gap: 0; align-content: center; padding-top: var(--space-hair); padding-bottom: var(--space-hair); }

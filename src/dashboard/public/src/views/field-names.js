@@ -9,7 +9,7 @@ export function loadOperatorNames() {
   if (names || loading || Date.now() < retryAt) return;
   loading = true;
   fetchOperatorNames()
-    .then((j) => { names = new Map(((j && j.operators) || []).map((o) => [o.id, o.name])); })
+    .then((j) => { names = new Map([...((j && j.operators) || []), ...((j && j.aliases) || [])].map((o) => [o.id, o.name])); })
     .catch(() => {
       retryAt = Date.now() + RETRY_AFTER_MS;
       setTimeout(schedule, RETRY_AFTER_MS);
@@ -21,6 +21,6 @@ export function holderName(assignee) {
   loadOperatorNames();
   const s = String(assignee || '').trim();
   if (!s || s === 'agent') return '';
-  if (names && names.has(s)) return names.get(s);
-  return 'a team member';
+  if (s.startsWith('contact:')) return (names && names.get(s)) || 'a team member';
+  return s;
 }

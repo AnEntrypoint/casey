@@ -15,7 +15,7 @@ import { getWebhookDeliveryStatus } from '../gateway-hooks.js'
 import { escapeHtml } from 'anentrypoint-design/html-escape.js'
 import { parseJsonArraySafe, parseEventData } from '../safe.js'
 import { registerAuth } from './routes/auth.js'
-import { roleOf } from './roles.js'
+import { roleOf, resolveContact } from './roles.js'
 import { clientVocabulary } from '../config-loader.js'
 import { registerTeam } from './routes/team.js'
 import { registerAreas } from './routes/areas.js'
@@ -326,6 +326,15 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     const accounts = await listAccounts(store)
     return accounts.filter(a => a.disabled !== '1').map(a => ({ id: a.username, name: a.display_name || a.username }))
   }
+  const getAliases = async () => {
+    const accounts = (await listAccounts(store)).filter(a => a.disabled !== '1')
+    const out = []
+    for (const a of accounts) {
+      const contact = await resolveContact(store, a)
+      if (contact) out.push({ id: `contact:${contact.id}`, name: a.display_name || a.username })
+    }
+    return out
+  }
 
   const clampLimit = (v, d) => Math.min(PAGE_MAX, Math.max(1, parseInt(v, 10) || d))
   const offsetOf = (v) => Math.min(50000, Math.max(0, parseInt(v, 10) || 0))
@@ -388,7 +397,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     markLogin, markOnboarded, markTipsDismissed, getAccount, listAccounts, createAccount, setAccountDisabled, setAccountContactPhone,
     deleteAccount, changePassword, revokeAccountSessions,
     esc, wrap, str, clampLimit, offsetOf,
-    authed, isAdmin, actingOperator, getRoster,
+    authed, isAdmin, actingOperator, getRoster, getAliases,
     AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
     computeFillRate, csvCell, parseJsonArraySafe, parseEventData, isOpenCase,
     UNCLAIMED_ASSIGNEE,
@@ -456,7 +465,7 @@ a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};font-size:var(--fs-body);t
 </head><body><div class="card">
 <h1>${esc(PWA_BRAND)}</h1>
 <p>This phone has no connection to ${esc(PWA_BRAND)} right now, so the page you asked for could not be opened.</p>
-<p>Nothing you have already sent is lost. Move to a spot with signal and this page opens itself as soon as the connection is back.</p>
+<p>Nothing you have already sent is lost. Move to a spot with a network connection and this page opens itself as soon as the connection is back.</p>
 <a id="retry" href="/">Try now</a>
 <p class="fine" id="watching"></p>
 </div>

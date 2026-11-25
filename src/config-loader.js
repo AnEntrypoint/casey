@@ -92,6 +92,7 @@ export function visibleToolName(name) {
 }
 
 const VOCAB_FILE = 'vocabulary.yml'
+const VOCAB_DEFAULTS_FILE = 'vocabulary.defaults.yml'
 
 export const VOCAB_CLIENT_SECTIONS = ['ui', 'glossary', 'stages', 'legend', 'form']
 
@@ -157,11 +158,14 @@ function expectedKeys(defaultsWords, { reportFields, persona, tierIds = [] }, is
 export function loadVocabulary(dir, domain = null) {
   const file = path.join(dir, VOCAB_FILE)
   const own = readVocabFile(file)
-  const words = { ...own.words }
-  const expected = expectedKeys(words, domain || { reportFields: { fields: [] }, persona: {} }, true)
+  const defaultsFile = path.join(dir, VOCAB_DEFAULTS_FILE)
+  const builtIn = readVocabFile(defaultsFile).words
+  const words = { ...builtIn, ...own.words }
+  const baseKeys = Object.keys(builtIn).length ? builtIn : own.words
+  const expected = expectedKeys(baseKeys, domain || { reportFields: { fields: [] }, persona: {} }, true)
   const missing = [...expected].filter(k => !(k in own.words))
   const unknown = Object.keys(own.words).filter(k => !expected.has(k) && !(k.startsWith('nav.') && VOCAB_NAV_KEYS.includes(k.slice(4))))
-  return { file, defaultsFile: file, hasFile: own.exists, words, missing, unknown, invalid: own.bad }
+  return { file, defaultsFile, hasFile: own.exists, words, missing, unknown, invalid: own.bad }
 }
 
 function clone(o) { return JSON.parse(JSON.stringify(o)) }

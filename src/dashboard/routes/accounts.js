@@ -7,11 +7,11 @@ export const publicAccount = (a) => ({ id: a.id, username: a.username, display_n
 
 const requestBase = (req) => `${req.protocol}://${req.get('host')}`
 
-export function getOperators({ authed, actingOperator, getRoster }) {
+export function getOperators({ authed, actingOperator, getRoster, getAliases }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const roster = await getRoster()
-    res.json({ operators: roster, current: actingOperator(req).id, attributed: roster.length > 0 })
+    res.json({ operators: roster, aliases: await getAliases(), current: actingOperator(req).id, attributed: roster.length > 0 })
   }
 }
 
