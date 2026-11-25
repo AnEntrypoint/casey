@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import '@freddie/freddie-runtime/install-node'
 import { installLogScrub } from '../src/log-scrub.js'
 import { WORKER_MSG, ipcSend } from '../src/supervisor-ipc.js'
 import { makeSendReply } from './send-reply.js'

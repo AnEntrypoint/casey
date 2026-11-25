@@ -8,4 +8,5 @@ const ROOT = path.resolve(__dirname, '..')
 const envPath = path.join(ROOT, '.env')
 try { if (existsSync(envPath) && process.loadEnvFile) process.loadEnvFile(envPath) } catch {}
 
+await import('@freddie/freddie-runtime/install-node')
 await import('./casey-cli.mjs')
