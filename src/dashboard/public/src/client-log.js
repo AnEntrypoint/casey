@@ -14,11 +14,11 @@ function firstLine(value) {
   return text.slice(0, Math.min(end, FIELD_MAX));
 }
 
+let refused = false;
+
 function send(payload) {
+  if (refused) return;
   const body = JSON.stringify(payload);
-  try {
-    if (navigator.sendBeacon && navigator.sendBeacon(ENDPOINT, new Blob([body], { type: 'application/json' }))) return;
-  } catch {}
   try {
     fetch(ENDPOINT, {
       method: 'POST',
@@ -26,7 +26,7 @@ function send(payload) {
       body,
       keepalive: true,
       credentials: 'same-origin',
-    }).catch(() => {});
+    }).then((r) => { if (r.status === 401 || r.status === 403) refused = true; }).catch(() => {});
   } catch {}
 }
 

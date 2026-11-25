@@ -119,7 +119,7 @@ html.ds-247420[data-casey-theme="__CASEY_THEME_DARK__"] { background: var(--ink)
 
 .casey-back-btn { position: sticky; top: 0; z-index: var(--z-raised); }
 
-.ds-247420 .casey-back-btn { background: var(--bg); }
+.ds-247420 .casey-back-btn { background: var(--chip-surface, var(--bg)); }
 
 .ds-rail-disclosure > summary {
   cursor: pointer; padding: var(--space-3); font-weight: 600;
@@ -880,11 +880,11 @@ __CASEY_FONT_FACES__
 #casey-preview-bar button { background: transparent; color: inherit; border: 1px solid currentColor; border-radius: var(--r-2); padding: var(--space-1) var(--space-3); font: inherit; cursor: pointer; }
 
 .skip-link:not(:focus) { position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.skip-link:focus { position: fixed; top: 8px; left: 8px; width: auto; height: auto; margin: 0; clip: auto; transform: none; z-index: var(--z-top); outline: 2px solid currentColor; }
+.skip-link:focus { position: fixed; top: 8px; left: 8px; width: auto; height: auto; min-width: 44px; min-height: 44px; margin: 0; clip: auto; transform: none; z-index: var(--z-top); outline: 2px solid currentColor; }
 
 @media (max-width: 700px) {
   .ds-map-chrome > .ds-map-legend { max-height: 22vh; left: var(--space-2); right: var(--space-2); bottom: var(--space-2); max-width: none; }
-  .ds-map-legend-toggle { min-height: 44px; }
+  .ds-map-legend-toggle { min-height: 44px; min-width: 44px; }
   .ds-247420 .ds-search-clear { min-width: 44px; min-height: 44px; }
   .ds-247420 { --app-status-h: 2.5rem; }
   .ds-247420 .app-status { height: auto; flex-wrap: wrap; row-gap: 0; align-content: center; padding-top: var(--space-hair); padding-bottom: var(--space-hair); }

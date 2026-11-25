@@ -86,6 +86,7 @@ const FIELD_ROUTES = [
   ['GET', /^\/api\/operators$/, 'open'],
   ['POST', /^\/api\/logout-everywhere$/, 'open'],
   ['POST', /^\/api\/feedback$/, 'open'],
+  ['POST', /^\/api\/client-log$/, 'open'],
   ['GET', /^\/api\/cases$/, 'scoped-list'],
   ['POST', /^\/api\/cases$/, 'open'],
   ['GET', /^\/api\/map\/cases$/, 'scoped-list'],
@@ -124,6 +125,7 @@ const PREVIEW_OK = new Set(['/api/whoami', '/api/logout', '/api/logout-everywher
 
 const VIEWER_ROUTES = [
   ['GET', /^\/api\/config$/],
+  ['POST', /^\/api\/client-log$/],
   ['GET', /^\/api\/overview$/],
   ['POST', /^\/api\/logout-everywhere$/],
   ['GET', /^\/api\/reports\/(resolved-map|diseases|diseases\/print|heat|areas|export\.csv|files)$/],
