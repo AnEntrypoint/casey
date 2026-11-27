@@ -81,9 +81,9 @@ registerModalBody('stats', StatsPanel);
 registerModalBody('settings', SettingsPanel);
 registerModalBody('help', () => HelpOverlay({ open: true, onClose: closeModal, onShowOnboarding: () => openModal('onboarding') }));
 registerModalBody('onboarding', () => OnboardingOverlay({ open: true, onClose: () => { markOnboarded(); closeModal(); } }));
-function dismissTips() {
+async function dismissTips() {
+  try { await api.postTipsDismissed(); } catch { toast(word('ui.skills_dismiss_failed'), 'warn'); return; }
   if (state.currentUser) state.currentUser.tips_dismissed = true;
-  api.postTipsDismissed().catch(() => {});
   closeModal();
 }
 registerModalBody('skills', () => SkillsOverlay({
