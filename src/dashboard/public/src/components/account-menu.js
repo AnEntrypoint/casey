@@ -7,6 +7,7 @@ import { toast, failMsg } from '../toasts.js';
 import { Dialog } from './dialog-shell.js';
 import { openFeedback } from './feedback-dialog.js';
 import { word } from '../words.js';
+import { applyTheme as applyKitTheme } from 'ds/theme.js';
 const h = webjsx.createElement;
 
 export function applyTheme(t) {
@@ -15,6 +16,7 @@ export function applyTheme(t) {
   const appEl = document.getElementById('app');
   if (appEl) appEl.dataset.theme = t;
   setTheme(t);
+  applyKitTheme(t === '__CASEY_THEME_DARK__' ? 'ink' : 'paper');
 }
 
 export function chooseTheme(t) {
